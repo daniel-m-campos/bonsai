@@ -35,6 +35,7 @@ _E = TypeVar("_E", bound="_BonsaiEstimator")
 
 # Shared Base ======================================================================================
 
+
 class _BonsaiEstimator:
     """Shared sklearn-contract machinery for ``BonsaiRegressor`` and
     ``BonsaiClassifier``.
@@ -55,8 +56,7 @@ class _BonsaiEstimator:
     def __repr__(self) -> str:
         """sklearn-style: class name plus the non-default parameters."""
         defaults = _init_defaults(type(self))
-        shown = {k: v for k, v in self.get_params().items()
-                 if v != defaults.get(k)}
+        shown = {k: v for k, v in self.get_params().items() if v != defaults.get(k)}
         args = ", ".join(f"{k}={v!r}" for k, v in shown.items())
         return f"{type(self).__name__}({args})"
 
@@ -149,8 +149,11 @@ class _BonsaiEstimator:
         )
 
         kind = self._estimator_type
-        per_type = ({"regressor_tags": RegressorTags()} if kind == "regressor"
-                    else {"classifier_tags": ClassifierTags()})
+        per_type = (
+            {"regressor_tags": RegressorTags()}
+            if kind == "regressor"
+            else {"classifier_tags": ClassifierTags()}
+        )
         return Tags(
             estimator_type=kind,
             target_tags=TargetTags(required=True),
@@ -158,11 +161,15 @@ class _BonsaiEstimator:
             **per_type,
         )
 
-    def fit(self: _E, X: npt.ArrayLike, y: npt.ArrayLike,
-            sample_weight: npt.ArrayLike | None = None,
-            eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None = None,
-            init_model: str | None = None,
-            feature_names: Sequence[str] | None = None) -> _E:
+    def fit(
+        self: _E,
+        X: npt.ArrayLike,
+        y: npt.ArrayLike,
+        sample_weight: npt.ArrayLike | None = None,
+        eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None = None,
+        init_model: str | None = None,
+        feature_names: Sequence[str] | None = None,
+    ) -> _E:
         """Fit to training data.
 
         ``BonsaiClassifier`` reads its classes off ``y`` here and picks
@@ -217,8 +224,9 @@ class _BonsaiEstimator:
         """
         _reject_eval_set_list(eval_set)
         y_enc = self._encode_targets(y)
-        overrides = (self._warm_start_overrides() if init_model is not None
-                     else self._build_overrides())
+        overrides = (
+            self._warm_start_overrides() if init_model is not None else self._build_overrides()
+        )
         ev = None
         if eval_set is not None:
             self._reject_dart_eval_set(overrides)
@@ -227,14 +235,18 @@ class _BonsaiEstimator:
         names = self._fit_names(X, feature_names, init_model)
         Xa = _as_f32(X, 2, "X")
         self._model = train(
-            overrides, Xa, y_enc, ev, init_model, sample_weight=sw,
+            overrides,
+            Xa,
+            y_enc,
+            ev,
+            init_model,
+            sample_weight=sw,
             feature_names=names,
         )
         self._record_fit_inputs(Xa)
         return self
 
-    def predict(self, X: npt.ArrayLike | Dataset,
-                num_iteration: int = 0) -> np.ndarray:
+    def predict(self, X: npt.ArrayLike | Dataset, num_iteration: int = 0) -> np.ndarray:
         """Predict with the fitted model.
 
         Parameters
@@ -403,9 +415,7 @@ class _BonsaiEstimator:
         self._check_fitted()
         name = self._model.objective_name
         hist = [float(v) for v in self._model.eval_history]
-        start = next(
-            (i for i, v in enumerate(hist) if not np.isnan(v)), len(hist)
-        )
+        start = next((i for i, v in enumerate(hist) if not np.isnan(v)), len(hist))
         hist = hist[start:]
         if not hist:
             return {}
@@ -469,8 +479,10 @@ class _BonsaiEstimator:
     # the arguments that write it: `device` rewrites the grower for a device,
     # `subsample` turns the sampler on. A warm start may inherit the model's
     # value for a key only when all of them are still at their defaults.
-    _WARM_START_KNOBS = (("dispatch.grower_name", ("grower", "device")),
-                         ("dispatch.sampler_name", ("sampler", "subsample")))
+    _WARM_START_KNOBS = (
+        ("dispatch.grower_name", ("grower", "device")),
+        ("dispatch.sampler_name", ("sampler", "subsample")),
+    )
 
     def _store(self, arguments: dict):
         """Keep every constructor argument raw; ``get_params``/``clone`` read
@@ -611,9 +623,7 @@ class _BonsaiEstimator:
         self._check_fitted()
         hist = self._model.eval_history
         if not self.early_stopping_rounds or not len(hist):
-            raise AttributeError(
-                f"{what} needs fit(eval_set=...) with early_stopping_rounds set"
-            )
+            raise AttributeError(f"{what} needs fit(eval_set=...) with early_stopping_rounds set")
         return hist
 
     def _check_predict_names(self, X: object):
@@ -651,15 +661,17 @@ class _BonsaiEstimator:
         columns may still be in the right order."""
         estimator = type(self).__name__
         if fitted_has_names:
-            message = (f"X does not have valid feature names, but {estimator} was "
-                       "fitted with feature names")
+            message = (
+                f"X does not have valid feature names, but {estimator} was "
+                "fitted with feature names"
+            )
         else:
-            message = (f"X has feature names, but {estimator} was fitted without "
-                       "feature names")
+            message = f"X has feature names, but {estimator} was fitted without feature names"
         warnings.warn(message, stacklevel=4)
 
-    def _fit_names(self, X: object, feature_names: Sequence[str] | None,
-                   init_model: str | None) -> list[str] | None:
+    def _fit_names(
+        self, X: object, feature_names: Sequence[str] | None, init_model: str | None
+    ) -> list[str] | None:
         """The names to train under, read before X is coerced to an array.
 
         A warm start keeps the loaded model's names, so names merely
@@ -727,6 +739,7 @@ class _BonsaiEstimator:
 
 
 # Regressor ========================================================================================
+
 
 class BonsaiRegressor(_BonsaiEstimator):
     """sklearn-style wrapper around the native booster.
@@ -809,8 +822,12 @@ class BonsaiRegressor(_BonsaiEstimator):
     ):
         self._store(locals())
 
-    def score(self, X: npt.ArrayLike | Dataset, y: npt.ArrayLike,
-              sample_weight: npt.ArrayLike | None = None) -> float:
+    def score(
+        self,
+        X: npt.ArrayLike | Dataset,
+        y: npt.ArrayLike,
+        sample_weight: npt.ArrayLike | None = None,
+    ) -> float:
         """Compute R² (coefficient of determination) on held-out data.
 
         Matches sklearn's ``RegressorMixin.score``, computed by hand with no
@@ -833,8 +850,11 @@ class BonsaiRegressor(_BonsaiEstimator):
         """
         y_true = _as_f32(y, 1, "y").astype(np.float64)
         y_pred = np.asarray(self.predict(X), dtype=np.float64)
-        w = (None if sample_weight is None
-             else _as_f32(sample_weight, 1, "sample_weight").astype(np.float64))
+        w = (
+            None
+            if sample_weight is None
+            else _as_f32(sample_weight, 1, "sample_weight").astype(np.float64)
+        )
 
         if w is None:
             avg_true = y_true.mean()
@@ -868,6 +888,7 @@ class BonsaiRegressor(_BonsaiEstimator):
 
 
 # Classifier =======================================================================================
+
 
 class BonsaiClassifier(_BonsaiEstimator):
     """sklearn-style classifier wrapping the native booster's ``logloss``
@@ -965,8 +986,12 @@ class BonsaiClassifier(_BonsaiEstimator):
             return np.column_stack([1.0 - p, p])
         return np.asarray(self._model.predict_proba(X), dtype=np.float64)
 
-    def score(self, X: npt.ArrayLike | Dataset, y: npt.ArrayLike,
-              sample_weight: npt.ArrayLike | None = None) -> float:
+    def score(
+        self,
+        X: npt.ArrayLike | Dataset,
+        y: npt.ArrayLike,
+        sample_weight: npt.ArrayLike | None = None,
+    ) -> float:
         """Compute accuracy on held-out data.
 
         Matches sklearn's ``ClassifierMixin.score``, computed by hand with no
@@ -1074,6 +1099,7 @@ class BonsaiClassifier(_BonsaiEstimator):
 
 # Private Functions ================================================================================
 
+
 def _constructor_names(cls) -> list[str]:
     """The ``__init__`` parameter names, which are the sklearn parameters."""
     return [name for name in inspect.signature(cls.__init__).parameters if name != "self"]
@@ -1082,8 +1108,7 @@ def _constructor_names(cls) -> list[str]:
 def _init_defaults(cls) -> dict[str, object]:
     """Constructor-signature defaults, keyed by parameter name."""
     sig = inspect.signature(cls.__init__)
-    return {name: prm.default for name, prm in sig.parameters.items()
-            if name != "self"}
+    return {name: prm.default for name, prm in sig.parameters.items() if name != "self"}
 
 
 def _names_disagreement(fitted: list[str], given: list[str]) -> str:
@@ -1094,8 +1119,9 @@ def _names_disagreement(fitted: list[str], given: list[str]) -> str:
     detail = (f" Unseen at fit time: {unseen}." if unseen else "") + (
         f" Seen at fit time, now missing: {missing}." if missing else ""
     )
-    return ("The feature names should match those that were passed during "
-            "fit." + (detail or " The same names arrived in a different order."))
+    return "The feature names should match those that were passed during fit." + (
+        detail or " The same names arrived in a different order."
+    )
 
 
 def _input_feature_names(X: object) -> list[str] | None:

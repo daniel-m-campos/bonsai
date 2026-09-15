@@ -10,8 +10,9 @@ import pathlib
 import sys
 
 
-def write_or_check(outputs: dict[pathlib.Path, str], *, repo: pathlib.Path,
-                   script: str, label: str, detail: str) -> int:
+def write_or_check(
+    outputs: dict[pathlib.Path, str], *, repo: pathlib.Path, script: str, label: str, detail: str
+) -> int:
     """Write the rendered files, or verify them under `--check`.
 
     Every generator ends the same way: `--check` (what CI runs) compares the
@@ -38,20 +39,17 @@ def write_or_check(outputs: dict[pathlib.Path, str], *, repo: pathlib.Path,
         Process exit code: 0 written or in sync, 1 stale.
     """
     if "--check" in sys.argv:
-        stale = [p for p, text in outputs.items()
-                 if not p.exists() or p.read_text() != text]
+        stale = [p for p, text in outputs.items() if not p.exists() or p.read_text() != text]
         if stale:
             names = ", ".join(str(p.relative_to(repo)) for p in stale)
-            print(f"ERROR: {names} is stale; run python3 {script}",
-                  file=sys.stderr)
+            print(f"ERROR: {names} is stale; run python3 {script}", file=sys.stderr)
             return 1
         print(f"{label}: in sync ({detail})")
         return 0
     for path, text in outputs.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
-    written = (str(next(iter(outputs)).relative_to(repo))
-               if len(outputs) == 1 else label)
+    written = str(next(iter(outputs)).relative_to(repo)) if len(outputs) == 1 else label
     print(f"wrote {written} ({detail})")
     return 0
 

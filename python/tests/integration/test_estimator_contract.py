@@ -28,8 +28,11 @@ def _reg_data(n=600, p=8):
 
 def _cls_data(n=600, p=8, k=2):
     X = RNG.standard_normal((n, p)).astype(np.float32)
-    y = (X[:, 0] + 0.3 * RNG.standard_normal(n) > 0).astype(np.int64) if k == 2 \
+    y = (
+        (X[:, 0] + 0.3 * RNG.standard_normal(n) > 0).astype(np.int64)
+        if k == 2
         else RNG.integers(0, k, n)
+    )
     return X[: n // 2], y[: n // 2], X[n // 2 :], y[n // 2 :]
 
 
@@ -113,12 +116,8 @@ def test_multiclass_reports_the_softmax_objective():
 
 def test_regressor_quantile_objective():
     Xtr, ytr, Xva, _ = _reg_data()
-    est = bonsai.BonsaiRegressor(
-        n_iters=30, objective="quantile", quantile_alpha=0.9
-    ).fit(Xtr, ytr)
-    med = bonsai.BonsaiRegressor(
-        n_iters=30, objective="quantile", quantile_alpha=0.5
-    ).fit(Xtr, ytr)
+    est = bonsai.BonsaiRegressor(n_iters=30, objective="quantile", quantile_alpha=0.9).fit(Xtr, ytr)
+    med = bonsai.BonsaiRegressor(n_iters=30, objective="quantile", quantile_alpha=0.5).fit(Xtr, ytr)
     assert est.predict(Xva).mean() > med.predict(Xva).mean()
 
 
@@ -155,9 +154,7 @@ def test_dart_with_eval_set_raises():
     invalidates the incremental valid-loss bookkeeping); passing eval_set
     must fail loudly at fit time instead of silently recording nothing."""
     Xtr, ytr, Xva, yva = _reg_data()
-    est = bonsai.BonsaiRegressor(
-        n_iters=10, params={"booster.dart_drop_rate": 0.1}
-    )
+    est = bonsai.BonsaiRegressor(n_iters=10, params={"booster.dart_drop_rate": 0.1})
     with pytest.raises(ValueError) as e:
         est.fit(Xtr, ytr, eval_set=(Xva, yva))
     assert "dart_drop_rate" in str(e.value)

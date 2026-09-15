@@ -75,8 +75,9 @@ def test_view_equals_a_materialized_copy(seed):
     rng = np.random.default_rng(seed + 100)
     shapes = {
         "range": np.arange(1000, 3000),
-        "segments": np.concatenate([np.arange(0, 500), np.arange(1500, 2500),
-                                    np.arange(3000, 3600)]),
+        "segments": np.concatenate(
+            [np.arange(0, 500), np.arange(1500, 2500), np.arange(3000, 3600)]
+        ),
         "gather": np.sort(rng.choice(n, size=2000, replace=False)),
     }
     for name, idx in shapes.items():
@@ -160,8 +161,7 @@ def test_chained_view_outlives_both_ancestors():
     ds = bonsai.Dataset(X, y)
     idx = np.arange(500, 3500)
     inner = np.arange(0, 1000)
-    reference = _model_bytes(
-        _PAIRS, bonsai.Dataset(X[idx[inner]], y[idx[inner]], reference=ds))
+    reference = _model_bytes(_PAIRS, bonsai.Dataset(X[idx[inner]], y[idx[inner]], reference=ds))
     v = ds.subset(rows=idx)
     v2 = v.subset(rows=inner)
     del v
@@ -406,8 +406,7 @@ def test_subsample_of_one_over_a_view_is_the_plain_view_fit():
     X, y = _blocky_data()
     view = bonsai.Dataset(X, y).subset(rows=np.arange(1500, 3500))
     plain = bonsai.train(_PAIRS, view).predict(X)
-    full = dict(_PAIRS, **{"dispatch.sampler_name": "bernoulli",
-                           "sampler.subsample": "1.0"})
+    full = dict(_PAIRS, **{"dispatch.sampler_name": "bernoulli", "sampler.subsample": "1.0"})
     assert np.array_equal(plain, bonsai.train(full, view).predict(X))
 
 
@@ -468,9 +467,7 @@ def test_pred_contribs_over_a_view(shape):
     phi = model.pred_contribs(ds.subset(rows=idx))
     assert phi.shape == (len(idx), X.shape[1] + 1)
     np.testing.assert_allclose(phi, model.pred_contribs(X[idx]), rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(
-        phi.sum(axis=1), model.predict(X[idx]), rtol=1e-5, atol=1e-5
-    )
+    np.testing.assert_allclose(phi.sum(axis=1), model.predict(X[idx]), rtol=1e-5, atol=1e-5)
 
 
 def test_predict_proba_over_a_view():
@@ -519,9 +516,7 @@ def test_eval_set_narrows_to_the_view():
     )
     history = np.asarray(model.eval_history, dtype=np.float64)
     assert len(history) == int(_READ_PAIRS["booster.n_iters"])
-    by_hand = np.mean(
-        (model.predict(X[valid_rows]).astype(np.float64) - y[valid_rows]) ** 2
-    )
+    by_hand = np.mean((model.predict(X[valid_rows]).astype(np.float64) - y[valid_rows]) ** 2)
     assert history[-1] == pytest.approx(by_hand, rel=1e-4)
     copies = bonsai.train(
         _READ_PAIRS,
@@ -534,8 +529,7 @@ def test_eval_set_narrows_to_the_view():
 def test_eval_set_view_drives_early_stopping():
     X, y = _blocky_data()
     ds = bonsai.Dataset(X, y)
-    pairs = dict(_READ_PAIRS, **{"booster.n_iters": "200",
-                                 "booster.early_stopping_rounds": "3"})
+    pairs = dict(_READ_PAIRS, **{"booster.n_iters": "200", "booster.early_stopping_rounds": "3"})
     model = bonsai.train(
         pairs,
         ds.subset(rows=np.arange(0, 3000)),
@@ -555,13 +549,9 @@ def test_the_five_fold_walk_forward_loop_runs():
     pairs = dict(_READ_PAIRS, **{"booster.n_iters": "80"})
     scores = []
     for train_rows, valid_rows in sklearn_selection.TimeSeriesSplit(5).split(X):
-        model = bonsai.train(
-            pairs, ds.subset(rows=train_rows), eval_set=ds.subset(rows=valid_rows)
-        )
+        model = bonsai.train(pairs, ds.subset(rows=train_rows), eval_set=ds.subset(rows=valid_rows))
         scores.append(
-            sklearn_metrics.r2_score(
-                y[valid_rows], model.predict(ds.subset(rows=valid_rows))
-            )
+            sklearn_metrics.r2_score(y[valid_rows], model.predict(ds.subset(rows=valid_rows)))
         )
     assert len(scores) == 5
     assert min(scores) > 0.5
@@ -824,9 +814,7 @@ def test_reorder_lays_the_rows_out_in_the_given_order():
 def test_reorder_by_the_identity_is_the_same_fit():
     X, y = _blocky_data(n=800, f=5)
     ds = bonsai.Dataset(X, y)
-    assert _model_bytes(_PAIRS, ds.reorder(rows=np.arange(len(X)))) == _model_bytes(
-        _PAIRS, ds
-    )
+    assert _model_bytes(_PAIRS, ds.reorder(rows=np.arange(len(X)))) == _model_bytes(_PAIRS, ds)
 
 
 def test_a_permutation_moves_the_model_only_by_rounding():
@@ -865,7 +853,8 @@ def test_reorder_composes_with_a_column_selection():
     assert laid.feature_names == ["f3", "f0"]
     assert laid.n_rows == len(X)
     direct = bonsai.Dataset(
-        np.ascontiguousarray(X[np.ix_(order, [3, 0])]), y[order],
+        np.ascontiguousarray(X[np.ix_(order, [3, 0])]),
+        y[order],
         feature_names=["f3", "f0"],
     )
     assert _model_bytes(_PAIRS, laid) == _model_bytes(_PAIRS, direct)
@@ -906,10 +895,13 @@ def test_reorder_outlives_its_parent():
     assert _model_bytes(_PAIRS, laid) == expected
 
 
-@pytest.mark.parametrize(("name", "idx"), [
-    ("contiguous", np.arange(0, 1500)),
-    ("strided", np.arange(0, 4000, 3)),
-])
+@pytest.mark.parametrize(
+    ("name", "idx"),
+    [
+        ("contiguous", np.arange(0, 1500)),
+        ("strided", np.arange(0, 4000, 3)),
+    ],
+)
 def test_a_view_leaves_out_of_view_scores_alone(name, idx):
     """The contract stated on RecycledOutputs, pinned.
 

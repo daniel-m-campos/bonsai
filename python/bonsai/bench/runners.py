@@ -49,6 +49,7 @@ EVAL_MODES = ("off", "eval", "stop")
 
 # Public Functions =================================================================================
 
+
 def eval_split(cell: dict, X, y):
     """Split the train side into a fit part and the held-out eval part.
 
@@ -139,6 +140,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     retained round count and the model the reported metric comes from.
     """
     import bonsai
+
     grower = spec[runlog.Row.VARIANT].removeprefix("bonsai_")
     if grower.startswith("cuda") and not bonsai.cuda_available():
         raise RuntimeError("unsupported: cuda grower without a CUDA device/build")
@@ -149,12 +151,18 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     rounds = patience_of(c)
     ev = (Xev, yev) if Xev is not None else None
     pairs = rp.bonsai_core(
-        learning_rate=c["lr"], max_depth=c["depth"],
-        num_leaves=rp.num_leaves_of(c), **rp.knobs_of(c),
-        max_bin=c["bins"], seed=c["seed"],
-        n_iters=c["iters"], n_threads=threads, grower=grower,
+        learning_rate=c["lr"],
+        max_depth=c["depth"],
+        num_leaves=rp.num_leaves_of(c),
+        **rp.knobs_of(c),
+        max_bin=c["bins"],
+        seed=c["seed"],
+        n_iters=c["iters"],
+        n_threads=threads,
+        grower=grower,
         objective="logloss" if task == "binary" else "mse",
-        early_stopping_rounds=rounds)
+        early_stopping_rounds=rounds,
+    )
     timed = {}
     ds = None
     if spec.get("fused"):
@@ -164,19 +172,24 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
         with _phase(timed, runlog.Row.FIT_S):
             with _phase(timed, runlog.Row.INGEST_S):
                 ds = bonsai.Dataset(
-                    X, y, max_bin=c["bins"], n_threads=threads,
-                    device="cuda" if grower.startswith("cuda") else "cpu")
+                    X,
+                    y,
+                    max_bin=c["bins"],
+                    n_threads=threads,
+                    device="cuda" if grower.startswith("cuda") else "cpu",
+                )
             with _phase(timed, runlog.Row.TRAIN_S):
-                model = bonsai.train({k: v for k, v in pairs
-                                      if not k.startswith("bin_mapper.")},
-                                     ds, eval_set=ev)
+                model = bonsai.train(
+                    {k: v for k, v in pairs if not k.startswith("bin_mapper.")}, ds, eval_set=ev
+                )
     with _phase(timed, runlog.Row.PREDICT_S):
         pred_te = np.asarray(model.predict(Xte))
     if c.get("contribs"):
         if task != "reg":
             raise RuntimeError(
                 "unsupported: contribs additivity is only valid under mse's "
-                "identity link, where pred_te is the raw pre-link margin")
+                "identity link, where pred_te is the raw pre-link margin"
+            )
         # reference=ds inherits ds's cut points AND device, so on a cuda
         # arm ds_test routes pred_contribs through the device kernel
         # exactly as reference=ds already routes predict; the fused arm
@@ -184,12 +197,18 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
         # pred_contribs bins on the host.
         ds_test = bonsai.Dataset(Xte, yte, reference=ds) if ds is not None else None
         with _phase(timed, runlog.Row.CONTRIBS_S):
-            phi = np.asarray(model.pred_contribs(
-                ds_test if ds_test is not None else Xte))
+            phi = np.asarray(model.pred_contribs(ds_test if ds_test is not None else Xte))
         timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, pred_te)
-    return _score(task, timed, y, yte, pred_te,
-                  lambda: np.asarray(model.predict(X)),
-                  cell=c, stopped_at=model.n_iters if rounds else None)
+    return _score(
+        task,
+        timed,
+        y,
+        yte,
+        pred_te,
+        lambda: np.asarray(model.predict(X)),
+        cell=c,
+        stopped_at=model.n_iters if rounds else None,
+    )
 
 
 def run_xgb(spec, X, y, Xte, yte) -> dict:
@@ -212,33 +231,42 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     training rather than raise, which posts a CPU time under a cuda label.
     """
     import xgboost as xgb
+
     c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
     device = resolve(spec[runlog.Row.VARIANT]).device
     X, y, Xev, yev = eval_split(c, X, y)
     rounds = patience_of(c)
-    params = {**rp.xgb_core(learning_rate=c["lr"], max_depth=c["depth"],
-                            **rp.knobs_of(c),
-                            max_bin=c["bins_effective"], seed=c["seed"]),
-              "objective": ("binary:logistic" if task == "binary"
-                            else "reg:squarederror"),
-              "device": device, "nthread": spec[runlog.Row.THREADS]}
+    params = {
+        **rp.xgb_core(
+            learning_rate=c["lr"],
+            max_depth=c["depth"],
+            **rp.knobs_of(c),
+            max_bin=c["bins_effective"],
+            seed=c["seed"],
+        ),
+        "objective": ("binary:logistic" if task == "binary" else "reg:squarederror"),
+        "device": device,
+        "nthread": spec[runlog.Row.THREADS],
+    }
     timed = {}
     with _phase(timed, runlog.Row.FIT_S):
         with _phase(timed, runlog.Row.INGEST_S):
-            dtrain = xgb.QuantileDMatrix(X, label=y,
-                                         max_bin=c["bins_effective"])
+            dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=c["bins_effective"])
             fit_kwargs = {}
             if Xev is not None:
-                dval = xgb.QuantileDMatrix(Xev, label=yev, ref=dtrain,
-                                           max_bin=c["bins_effective"])
+                dval = xgb.QuantileDMatrix(Xev, label=yev, ref=dtrain, max_bin=c["bins_effective"])
                 fit_kwargs = {"evals": [(dval, "val")], "verbose_eval": False}
         with _phase(timed, runlog.Row.TRAIN_S):
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
-                booster = xgb.train(params, dtrain,
-                                    num_boost_round=c["iters"], **fit_kwargs,
-                                    **rp.xgb_early_stop(rounds))
+                booster = xgb.train(
+                    params,
+                    dtrain,
+                    num_boost_round=c["iters"],
+                    **fit_kwargs,
+                    **rp.xgb_early_stop(rounds),
+                )
     if device == Device.CUDA:
         assert_xgb_trained_on_device(booster, caught)
     # (0, 0) is xgboost's "every tree"; a stop needs the explicit range.
@@ -255,15 +283,19 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
         # phase above times only the call over an already-built matrix.
         dtest = xgb.DMatrix(Xte)
         with _phase(timed, runlog.Row.CONTRIBS_S):
-            phi = booster.predict(dtest, pred_contribs=True,
-                                  iteration_range=span)
-        margin = booster.predict(dtest, output_margin=True,
-                                 iteration_range=span)
+            phi = booster.predict(dtest, pred_contribs=True, iteration_range=span)
+        margin = booster.predict(dtest, output_margin=True, iteration_range=span)
         timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, margin)
-    return _score(task, timed, y, yte, pred_te,
-                  lambda: booster.inplace_predict(X, iteration_range=span),
-                  cell=c,
-                  stopped_at=booster.best_iteration + 1 if rounds else None)
+    return _score(
+        task,
+        timed,
+        y,
+        yte,
+        pred_te,
+        lambda: booster.inplace_predict(X, iteration_range=span),
+        cell=c,
+        stopped_at=booster.best_iteration + 1 if rounds else None,
+    )
 
 
 def assert_xgb_trained_on_device(booster, caught_warnings) -> None:
@@ -285,12 +317,12 @@ def assert_xgb_trained_on_device(booster, caught_warnings) -> None:
     actual = cfg["learner"]["generic_param"]["device"]
     if actual.startswith("cuda"):
         return
-    hint = next((str(w.message) for w in caught_warnings
-                if "gpu" in str(w.message).lower()), None)
+    hint = next((str(w.message) for w in caught_warnings if "gpu" in str(w.message).lower()), None)
     detail = f" ({hint})" if hint else ""
     raise RuntimeError(
         "unsupported: xgboost silently fell back to CPU (requested "
-        f"device=cuda, trained device={actual!r}){detail}")
+        f"device=cuda, trained device={actual!r}){detail}"
+    )
 
 
 def run_lgbm(spec, X, y, Xte, yte) -> dict:
@@ -313,16 +345,25 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
     observed here.
     """
     import lightgbm as lgb
+
     c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
     device = resolve(spec[runlog.Row.VARIANT]).device
     X, y, Xev, yev = eval_split(c, X, y)
     rounds = patience_of(c)
-    params = {**rp.lgbm_core(learning_rate=c["lr"], max_depth=c["depth"],
-                             num_leaves=rp.num_leaves_of(c), **rp.knobs_of(c),
-                             max_bin=c["bins_effective"], seed=c["seed"]),
-              "objective": "binary" if task == "binary" else "regression",
-              "device_type": device, "num_threads": spec[runlog.Row.THREADS]}
+    params = {
+        **rp.lgbm_core(
+            learning_rate=c["lr"],
+            max_depth=c["depth"],
+            num_leaves=rp.num_leaves_of(c),
+            **rp.knobs_of(c),
+            max_bin=c["bins_effective"],
+            seed=c["seed"],
+        ),
+        "objective": "binary" if task == "binary" else "regression",
+        "device_type": device,
+        "num_threads": spec[runlog.Row.THREADS],
+    }
     timed = {}
     with _phase(timed, runlog.Row.FIT_S):
         with _phase(timed, runlog.Row.INGEST_S):
@@ -334,15 +375,16 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
             dtrain = lgb.Dataset(X, label=y, params=params).construct()
             fit_kwargs = {}
             if Xev is not None:
-                fit_kwargs = {"valid_sets": [
-                    lgb.Dataset(Xev, label=yev, reference=dtrain,
-                                params=params).construct()]}
+                fit_kwargs = {
+                    "valid_sets": [
+                        lgb.Dataset(Xev, label=yev, reference=dtrain, params=params).construct()
+                    ]
+                }
             stop_kwargs = rp.lgbm_early_stop(rounds)
             if stop_kwargs:
                 fit_kwargs["callbacks"] = [lgb.early_stopping(**stop_kwargs)]
         with _phase(timed, runlog.Row.TRAIN_S):
-            model = lgb.train(params, dtrain, num_boost_round=c["iters"],
-                              **fit_kwargs)
+            model = lgb.train(params, dtrain, num_boost_round=c["iters"], **fit_kwargs)
     with _phase(timed, runlog.Row.PREDICT_S):
         pred_te = model.predict(Xte)
     if c.get("contribs"):
@@ -353,8 +395,16 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
             phi = model.predict(Xte, pred_contrib=True)
         margin = model.predict(Xte, raw_score=True)
         timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, margin)
-    return _score(task, timed, y, yte, pred_te, lambda: model.predict(X),
-                  cell=c, stopped_at=model.best_iteration if rounds else None)
+    return _score(
+        task,
+        timed,
+        y,
+        yte,
+        pred_te,
+        lambda: model.predict(X),
+        cell=c,
+        stopped_at=model.best_iteration if rounds else None,
+    )
 
 
 def run_catboost(spec, X, y, Xte, yte) -> dict:
@@ -375,6 +425,7 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     this guard exists for has not been observed here.
     """
     from catboost import CatBoostClassifier, CatBoostRegressor, Pool
+
     c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
     device = resolve(spec[runlog.Row.VARIANT]).device
@@ -382,15 +433,22 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     rounds = patience_of(c)
     cls = CatBoostClassifier if task == "binary" else CatBoostRegressor
     model = cls(
-        **rp.catboost_core(learning_rate=c["lr"], max_depth=c["depth"],
-                           lambda_l2=rp.knobs_of(c)["lambda_l2"],
-                           max_bin=c["bins_effective"], seed=c["seed"],
-                           device=device),
+        **rp.catboost_core(
+            learning_rate=c["lr"],
+            max_depth=c["depth"],
+            lambda_l2=rp.knobs_of(c)["lambda_l2"],
+            max_bin=c["bins_effective"],
+            seed=c["seed"],
+            device=device,
+        ),
         **rp.catboost_early_stop(rounds, has_eval_set=Xev is not None),
         iterations=c["iters"],
         loss_function="Logloss" if task == "binary" else "RMSE",
-        task_type=("GPU" if device == Device.CUDA else "CPU"), devices="0",
-        thread_count=spec[runlog.Row.THREADS], verbose=False)
+        task_type=("GPU" if device == Device.CUDA else "CPU"),
+        devices="0",
+        thread_count=spec[runlog.Row.THREADS],
+        verbose=False,
+    )
     timed = {}
     with _phase(timed, runlog.Row.FIT_S):
         with _phase(timed, runlog.Row.INGEST_S):
@@ -403,8 +461,7 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
         with _phase(timed, runlog.Row.TRAIN_S):
             model.fit(pool, eval_set=eval_pool)
     with _phase(timed, runlog.Row.PREDICT_S):
-        pred_te = (model.predict_proba(Xte)[:, 1] if task == "binary"
-                   else model.predict(Xte))
+        pred_te = model.predict_proba(Xte)[:, 1] if task == "binary" else model.predict(Xte)
     if c.get("contribs"):
         # CatBoost's SHAP is CPU-only even on a task_type="GPU" arm, same
         # caveat as lightgbm's. RawFormulaVal is the pre-link score
@@ -414,12 +471,19 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
             phi = model.get_feature_importance(type="ShapValues", data=pool_te)
         margin = model.predict(Xte, prediction_type="RawFormulaVal")
         timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, margin)
-    return _score(task, timed, y, yte, pred_te, lambda: model.predict(X),
-                  cell=c, stopped_at=model.tree_count_ if rounds else None)
+    return _score(
+        task,
+        timed,
+        y,
+        yte,
+        pred_te,
+        lambda: model.predict(X),
+        cell=c,
+        stopped_at=model.tree_count_ if rounds else None,
+    )
 
 
-RUNNERS = {Lib.BONSAI: run_bonsai, Lib.XGB: run_xgb, Lib.LGBM: run_lgbm,
-           Lib.CATBOOST: run_catboost}
+RUNNERS = {Lib.BONSAI: run_bonsai, Lib.XGB: run_xgb, Lib.LGBM: run_lgbm, Lib.CATBOOST: run_catboost}
 
 
 def cache_fits(cell: dict, headroom: float = 0.6) -> bool:
@@ -469,16 +533,20 @@ def cached_gen_data(cell: dict, cache_dir: str):
     an optimization and never a reason to run out of memory.
     """
     if not cache_fits(cell):
-        return gen_data(cell["rows"], cell["cols"], cell["seed"],
-                        cell["n_test"], cell["informative"])
-    key = (f"r{DATA_RECIPE}-{cell['rows']}x{cell['cols']}"
-           f"-s{cell['seed']}-i{cell['informative']}-t{cell['n_test']}")
+        return gen_data(
+            cell["rows"], cell["cols"], cell["seed"], cell["n_test"], cell["informative"]
+        )
+    key = (
+        f"r{DATA_RECIPE}-{cell['rows']}x{cell['cols']}"
+        f"-s{cell['seed']}-i{cell['informative']}-t{cell['n_test']}"
+    )
     root = pathlib.Path(cache_dir)
     root.mkdir(parents=True, exist_ok=True)
     paths = [root / f"{key}-{n}.npy" for n in ("X", "y", "Xte", "yte")]
     if not all(p.exists() for p in paths):
-        arrays = gen_data(cell["rows"], cell["cols"], cell["seed"],
-                          cell["n_test"], cell["informative"])
+        arrays = gen_data(
+            cell["rows"], cell["cols"], cell["seed"], cell["n_test"], cell["informative"]
+        )
         for p, a in zip(paths, arrays):
             tmp = p.with_name(p.name + ".tmp.npy")
             np.save(tmp, a)
@@ -497,14 +565,14 @@ def worker(spec: dict) -> dict:
     if cache_dir:
         X, y, Xte, yte = cached_gen_data(c, cache_dir)
     else:
-        X, y, Xte, yte = gen_data(c["rows"], c["cols"], c["seed"], c["n_test"],
-                                  c["informative"])
+        X, y, Xte, yte = gen_data(c["rows"], c["cols"], c["seed"], c["n_test"], c["informative"])
     v = resolve(spec[runlog.Row.VARIANT])
     # A cell naming folds is asking the cross-validation question, which is
     # about reuse across k fits rather than the cost of one; cv.py owns it,
     # and none of the single-fit rates below apply.
     if "folds" in c:
         from bonsai.bench import cv
+
         if v.device == Device.CUDA:
             # The single-fit path below pays an untimed micro-fit so context
             # creation and the PTX JIT stay out of the number; a fold loop
@@ -531,21 +599,21 @@ def worker(spec: dict) -> dict:
     # An eval-mode cell fits fewer rows than it names: the rate is charged
     # against the rows that were actually fit, not the cell's nominal count.
     fit_rows = c["rows"] - eval_rows(c, c["rows"])
-    out["fit_rows_per_s"] = (round(fit_rows / out[runlog.Row.FIT_S])
-                             if out[runlog.Row.FIT_S] else None)
-    out["predict_rows_per_s"] = (round(c["n_test"] / out[runlog.Row.PREDICT_S])
-                                 if out[runlog.Row.PREDICT_S] else None)
+    out["fit_rows_per_s"] = (
+        round(fit_rows / out[runlog.Row.FIT_S]) if out[runlog.Row.FIT_S] else None
+    )
+    out["predict_rows_per_s"] = (
+        round(c["n_test"] / out[runlog.Row.PREDICT_S]) if out[runlog.Row.PREDICT_S] else None
+    )
     if runlog.Row.CONTRIBS_S in out:
         out[runlog.Row.CONTRIBS_ROWS_PER_S] = (
-            round(c["n_test"] / out[runlog.Row.CONTRIBS_S])
-            if out[runlog.Row.CONTRIBS_S] else None)
-    for k in (runlog.Row.FIT_S, runlog.Row.INGEST_S, runlog.Row.TRAIN_S,
-              runlog.Row.PREDICT_S):
+            round(c["n_test"] / out[runlog.Row.CONTRIBS_S]) if out[runlog.Row.CONTRIBS_S] else None
+        )
+    for k in (runlog.Row.FIT_S, runlog.Row.INGEST_S, runlog.Row.TRAIN_S, runlog.Row.PREDICT_S):
         out[k] = round(out[k], 3) if out[k] is not None else None
     if runlog.Row.CONTRIBS_S in out:
         out[runlog.Row.CONTRIBS_S] = round(out[runlog.Row.CONTRIBS_S], 3)
-        out[runlog.Row.CONTRIBS_ADDITIVITY] = round(
-            out[runlog.Row.CONTRIBS_ADDITIVITY], 8)
+        out[runlog.Row.CONTRIBS_ADDITIVITY] = round(out[runlog.Row.CONTRIBS_ADDITIVITY], 8)
     for k in (runlog.Row.R2_TRAIN, runlog.Row.R2_TEST):
         out[k] = round(out[k], 4)
     # The child is where the reference library was imported, so only the
@@ -555,6 +623,7 @@ def worker(spec: dict) -> dict:
 
 
 # Private Helpers ==================================================================================
+
 
 @contextlib.contextmanager
 def _phase(timed: dict, name: str):
@@ -570,8 +639,17 @@ def _phase(timed: dict, name: str):
     timed[name] = time.perf_counter() - t0
 
 
-def _score(task: str, timed: dict, y, yte, pred_te, predict_train, *,
-           cell: dict | None = None, stopped_at: int | None = None) -> dict:
+def _score(
+    task: str,
+    timed: dict,
+    y,
+    yte,
+    pred_te,
+    predict_train,
+    *,
+    cell: dict | None = None,
+    stopped_at: int | None = None,
+) -> dict:
     """The runner result dict; predict_train runs only for regression, so
     binary tasks never pay a full train-side predict.
 
@@ -590,10 +668,12 @@ def _score(task: str, timed: dict, y, yte, pred_te, predict_train, *,
     contribs_s and contribs_additivity appear only for a contribs cell, the
     same additive rule as eval_mode: a legacy row's key set never changes.
     """
-    base = {runlog.Row.FIT_S: timed[runlog.Row.FIT_S],
-            runlog.Row.INGEST_S: timed.get(runlog.Row.INGEST_S),
-            runlog.Row.TRAIN_S: timed.get(runlog.Row.TRAIN_S),
-            runlog.Row.PREDICT_S: timed[runlog.Row.PREDICT_S]}
+    base = {
+        runlog.Row.FIT_S: timed[runlog.Row.FIT_S],
+        runlog.Row.INGEST_S: timed.get(runlog.Row.INGEST_S),
+        runlog.Row.TRAIN_S: timed.get(runlog.Row.TRAIN_S),
+        runlog.Row.PREDICT_S: timed[runlog.Row.PREDICT_S],
+    }
     if runlog.Row.CONTRIBS_S in timed:
         base[runlog.Row.CONTRIBS_S] = timed[runlog.Row.CONTRIBS_S]
         base[runlog.Row.CONTRIBS_ADDITIVITY] = timed[runlog.Row.CONTRIBS_ADDITIVITY]
@@ -604,5 +684,4 @@ def _score(task: str, timed: dict, y, yte, pred_te, predict_train, *,
     if task == "binary":
         return {**base, runlog.Row.AUC_TEST: auc(yte, pred_te)}
     pred_tr = predict_train()
-    return {**base, runlog.Row.R2_TRAIN: r2(y, pred_tr),
-            runlog.Row.R2_TEST: r2(yte, pred_te)}
+    return {**base, runlog.Row.R2_TRAIN: r2(y, pred_tr), runlog.Row.R2_TEST: r2(yte, pred_te)}

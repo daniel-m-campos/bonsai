@@ -72,8 +72,7 @@ def gen_data(rows: int, cols: int, seed: int, n_test: int, informative: int):
     # Unit normals now, scaled once below: sigma needs the whole of y, and
     # sigma * N(0, 1) is the N(0, sigma) the recipe asks for either way.
     noise = np.empty(n, dtype=np.float32)
-    bounds = [(i * n // N_BLOCKS, (i + 1) * n // N_BLOCKS)
-              for i in range(N_BLOCKS)]
+    bounds = [(i * n // N_BLOCKS, (i + 1) * n // N_BLOCKS) for i in range(N_BLOCKS)]
 
     def draw(block: int):
         lo, hi = bounds[block]
@@ -90,14 +89,19 @@ def gen_data(rows: int, cols: int, seed: int, n_test: int, informative: int):
 
 # Private Functions ================================================================================
 
+
 def _target(block: np.ndarray, idx: np.ndarray, k: int) -> np.ndarray:
     """The Friedman-1 sum over one block's rows; row-independent by design."""
     y = np.zeros(len(block), dtype=np.float32)
     for b in range(k // 5):
-        f = block[:, idx[b * 5:(b + 1) * 5]]
-        term = (10.0 * np.sin(np.pi * f[:, 0] * f[:, 1])
-                + 20.0 * (f[:, 2] - 0.5) ** 2 + 10.0 * f[:, 3] + 5.0 * f[:, 4])
-        y += (0.6 ** b) * term.astype(np.float32)
+        f = block[:, idx[b * 5 : (b + 1) * 5]]
+        term = (
+            10.0 * np.sin(np.pi * f[:, 0] * f[:, 1])
+            + 20.0 * (f[:, 2] - 0.5) ** 2
+            + 10.0 * f[:, 3]
+            + 5.0 * f[:, 4]
+        )
+        y += (0.6**b) * term.astype(np.float32)
     return y
 
 

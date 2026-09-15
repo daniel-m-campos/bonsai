@@ -41,9 +41,7 @@ def test_params_mirrors_the_section_registry():
     ]
     for sec in schema:
         cls = Params._SECTION_TYPES[sec["section"]]
-        assert [f["name"] for f in sec["fields"]] == [
-            f.name for f in dataclasses.fields(cls)
-        ]
+        assert [f["name"] for f in sec["fields"]] == [f.name for f in dataclasses.fields(cls)]
 
 
 def test_params_render_types_the_parser_reads():
@@ -51,12 +49,14 @@ def test_params_render_types_the_parser_reads():
     parser reads back, so the round trip through a fit restores the type:
     ints, floats, string lists, and bools (which are not ints here)."""
     X, y = _reg_data(n=500)
-    p = Params.from_dict({
-        "tree.max_depth": 8,
-        "booster.learning_rate": 0.1,
-        "metrics.fit": ["rmse", "mae"],
-        "data.header": True,
-    })
+    p = Params.from_dict(
+        {
+            "tree.max_depth": 8,
+            "booster.learning_rate": 0.1,
+            "metrics.fit": ["rmse", "mae"],
+            "data.header": True,
+        }
+    )
     resolved = Params.from_model(bonsai.train(p, bonsai.Dataset(X, y)))
     assert resolved.tree.max_depth == 8
     assert resolved.booster.learning_rate == pytest.approx(0.1)
@@ -96,8 +96,7 @@ def test_params_from_toml_carries_only_stated_keys():
         f.write("[tree]\nmax_depth = 4\nlambda_l2 = 0.5\n[booster]\nn_iters = 9\n")
         path = f.name
     p = Params.from_toml(path)
-    assert p.to_dict() == {"tree.max_depth": 4, "tree.lambda_l2": 0.5,
-                           "booster.n_iters": 9}
+    assert p.to_dict() == {"tree.max_depth": 4, "tree.lambda_l2": 0.5, "booster.n_iters": 9}
     assert (p | {"booster.n_iters": 3}).booster.n_iters == 3
 
     with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
@@ -126,12 +125,12 @@ def test_train_params_forms_are_bit_identical():
     ds = bonsai.Dataset(X, y)
     p = Params(booster=Booster(n_iters=15), tree=Tree(max_depth=5))
     ref = np.asarray(bonsai.train(p, ds).predict(X))
-    for params in ({"booster.n_iters": "15", "tree.max_depth": "5"},
-                   {"booster.n_iters": 15, "tree.max_depth": 5}):
-        np.testing.assert_array_equal(
-            ref, np.asarray(bonsai.train(params, ds).predict(X)))
-    np.testing.assert_array_equal(
-        ref, np.asarray(bonsai.train(p, X, y).predict(X)))
+    for params in (
+        {"booster.n_iters": "15", "tree.max_depth": "5"},
+        {"booster.n_iters": 15, "tree.max_depth": 5},
+    ):
+        np.testing.assert_array_equal(ref, np.asarray(bonsai.train(params, ds).predict(X)))
+    np.testing.assert_array_equal(ref, np.asarray(bonsai.train(p, X, y).predict(X)))
 
 
 def test_train_rejects_the_retired_pairs_form():

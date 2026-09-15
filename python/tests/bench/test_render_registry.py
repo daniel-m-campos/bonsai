@@ -25,9 +25,7 @@ def _registry(tmp_path, monkeypatch, entries, files):
         json.dumps({"_": {"note": "ignored"}, **entries})
     )
     for name, rows in files.items():
-        (results / name).write_text(
-            "".join(json.dumps(r) + "\n" for r in rows) + "\n"
-        )
+        (results / name).write_text("".join(json.dumps(r) + "\n" for r in rows) + "\n")
     monkeypatch.setattr(render_results, "REPO", tmp_path)
     monkeypatch.setattr(render_results, "RESULTS", results)
 
@@ -88,9 +86,13 @@ def test_a_row_without_a_sha_needs_sha_partial(tmp_path, monkeypatch, partial):
     entries = {"rows": {"file": "rows.jsonl", "sha": SHA, "sha_partial": partial}}
     rows = [{"git_sha": SHA}, {"variant": "no provenance"}]
     _registry(tmp_path, monkeypatch, entries, {"rows.jsonl": rows})
-    expected = [] if partial else [
-        "standings rows: rows without git_sha in a full-provenance standings file",
-    ]
+    expected = (
+        []
+        if partial
+        else [
+            "standings rows: rows without git_sha in a full-provenance standings file",
+        ]
+    )
     assert render_results.check_registry({"rows.jsonl"}) == expected
 
 
@@ -111,13 +113,20 @@ def test_an_ab_file_is_held_to_the_same_rule(tmp_path, monkeypatch):
     assert render_results.check_registry({"rows.jsonl"}) == [
         "standings rows: ab ab-gpu-2026-09.jsonl is not rendered",
     ]
-    assert render_results.check_registry(
-        {"rows.jsonl", "ab-gpu-2026-09.jsonl"}) == []
+    assert render_results.check_registry({"rows.jsonl", "ab-gpu-2026-09.jsonl"}) == []
 
 
 def _quality_row(variant: str, dataset: str, value: float) -> dict:
-    return {"suite": 297, "dataset": dataset, "variant": variant, "seed": 0,
-            "kind": "reg", "metric": "r2", "value": value, "status": "ok"}
+    return {
+        "suite": 297,
+        "dataset": dataset,
+        "variant": variant,
+        "seed": 0,
+        "kind": "reg",
+        "metric": "r2",
+        "value": value,
+        "status": "ok",
+    }
 
 
 UNRANKED_ROWS = [
@@ -134,19 +143,21 @@ def test_an_unranked_arm_is_left_out_of_the_table_and_named_under_it(monkeypatch
     """An arm whose library does not take the campaign knobs on its device
     is measured but not ranked: the table ranks the rest, and the note
     under it carries the reason and the rank the arm would have taken."""
-    monkeypatch.setattr(render_results.check_standings, "QUALITY_UNRANKED",
-                        {"lgbm_cuda": "it ignores max_depth"})
+    monkeypatch.setattr(
+        render_results.check_standings, "QUALITY_UNRANKED", {"lgbm_cuda": "it ignores max_depth"}
+    )
     table, _, n = render_results._standings(render_results._ranked(UNRANKED_ROWS))
     assert n == 2
-    assert [(lib, mean, wins) for lib, mean, wins in table] == [
-        ("bonsai", 1.0, 2), ("xgb", 2.0, 0)]
+    assert [(lib, mean, wins) for lib, mean, wins in table] == [("bonsai", 1.0, 2), ("xgb", 2.0, 0)]
     note = render_results._unranked_note(UNRANKED_ROWS, "in the ledger")
     assert note == (
         "`lgbm_cuda` is measured but not ranked: it ignores max_depth. "
         "Ranked among all arms it would read 1.00 with 2 outright wins. "
-        "Its rows are read in the ledger.")
-    assert render_results._unranked_note(
-        render_results._ranked(UNRANKED_ROWS), "in the ledger") == ""
+        "Its rows are read in the ledger."
+    )
+    assert (
+        render_results._unranked_note(render_results._ranked(UNRANKED_ROWS), "in the ledger") == ""
+    )
 
 
 _CLF_298 = dict(suite=298, kind="clf", metric="auc")
@@ -172,7 +183,8 @@ def test_the_head_to_head_table_counts_wins_per_suite_from_seed_means():
     table = render_results._head_to_head_table(DUEL_ROWS, "bonsai", "lgbm")
     assert table.splitlines()[0] == (
         "| suite | tasks | bonsai wins | lightgbm wins | ties | mean gap "
-        "| widest lead | widest deficit |")
+        "| widest lead | widest deficit |"
+    )
     assert table.splitlines()[2:] == [
         "| 297 | 3 | 1 | 1 | 1 | +0.0000 | +0.1000 | -0.1000 |",
         "| 298 | 1 | 1 | 0 | 0 | +0.0300 | +0.0300 | +0.0300 |",

@@ -33,7 +33,7 @@ def excluded_patterns(mkdocs_text: str) -> list[str]:
     for idx, line in enumerate(lines):
         if not re.match(r"^exclude_docs:\s*\|", line):
             continue
-        for follow in lines[idx + 1:]:
+        for follow in lines[idx + 1 :]:
             if follow.strip() == "":
                 continue
             if not follow.startswith((" ", "\t")):

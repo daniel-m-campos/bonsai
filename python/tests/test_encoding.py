@@ -48,8 +48,7 @@ def test_deterministic_and_shapes():
 
 def test_first_visit_gets_the_prior():
     X, y = _toy()
-    enc = bonsai.OrderedTargetEncoder(columns=[0], prior_weight=7.0, seed=1,
-                                      keep_codes=False)
+    enc = bonsai.OrderedTargetEncoder(columns=[0], prior_weight=7.0, seed=1, keep_codes=False)
     out = enc.fit_transform(X, y)[:, 0]
     prior = y.mean()
     # For every category, the first-visited row has zero evidence: its
@@ -74,8 +73,9 @@ def test_causality_no_own_label_leak():
     j = 137
     y2 = y.copy()
     y2[j] = 1.0 - y2[j]
-    flipped = bonsai.OrderedTargetEncoder(columns=[0], seed=2,
-                                          keep_codes=False).fit_transform(X, y2)
+    flipped = bonsai.OrderedTargetEncoder(columns=[0], seed=2, keep_codes=False).fit_transform(
+        X, y2
+    )
     # prior shifts by 1/n; remove that global effect by comparing against a
     # tolerance far below the smallest same-category step.
     assert abs(flipped[j, 0] - base[j]) < 2.0 / len(y)
@@ -83,8 +83,7 @@ def test_causality_no_own_label_leak():
 
 def test_transform_full_stats_and_unseen():
     X, y = _toy()
-    enc = bonsai.OrderedTargetEncoder(columns=[0], prior_weight=10.0,
-                                      keep_codes=False)
+    enc = bonsai.OrderedTargetEncoder(columns=[0], prior_weight=10.0, keep_codes=False)
     enc.fit_transform(X, y)
     col = np.where(np.isnan(X[:, 0]), np.inf, X[:, 0])
     c = col[0]
@@ -106,8 +105,7 @@ def test_cross_pairs_shape_and_unseen():
     a = enc.fit_transform(X, y)
     # layout: 3 features + 2 kept codes + C(2,2)=1 pair column
     assert a.shape == (1500, 3 + 2 + 1)
-    b = bonsai.OrderedTargetEncoder(columns=[0, 2], cross=2,
-                                    seed=4).fit_transform(X, y)
+    b = bonsai.OrderedTargetEncoder(columns=[0, 2], cross=2, seed=4).fit_transform(X, y)
     assert np.array_equal(a, b)
     # a pair unseen in training resolves to the prior at transform
     t = enc.transform(np.array([[99.0, 0.0, 99.0]], dtype=np.float32))
@@ -128,10 +126,14 @@ def test_cross_pairs_amazon_quality():
 
     enc = bonsai.OrderedTargetEncoder(columns=range(Xtr.shape[1]), cross=2)
     m = bonsai.BonsaiRegressor(
-        n_iters=200, learning_rate=0.05, objective="logloss", max_depth=6,
-        grower="depthwise", random_seed=42,
-        params={"tree.min_data_in_leaf": 20, "tree.lambda_l2": 1.0,
-                "bin_mapper.max_bin": 255})
+        n_iters=200,
+        learning_rate=0.05,
+        objective="logloss",
+        max_depth=6,
+        grower="depthwise",
+        random_seed=42,
+        params={"tree.min_data_in_leaf": 20, "tree.lambda_l2": 1.0, "bin_mapper.max_bin": 255},
+    )
     m.fit(enc.fit_transform(Xtr, ytr), ytr)
     crossed = _auc(yte, m.predict(enc.transform(Xte)))
     assert crossed > 0.88, crossed
@@ -146,10 +148,14 @@ def test_amazon_quality_pin():
 
     def fit_auc(Xa, Xb):
         m = bonsai.BonsaiRegressor(
-            n_iters=200, learning_rate=0.05, objective="logloss", max_depth=6,
-            grower="depthwise", random_seed=42,
-            params={"tree.min_data_in_leaf": 20, "tree.lambda_l2": 1.0,
-                    "bin_mapper.max_bin": 255})
+            n_iters=200,
+            learning_rate=0.05,
+            objective="logloss",
+            max_depth=6,
+            grower="depthwise",
+            random_seed=42,
+            params={"tree.min_data_in_leaf": 20, "tree.lambda_l2": 1.0, "bin_mapper.max_bin": 255},
+        )
         m.fit(Xa, ytr)
         return _auc(yte, m.predict(Xb))
 
@@ -158,4 +164,3 @@ def test_amazon_quality_pin():
     encoded = fit_auc(enc.fit_transform(Xtr, ytr), enc.transform(Xte))
     assert encoded - ordinal > 0.03, (ordinal, encoded)
     assert encoded > 0.85, encoded
-

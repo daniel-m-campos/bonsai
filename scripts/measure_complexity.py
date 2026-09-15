@@ -44,6 +44,7 @@ LIZARD_PIN = "lizard@1.23.0"
 CODE_EXTS = (".hpp", ".cpp", ".cu", ".cuh", ".py")
 SCOPES = ["include", "src", "python", "tests", "scripts", "benchmarks"]
 
+
 class Planes:
     """Plane identifiers; a typo here would silently misclassify files."""
 
@@ -60,14 +61,21 @@ class Planes:
 # to the core planes; include/bonsai/cli/ pairs with src/cli/; python/tests/
 # holds the binding tests.
 PLANE_MAP = {
-    Planes.CORE_HEADERS: ["include/bonsai/*.hpp", "include/bonsai/config/**",
-                     "include/bonsai/registry/**", "include/bonsai/detail/**",
-                     "include/bonsai/io/**"],
-    Planes.ENGINE_IMPL: ["src/*.hpp", "src/*.cpp", "src/config/**", "src/io/**",
-                    "src/registry/**"],
+    Planes.CORE_HEADERS: [
+        "include/bonsai/*.hpp",
+        "include/bonsai/config/**",
+        "include/bonsai/registry/**",
+        "include/bonsai/detail/**",
+        "include/bonsai/io/**",
+    ],
+    Planes.ENGINE_IMPL: ["src/*.hpp", "src/*.cpp", "src/config/**", "src/io/**", "src/registry/**"],
     Planes.CUDA_PLANE: ["src/cuda/**", "include/bonsai/cuda/**"],
-    Planes.BINDINGS_CLI: ["src/python/**", "src/cli/**", "include/bonsai/cli/**",
-                     "python/bonsai/** except bench/"],
+    Planes.BINDINGS_CLI: [
+        "src/python/**",
+        "src/cli/**",
+        "include/bonsai/cli/**",
+        "python/bonsai/** except bench/",
+    ],
     Planes.BENCH_TOOLING: ["python/bonsai/bench/**", "scripts/*.py"],
     Planes.TESTS: ["tests/**", "python/tests/**"],
 }
@@ -95,21 +103,23 @@ def plane_of(path: str) -> str | None:
 
 
 def git(*args: str) -> str:
-    return subprocess.run(["git", *args], cwd=REPO, capture_output=True,
-                          text=True, check=True).stdout.strip()
+    return subprocess.run(
+        ["git", *args], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout.strip()
 
 
 def plane_files() -> dict[str, list[str]]:
-    files = [f for f in git("ls-files", "--", *SCOPES).splitlines()
-             if f.endswith(CODE_EXTS)]
+    files = [f for f in git("ls-files", "--", *SCOPES).splitlines() if f.endswith(CODE_EXTS)]
     planes: dict[str, list[str]] = {name: [] for name in PLANE_MAP}
     unmapped = []
     for f in sorted(files):
         plane = plane_of(f)
         (planes[plane] if plane else unmapped).append(f)
     if unmapped:
-        sys.exit(f"ERROR: code files outside the plane map: {unmapped}\n"
-                 "Extend PLANE_MAP/plane_of or exclude them explicitly.")
+        sys.exit(
+            f"ERROR: code files outside the plane map: {unmapped}\n"
+            "Extend PLANE_MAP/plane_of or exclude them explicitly."
+        )
     return planes
 
 
@@ -117,8 +127,9 @@ def plane_files() -> dict[str, list[str]]:
 
 
 def run_lizard(files: list[str], *flags: str) -> str:
-    proc = subprocess.run(["uvx", LIZARD_PIN, *flags, *files], cwd=REPO,
-                          capture_output=True, text=True)
+    proc = subprocess.run(
+        ["uvx", LIZARD_PIN, *flags, *files], cwd=REPO, capture_output=True, text=True
+    )
     # lizard exits 1 when functions exceed its default CCN threshold; that
     # is a finding here, not a failure.
     if proc.returncode not in (0, 1):
@@ -130,8 +141,15 @@ def lizard_functions(files: list[str]) -> list[dict]:
     """--csv rows: nloc,ccn,token,param,length,location,file,name,sig,start,end."""
     out = []
     for row in csv.reader(io.StringIO(run_lizard(files, "--csv"))):
-        out.append({"nloc": int(row[0]), "ccn": int(row[1]), "file": row[6],
-                    "name": row[7], "start": int(row[9])})
+        out.append(
+            {
+                "nloc": int(row[0]),
+                "ccn": int(row[1]),
+                "file": row[6],
+                "name": row[7],
+                "start": int(row[9]),
+            }
+        )
     return out
 
 
@@ -197,17 +215,24 @@ def python_public_api() -> int:
     """Import the built package (PYTHONPATH=build/python after `make python`)
     and count its declared public names: __all__ minus modules, each
     getattr-verified so a stale __all__ fails here."""
-    code = ("import types, bonsai\n"
-            "names = [n for n in bonsai.__all__\n"
-            "         if not isinstance(getattr(bonsai, n), types.ModuleType)]\n"
-            "print(len(names))\n")
-    proc = subprocess.run([sys.executable, "-c", code], cwd=REPO,
-                          capture_output=True, text=True,
-                          env={"PYTHONPATH": str(REPO / "build" / "python"),
-                               "PATH": "/usr/bin:/bin"})
+    code = (
+        "import types, bonsai\n"
+        "names = [n for n in bonsai.__all__\n"
+        "         if not isinstance(getattr(bonsai, n), types.ModuleType)]\n"
+        "print(len(names))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={"PYTHONPATH": str(REPO / "build" / "python"), "PATH": "/usr/bin:/bin"},
+    )
     if proc.returncode != 0:
-        sys.exit("ERROR: cannot import bonsai from build/python; run "
-                 f"`make python` first.\n{proc.stderr}")
+        sys.exit(
+            "ERROR: cannot import bonsai from build/python; run "
+            f"`make python` first.\n{proc.stderr}"
+        )
     return int(proc.stdout)
 
 
@@ -218,9 +243,11 @@ def runtime_deps() -> dict:
     toolchain runtime (OpenMP, static cudart on CUDA builds). Catch2 sits
     inside the BONSAI_TESTS block and is excluded as test-only."""
     import tomllib
+
     py = tomllib.loads((REPO / "pyproject.toml").read_text())
-    py_deps = [d.split(">")[0].split("=")[0].split("<")[0].strip()
-               for d in py["project"]["dependencies"]]
+    py_deps = [
+        d.split(">")[0].split("=")[0].split("<")[0].strip() for d in py["project"]["dependencies"]
+    ]
     cpp_deps, in_tests = [], 0
     for line in (REPO / "CMakeLists.txt").read_text().splitlines():
         stripped = line.strip()
@@ -232,10 +259,12 @@ def runtime_deps() -> dict:
             cpp_deps.append(stripped.removeprefix("FetchContent_Declare(").strip())
     if not cpp_deps or "Catch2" in cpp_deps:
         sys.exit(f"ERROR: FetchContent parse degenerated: {cpp_deps}")
-    return {"python_runtime_deps": len(py_deps),
-            "python_runtime_dep_names": sorted(py_deps),
-            "cpp_compiled_deps": len(cpp_deps),
-            "cpp_compiled_dep_names": sorted(cpp_deps)}
+    return {
+        "python_runtime_deps": len(py_deps),
+        "python_runtime_dep_names": sorted(py_deps),
+        "cpp_compiled_deps": len(cpp_deps),
+        "cpp_compiled_dep_names": sorted(cpp_deps),
+    }
 
 
 # ---- assembly ----------------------------------------------------------------
@@ -255,53 +284,81 @@ def main() -> int:
     functions = lizard_functions(all_files)
     nloc = lizard_file_nloc(all_files)
 
-    rows: list[dict] = [{
-        "kind": "meta", "schema": "code-metrics-v1", "division": "code",
-        "git_sha": git("rev-parse", "HEAD"),
-        "date": git("show", "-s", "--format=%cs", "HEAD"),
-        "tool": "lizard", "tool_version": version,
-        "tool_pin": f"uvx {LIZARD_PIN}",
-        "plane_map": PLANE_MAP,
-        "notes": {
-            "date": "HEAD commit date, so the file is a pure function of the tree",
-            "loc": "wc -l over each plane's tracked .hpp/.cpp/.cu/.cuh/.py files",
-            "dispatch": "textual typelist count; see dispatch_factors()",
-            "deps": "rule documented in runtime_deps()",
-        },
-    }]
+    rows: list[dict] = [
+        {
+            "kind": "meta",
+            "schema": "code-metrics-v1",
+            "division": "code",
+            "git_sha": git("rev-parse", "HEAD"),
+            "date": git("show", "-s", "--format=%cs", "HEAD"),
+            "tool": "lizard",
+            "tool_version": version,
+            "tool_pin": f"uvx {LIZARD_PIN}",
+            "plane_map": PLANE_MAP,
+            "notes": {
+                "date": "HEAD commit date, so the file is a pure function of the tree",
+                "loc": "wc -l over each plane's tracked .hpp/.cpp/.cu/.cuh/.py files",
+                "dispatch": "textual typelist count; see dispatch_factors()",
+                "deps": "rule documented in runtime_deps()",
+            },
+        }
+    ]
 
     for name in PLANE_MAP:
         files = planes[name]
         fns = [f for f in functions if f["file"] in set(files)]
         loc = sum((REPO / f).read_bytes().count(b"\n") for f in files)
-        rows.append({
-            "kind": "plane", "plane": name, "files": len(files), "loc": loc,
-            "nloc": sum(nloc[f] for f in files), "functions": len(fns),
-            "ccn_mean": round(sum(f["ccn"] for f in fns) / len(fns), 2),
-            "ccn_max": max(f["ccn"] for f in fns),
-        })
+        rows.append(
+            {
+                "kind": "plane",
+                "plane": name,
+                "files": len(files),
+                "loc": loc,
+                "nloc": sum(nloc[f] for f in files),
+                "functions": len(fns),
+                "ccn_mean": round(sum(f["ccn"] for f in fns) / len(fns), 2),
+                "ccn_max": max(f["ccn"] for f in fns),
+            }
+        )
 
     core = {f for n in (Planes.CORE_HEADERS, Planes.ENGINE_IMPL) for f in planes[n]}
-    offenders = sorted((f for f in functions if f["file"] in core),
-                       key=lambda f: (-f["ccn"], f["file"], f["start"]))
+    offenders = sorted(
+        (f for f in functions if f["file"] in core),
+        key=lambda f: (-f["ccn"], f["file"], f["start"]),
+    )
     for rank, f in enumerate(offenders[:5], 1):
-        rows.append({"kind": "offender", "rank": rank, "function": f["name"],
-                     "file": f["file"], "ccn": f["ccn"], "nloc": f["nloc"]})
+        rows.append(
+            {
+                "kind": "offender",
+                "rank": rank,
+                "function": f["name"],
+                "file": f["file"],
+                "ccn": f["ccn"],
+                "nloc": f["nloc"],
+            }
+        )
 
     factors = dispatch_factors()
     combos = 1
     for n in factors.values():
         combos *= n
-    rows.append({
-        "kind": "surface", "parameters": parameter_count(),
-        "dispatch_combinations": combos, "dispatch_factors": factors,
-        "python_public_api": python_public_api(), **runtime_deps(),
-    })
+    rows.append(
+        {
+            "kind": "surface",
+            "parameters": parameter_count(),
+            "dispatch_combinations": combos,
+            "dispatch_factors": factors,
+            "python_public_api": python_public_api(),
+            **runtime_deps(),
+        }
+    )
 
     out = out_path()
     out.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
-    print(f"wrote {out.relative_to(REPO)} ({len(rows)} rows, "
-          f"{len(all_files)} files, lizard {version})")
+    print(
+        f"wrote {out.relative_to(REPO)} ({len(rows)} rows, "
+        f"{len(all_files)} files, lizard {version})"
+    )
     return 0
 
 

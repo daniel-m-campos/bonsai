@@ -20,12 +20,10 @@ def test_a_cell_too_large_to_hold_twice_declines_to_the_generator(monkeypatch):
     arrays the fit reads."""
     from bonsai.bench import runners
 
-    extreme = {"rows": 16_777_216, "cols": 1024, "seed": 42,
-               "n_test": 500_000, "informative": 20}
-    small = {"rows": 3000, "cols": 12, "seed": 7, "n_test": 500,
-             "informative": 5}
+    extreme = {"rows": 16_777_216, "cols": 1024, "seed": 42, "n_test": 500_000, "informative": 20}
+    small = {"rows": 3000, "cols": 12, "seed": 7, "n_test": 500, "informative": 5}
     monkeypatch.setattr(runners.runlog, "usable_ram_gb", lambda: 188)
-    assert not runners.cache_fits(extreme)   # ~142GB of a 188GB container
+    assert not runners.cache_fits(extreme)  # ~142GB of a 188GB container
     assert runners.cache_fits(small)
 
     # ... and declining means no cache files are written at all.
@@ -33,8 +31,9 @@ def test_a_cell_too_large_to_hold_twice_declines_to_the_generator(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         got = runners.cached_gen_data(small, td)
         assert not list(pathlib.Path(td).iterdir())
-        direct = synth.gen_data(small["rows"], small["cols"], small["seed"],
-                                small["n_test"], small["informative"])
+        direct = synth.gen_data(
+            small["rows"], small["cols"], small["seed"], small["n_test"], small["informative"]
+        )
         for a, b in zip(got, direct):
             np.testing.assert_array_equal(a, b)
 
@@ -42,10 +41,10 @@ def test_a_cell_too_large_to_hold_twice_declines_to_the_generator(monkeypatch):
 def test_data_cache():
     from bonsai.bench import runners
 
-    cell = {"rows": 3000, "cols": 12, "seed": 7, "n_test": 500,
-            "informative": 5}
-    direct = synth.gen_data(cell["rows"], cell["cols"], cell["seed"],
-                            cell["n_test"], cell["informative"])
+    cell = {"rows": 3000, "cols": 12, "seed": 7, "n_test": 500, "informative": 5}
+    direct = synth.gen_data(
+        cell["rows"], cell["cols"], cell["seed"], cell["n_test"], cell["informative"]
+    )
     with tempfile.TemporaryDirectory() as td:
         first = runners.cached_gen_data(cell, td)
         files = sorted(p.name for p in pathlib.Path(td).iterdir())
@@ -75,27 +74,24 @@ def test_binary_task_runners():
     """
     from bonsai.bench import params, runners
 
-    need = {"depth", "iters", "lr", "bins", "seed", "min_data_in_leaf",
-            "lambda_l2"}
+    need = {"depth", "iters", "lr", "bins", "seed", "min_data_in_leaf", "lambda_l2"}
     assert need <= set(params.SCALING)
 
     rng = np.random.default_rng(0)
     X = rng.random((600, 6), dtype=np.float32)
     yb = (X[:, 0] + 0.2 * rng.random(600) > 0.6).astype(np.float32)
-    cell = dict(params.SCALING, iters=10,
-                bins_effective=params.SCALING["bins"], task="binary")
+    cell = dict(params.SCALING, iters=10, bins_effective=params.SCALING["bins"], task="binary")
     eps = 1e-3
     for variant in ("bonsai_depthwise", "lgbm_cpu"):
         run = runners.RUNNERS[runners.resolve(variant).lib]
-        out = run({"cell": cell, "variant": variant, "threads": 2},
-                  X[:500], yb[:500], X[500:], yb[500:])
-        assert set(out) == {"fit_s", "ingest_s", "train_s", "predict_s",
-                             "auc_test"}, (variant, out)
+        out = run(
+            {"cell": cell, "variant": variant, "threads": 2}, X[:500], yb[:500], X[500:], yb[500:]
+        )
+        assert set(out) == {"fit_s", "ingest_s", "train_s", "predict_s", "auc_test"}, (variant, out)
         assert 0.5 < out["auc_test"] <= 1.0, (variant, out["auc_test"])
         assert out["ingest_s"] > 0, (variant, out)
         assert out["train_s"] > 0, (variant, out)
-        assert out["ingest_s"] + out["train_s"] <= out["fit_s"] + eps, (
-            variant, out)
+        assert out["ingest_s"] + out["train_s"] <= out["fit_s"] + eps, (variant, out)
 
 
 def test_bonsai_cuda_runner_prebins_with_a_device_hint(monkeypatch):
@@ -132,20 +128,26 @@ def test_bonsai_cuda_runner_prebins_with_a_device_hint(monkeypatch):
         # The fit itself is not the subject and cannot run here (no device),
         # so any failure past the recorded construction is discarded; the
         # assertions below read what the runner asked for.
-        runners.run_bonsai({"cell": cell, "variant": "bonsai_cuda_depthwise",
-                            "threads": 1}, X[:1500], y[:1500], X[1500:],
-                           y[1500:])
+        runners.run_bonsai(
+            {"cell": cell, "variant": "bonsai_cuda_depthwise", "threads": 1},
+            X[:1500],
+            y[:1500],
+            X[1500:],
+            y[1500:],
+        )
     except Exception:
         pass
     assert seen, (
         "the bonsai runner fit without building a Dataset: the two-step "
         "Dataset + train(pairs, dataset) form is what reports ingest_s and "
-        "train_s, and the fused call has no seam to report")
+        "train_s, and the fused call has no seam to report"
+    )
     assert seen[0].get("device") == "cuda", (
         "the bonsai runner built a Dataset for a cuda arm without "
         'device="cuda": that Dataset bins on the host, so ingest_s would '
         "describe host binning while the grower runs on the device "
-        f"(kwargs seen: {seen[0]})")
+        f"(kwargs seen: {seen[0]})"
+    )
 
 
 def test_xgb_runner_never_builds_plain_dmatrix(monkeypatch):
@@ -166,15 +168,17 @@ def test_xgb_runner_never_builds_plain_dmatrix(monkeypatch):
             "the xgboost runner must ingest via QuantileDMatrix, not "
             "DMatrix: DMatrix does not build the on-device quantile sketch "
             "at ingest, so a cuda arm measured through it silently loses "
-            "device binning")
+            "device binning"
+        )
 
     monkeypatch.setattr(xgb, "DMatrix", refuse)
     rng = np.random.default_rng(0)
     X = rng.random((2000, 8), dtype=np.float32)
     y = (X[:, :3].sum(axis=1)).astype(np.float32)
     cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
-    out = runners.run_xgb({"cell": cell, "variant": "xgb_hist", "threads": 1},
-                          X[:1500], y[:1500], X[1500:], y[1500:])
+    out = runners.run_xgb(
+        {"cell": cell, "variant": "xgb_hist", "threads": 1}, X[:1500], y[:1500], X[1500:], y[1500:]
+    )
     assert out["fit_s"] > 0 and out["ingest_s"] > 0, out
 
 
@@ -206,8 +210,13 @@ def test_xgb_runner_fails_a_silent_cpu_fallback(monkeypatch):
     y = X[:, :3].sum(axis=1).astype(np.float32)
     cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
     with pytest.raises(RuntimeError, match="fell back to CPU"):
-        runners.run_xgb({"cell": cell, "variant": "xgb_cuda", "threads": 1},
-                        X[:1000], y[:1000], X[1000:], y[1000:])
+        runners.run_xgb(
+            {"cell": cell, "variant": "xgb_cuda", "threads": 1},
+            X[:1000],
+            y[:1000],
+            X[1000:],
+            y[1000:],
+        )
 
 
 def test_xgb_runner_accepts_a_genuine_gpu_placement(monkeypatch):
@@ -234,8 +243,9 @@ def test_xgb_runner_accepts_a_genuine_gpu_placement(monkeypatch):
     X = rng.random((1500, 8), dtype=np.float32)
     y = X[:, :3].sum(axis=1).astype(np.float32)
     cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
-    out = runners.run_xgb({"cell": cell, "variant": "xgb_cuda", "threads": 1},
-                          X[:1000], y[:1000], X[1000:], y[1000:])
+    out = runners.run_xgb(
+        {"cell": cell, "variant": "xgb_cuda", "threads": 1}, X[:1000], y[:1000], X[1000:], y[1000:]
+    )
     assert out["fit_s"] > 0, out
 
 
@@ -264,7 +274,8 @@ def test_lgbm_runner_freezes_binning_knobs_and_constructs_in_ingest(monkeypatch)
                     "lgb.Dataset must receive params at construction: "
                     "binning knobs like max_bin freeze then, and a later "
                     "train() call cannot change them (a real published "
-                    "bug once)")
+                    "bug once)"
+                )
             super().__init__(*args, **kwargs)
 
         def construct(self, *args, **kwargs):
@@ -282,13 +293,16 @@ def test_lgbm_runner_freezes_binning_knobs_and_constructs_in_ingest(monkeypatch)
     X = rng.random((2000, 8), dtype=np.float32)
     y = (X[:, :3].sum(axis=1)).astype(np.float32)
     cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
-    out = runners.run_lgbm({"cell": cell, "variant": "lgbm_cpu", "threads": 1},
-                           X[:1500], y[:1500], X[1500:], y[1500:])
+    out = runners.run_lgbm(
+        {"cell": cell, "variant": "lgbm_cpu", "threads": 1}, X[:1500], y[:1500], X[1500:], y[1500:]
+    )
     assert out["ingest_s"] >= delay, (
         "the lgbm runner must call Dataset.construct() itself, so the "
-        "binning pass lands in ingest_s")
+        "binning pass lands in ingest_s"
+    )
     assert out["train_s"] < delay, (
-        "construct() ran inside the timed train() call instead of ingest_s")
+        "construct() ran inside the timed train() call instead of ingest_s"
+    )
 
 
 def test_catboost_runner_builds_pool_outside_fit_timer(monkeypatch):
@@ -321,8 +335,12 @@ def test_catboost_runner_builds_pool_outside_fit_timer(monkeypatch):
     y = (X[:, :3].sum(axis=1)).astype(np.float32)
     cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
     out = runners.run_catboost(
-        {"cell": cell, "variant": "catboost_cpu", "threads": 1}, X[:1500],
-        y[:1500], X[1500:], y[1500:])
+        {"cell": cell, "variant": "catboost_cpu", "threads": 1},
+        X[:1500],
+        y[:1500],
+        X[1500:],
+        y[1500:],
+    )
     assert order == ["pool", "fit"], order
     assert out["ingest_s"] > 0 and out["train_s"] > 0, out
 
@@ -386,8 +404,7 @@ class _StopProbe:
     tail: Callable | None = None
 
 
-_REF_BASE = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42,
-             "iters": 20}
+_REF_BASE = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 20}
 
 
 def _bonsai_stop_probe(monkeypatch) -> _StopProbe:
@@ -409,12 +426,14 @@ def _bonsai_stop_probe(monkeypatch) -> _StopProbe:
     monkeypatch.setattr(bonsai, "train", spy)
     key = "booster.early_stopping_rounds"
     return _StopProbe(
-        run=runners.run_bonsai, variant="bonsai_depthwise",
+        run=runners.run_bonsai,
+        variant="bonsai_depthwise",
         base={"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 20},
         reset=seen.clear,
         saw_eval_set=lambda: seen[0][1] is not None,
         patience=lambda: seen[0][0].get(key),
-        armed_patience="5")
+        armed_patience="5",
+    )
 
 
 def _xgb_stop_probe(monkeypatch) -> _StopProbe:
@@ -439,11 +458,14 @@ def _xgb_stop_probe(monkeypatch) -> _StopProbe:
 
     monkeypatch.setattr(xgb, "train", spy)
     return _StopProbe(
-        run=runners.run_xgb, variant="xgb_hist", base=_REF_BASE,
+        run=runners.run_xgb,
+        variant="xgb_hist",
+        base=_REF_BASE,
         reset=calls.clear,
         saw_eval_set=lambda: "evals" in calls[0],
         patience=lambda: calls[0].get("early_stopping_rounds"),
-        tail=lambda: isinstance(calls[0]["evals"][0][0], xgb.QuantileDMatrix))
+        tail=lambda: isinstance(calls[0]["evals"][0][0], xgb.QuantileDMatrix),
+    )
 
 
 def _lgbm_stop_probe(monkeypatch) -> _StopProbe:
@@ -474,9 +496,13 @@ def _lgbm_stop_probe(monkeypatch) -> _StopProbe:
     monkeypatch.setattr(lgb, "early_stopping", spy_es)
     monkeypatch.setattr(lgb, "train", spy_train)
     return _StopProbe(
-        run=runners.run_lgbm, variant="lgbm_cpu", base=_REF_BASE, reset=reset,
+        run=runners.run_lgbm,
+        variant="lgbm_cpu",
+        base=_REF_BASE,
+        reset=reset,
         saw_eval_set=lambda: "valid_sets" in calls[0],
-        patience=lambda: rounds[0] if rounds else None)
+        patience=lambda: rounds[0] if rounds else None,
+    )
 
 
 def _catboost_stop_probe(monkeypatch) -> _StopProbe:
@@ -510,19 +536,25 @@ def _catboost_stop_probe(monkeypatch) -> _StopProbe:
     monkeypatch.setattr(catboost.CatBoostRegressor, "__init__", spy_init)
     monkeypatch.setattr(catboost.CatBoostRegressor, "fit", spy_fit)
     return _StopProbe(
-        run=runners.run_catboost, variant="catboost_cpu", base=_REF_BASE,
+        run=runners.run_catboost,
+        variant="catboost_cpu",
+        base=_REF_BASE,
         reset=reset,
         saw_eval_set=lambda: fits[0]["eval_set"] is not None,
         patience=lambda: built[0].get("od_wait"),
-        tail=lambda: built[0]["od_type"] == "Iter")
+        tail=lambda: built[0]["od_type"] == "Iter",
+    )
 
 
-@pytest.mark.parametrize("probe_of", [
-    pytest.param(_bonsai_stop_probe, id="bonsai"),
-    pytest.param(_xgb_stop_probe, id="xgb"),
-    pytest.param(_lgbm_stop_probe, id="lgbm"),
-    pytest.param(_catboost_stop_probe, id="catboost"),
-])
+@pytest.mark.parametrize(
+    "probe_of",
+    [
+        pytest.param(_bonsai_stop_probe, id="bonsai"),
+        pytest.param(_xgb_stop_probe, id="xgb"),
+        pytest.param(_lgbm_stop_probe, id="lgbm"),
+        pytest.param(_catboost_stop_probe, id="catboost"),
+    ],
+)
 def test_runners_arm_early_stopping_on_the_stop_arm_only(probe_of, monkeypatch):
     """The eval set reaches the library on every arm but "off", and the
     patience on "stop" alone.
@@ -539,8 +571,13 @@ def test_runners_arm_early_stopping_on_the_stop_arm_only(probe_of, monkeypatch):
     for mode, armed in (("off", False), ("eval", False), ("stop", True)):
         p.reset()
         cell = dict(p.base, eval_mode=mode, patience=5)
-        out = p.run({"cell": cell, "variant": p.variant, "threads": 1},
-                    X[:1500], y[:1500], X[1500:], y[1500:])
+        out = p.run(
+            {"cell": cell, "variant": p.variant, "threads": 1},
+            X[:1500],
+            y[:1500],
+            X[1500:],
+            y[1500:],
+        )
         assert p.saw_eval_set() == (mode != "off"), mode
         assert (p.patience() is not None) == armed, (mode, p.patience())
         assert out["eval_mode"] == mode
@@ -560,14 +597,24 @@ def test_bonsai_contribs_phase_is_additive():
     rng = np.random.default_rng(0)
     X = rng.random((600, 6), dtype=np.float32)
     y = X[:, :3].sum(axis=1).astype(np.float32)
-    cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5,
-            "contribs": True}
+    cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5, "contribs": True}
     out = runners.run_bonsai(
         {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
-        X[:500], y[:500], X[500:], y[500:])
-    assert set(out) == {"fit_s", "ingest_s", "train_s", "predict_s",
-                        "contribs_s", "contribs_additivity",
-                        "r2_train", "r2_test"}, out
+        X[:500],
+        y[:500],
+        X[500:],
+        y[500:],
+    )
+    assert set(out) == {
+        "fit_s",
+        "ingest_s",
+        "train_s",
+        "predict_s",
+        "contribs_s",
+        "contribs_additivity",
+        "r2_train",
+        "r2_test",
+    }, out
     assert out["contribs_s"] > 0, out
     assert out["contribs_additivity"] < 1e-6, out["contribs_additivity"]
 
@@ -583,7 +630,11 @@ def test_bonsai_contribs_off_by_default_carries_no_extra_fields():
     cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5}
     out = runners.run_bonsai(
         {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
-        X[:500], y[:500], X[500:], y[500:])
+        X[:500],
+        y[:500],
+        X[500:],
+        y[500:],
+    )
     assert "contribs_s" not in out and "contribs_additivity" not in out
 
 
@@ -598,13 +649,15 @@ def test_legacy_cells_carry_no_eval_fields():
     rng = np.random.default_rng(0)
     X = rng.random((2000, 8), dtype=np.float32)
     y = X[:, :3].sum(axis=1).astype(np.float32)
-    cell = {"lr": 0.1, "depth": 4, "bins": 63, "bins_effective": 63,
-            "seed": 42, "iters": 5}
+    cell = {"lr": 0.1, "depth": 4, "bins": 63, "bins_effective": 63, "seed": 42, "iters": 5}
     out = runners.run_bonsai(
         {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
-        X[:1500], y[:1500], X[1500:], y[1500:])
-    assert set(out) == {"fit_s", "ingest_s", "train_s", "predict_s",
-                        "r2_train", "r2_test"}, out
+        X[:1500],
+        y[:1500],
+        X[1500:],
+        y[1500:],
+    )
+    assert set(out) == {"fit_s", "ingest_s", "train_s", "predict_s", "r2_train", "r2_test"}, out
 
 
 def test_early_stop_spec_expands_both_quantities():
@@ -642,8 +695,7 @@ def test_standings_ab_knobs_match_the_standings_spec():
 
     spec = spec_mod.load_spec("gpu-tall")
     cell = spec_mod.make_cell(spec["defaults"], rows=16_777_216, cols=128)
-    knobs = {k: v for k, v in standings_ab.ANCHOR_KNOBS.items()
-             if k != "n_test"}
+    knobs = {k: v for k, v in standings_ab.ANCHOR_KNOBS.items() if k != "n_test"}
     assert knobs == {k: cell[k] for k in knobs}
     assert spec["threads"] == [16]
 
@@ -666,12 +718,21 @@ def test_parity_gate_bands_the_two_step_form():
     import standings_refresh
 
     def rows(fused_s, two_step_s):
-        return "\n".join(json.dumps(
-            {"arm": arm, "rows": 16000000, "cols": 100,
-             "grower": "cuda_depthwise", "fit_s": s, "peak_rss_gb": 6.9,
-             "ingest_s": None if arm == "fused" else 1.1,
-             "train_s": None if arm == "fused" else s - 1.1})
-            for arm, s in (("fused", fused_s), ("two_step", two_step_s)))
+        return "\n".join(
+            json.dumps(
+                {
+                    "arm": arm,
+                    "rows": 16000000,
+                    "cols": 100,
+                    "grower": "cuda_depthwise",
+                    "fit_s": s,
+                    "peak_rss_gb": 6.9,
+                    "ingest_s": None if arm == "fused" else 1.1,
+                    "train_s": None if arm == "fused" else s - 1.1,
+                }
+            )
+            for arm, s in (("fused", fused_s), ("two_step", two_step_s))
+        )
 
     with tempfile.TemporaryDirectory() as td:
         path = pathlib.Path(td) / "parity.jsonl"
@@ -694,7 +755,6 @@ def test_parity_gate_bands_the_two_step_form():
 def test_variant_canonicalization():
     from bonsai.bench import spec as spec_mod
 
-    s = {"name": "t", "cells": [{"rows": 1000, "cols": 8}],
-         "variants": ["bonsai_dw", "xgb"]}
+    s = {"name": "t", "cells": [{"rows": 1000, "cols": 8}], "variants": ["bonsai_dw", "xgb"]}
     jobs = spec_mod.expand(s)
     assert [j["variant"] for j in jobs] == ["bonsai_depthwise", "xgb_hist"]

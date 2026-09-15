@@ -43,6 +43,7 @@ def auc(y_true: np.ndarray, scores: np.ndarray) -> float:
     (tie-aware) so the module works without the [bench] extra."""
     try:
         from sklearn.metrics import roc_auc_score
+
         return float(roc_auc_score(y_true, scores))
     except ImportError:
         order = np.argsort(scores, kind="mergesort")
@@ -54,7 +55,7 @@ def auc(y_true: np.ndarray, scores: np.ndarray) -> float:
             j = i
             while j + 1 < len(scores) and sorted_scores[j + 1] == sorted_scores[i]:
                 j += 1
-            ranks[order[i:j + 1]] = (r + r + (j - i)) / 2.0
+            ranks[order[i : j + 1]] = (r + r + (j - i)) / 2.0
             r += j - i + 1
             i = j + 1
         pos = y_true > 0
@@ -62,5 +63,4 @@ def auc(y_true: np.ndarray, scores: np.ndarray) -> float:
         n_neg = len(y_true) - n_pos
         if n_pos == 0 or n_neg == 0:
             return float("nan")
-        return float((ranks[pos].sum() - n_pos * (n_pos + 1) / 2.0)
-                     / (n_pos * n_neg))
+        return float((ranks[pos].sum() - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg))

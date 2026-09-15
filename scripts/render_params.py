@@ -43,8 +43,15 @@ OUT = REPO / "docs" / "api" / "parameters.md"
 # Section reading order (most-tuned first); any section absent here is
 # appended in sorted order so a new section still renders.
 SECTION_ORDER = [
-    "dispatch", "booster", "tree", "sampler", "bin_mapper",
-    "objective", "metrics", "data", "parallel",
+    "dispatch",
+    "booster",
+    "tree",
+    "sampler",
+    "bin_mapper",
+    "objective",
+    "metrics",
+    "data",
+    "parallel",
 ]
 
 SECTION_INTRO = {
@@ -132,8 +139,11 @@ def extract() -> int:
         return 0
     drift = extraction_drift(json.loads(SRC.read_text()), out)
     if drift:
-        print(f"ERROR: {SRC.relative_to(REPO)} is behind the config structs "
-              f"({', '.join(drift)}); run make params-json", file=sys.stderr)
+        print(
+            f"ERROR: {SRC.relative_to(REPO)} is behind the config structs "
+            f"({', '.join(drift)}); run make params-json",
+            file=sys.stderr,
+        )
         return 1
     print(f"parameters extraction: in sync ({n} keys match bonsai params)")
     return 0
@@ -160,9 +170,11 @@ def extraction_drift(committed: dict[str, dict], fresh: dict[str, dict]) -> list
     flat_new = {f"{s}.{k}": v for s, keys in fresh.items() for k, v in keys.items()}
     added = [f"added {d}" for d in sorted(flat_new.keys() - flat_old.keys())]
     removed = [f"removed {d}" for d in sorted(flat_old.keys() - flat_new.keys())]
-    changed = [f"{d} default {flat_old[d]!r} -> {flat_new[d]!r}"
-               for d in sorted(flat_old.keys() & flat_new.keys())
-               if flat_old[d] != flat_new[d]]
+    changed = [
+        f"{d} default {flat_old[d]!r} -> {flat_new[d]!r}"
+        for d in sorted(flat_old.keys() & flat_new.keys())
+        if flat_old[d] != flat_new[d]
+    ]
     return added + removed + changed
 
 
@@ -202,8 +214,7 @@ def sections_from_src() -> tuple[dict[str, list[tuple]], list[str]]:
     sections: dict[str, list[tuple]] = {}
     for sec, keys in data.items():
         sections[sec] = [
-            (leaf, f"{sec}.{leaf}", type_label(v), fmt_default(v))
-            for leaf, v in keys.items()
+            (leaf, f"{sec}.{leaf}", type_label(v), fmt_default(v)) for leaf, v in keys.items()
         ]
     for sec in sections:
         sections[sec].sort(key=lambda row: row[0])
@@ -249,12 +260,13 @@ def coverage_error() -> str | None:
     problems = []
     if missing:
         problems.append(
-            "knobs with no effect line (add one to EFFECTS in "
-            f"scripts/render_params.py): {missing}")
+            f"knobs with no effect line (add one to EFFECTS in scripts/render_params.py): {missing}"
+        )
     if stale:
         problems.append(
             "effect lines for knobs not in the extraction (remove them or "
-            f"re-run make params-json): {stale}")
+            f"re-run make params-json): {stale}"
+        )
     return "; ".join(problems) if problems else None
 
 
@@ -268,9 +280,13 @@ def main() -> int:
         return 1
     text = render()
     n = sum(len(rows) for rows in sections_from_src()[0].values())
-    return write_or_check({OUT: text}, repo=REPO,
-                          script="scripts/render_params.py",
-                          label="parameters reference", detail=f"{n} knobs")
+    return write_or_check(
+        {OUT: text},
+        repo=REPO,
+        script="scripts/render_params.py",
+        label="parameters reference",
+        detail=f"{n} knobs",
+    )
 
 
 def _clean_float(x: float) -> float:

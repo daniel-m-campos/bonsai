@@ -91,9 +91,7 @@ class _DevicePointer:
     def __dlpack__(self, **_):
         self.exports += 1
         shape = (ctypes.c_int64 * len(self.shape))(*self.shape)
-        strides = (
-            (ctypes.c_int64 * len(self.shape))(*self.strides) if self.strides else None
-        )
+        strides = (ctypes.c_int64 * len(self.shape))(*self.strides) if self.strides else None
         deleter = _DELETER(lambda _: None)
         managed = _DLManagedTensor()
         managed.dl_tensor.data = ctypes.c_void_p(self.ptr)
@@ -233,9 +231,7 @@ def test_cuda_grower_on_device_input_matches_host(to_device):
     X, y, _ = _reg_data()
     pairs = {**PAIRS, "dispatch.grower_name": "cuda_depthwise"}
     host = np.asarray(bonsai.train(pairs, X, y).predict(X))
-    dev = np.asarray(
-        bonsai.train(pairs, _DevicePointer(to_device(X), X.shape), y).predict(X)
-    )
+    dev = np.asarray(bonsai.train(pairs, _DevicePointer(to_device(X), X.shape), y).predict(X))
 
     np.testing.assert_allclose(dev, host, atol=1e-4)
 

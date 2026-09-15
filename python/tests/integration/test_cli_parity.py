@@ -21,13 +21,23 @@ def test_parity_with_cli(toy_train, toy_test):
         model = pathlib.Path(td) / "m.msgpack"
         preds = pathlib.Path(td) / "p.csv"
         subprocess.run(
-            [CLI, "fit", "-c", CH_TOML, "--set", "dispatch.grower_name=depthwise",
-             "--model", model],
-            check=True, capture_output=True,
+            [
+                CLI,
+                "fit",
+                "-c",
+                CH_TOML,
+                "--set",
+                "dispatch.grower_name=depthwise",
+                "--model",
+                model,
+            ],
+            check=True,
+            capture_output=True,
         )
         subprocess.run(
             [CLI, "predict", "-c", CH_TOML, "--model", model, "--out", preds],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
         cli_pred = np.loadtxt(preds, skiprows=1, dtype=np.float32)
 

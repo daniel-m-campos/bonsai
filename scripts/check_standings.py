@@ -111,8 +111,7 @@ AB_ARMS = ("anchor", "old", "new")
 AB_FIT = "fit_s"
 AB_RSS = "peak_rss_gb"
 AB_TABLE_HEADER = (
-    "| cell | grower | anchor | old | new | vs old | vs anchor "
-    "| old RSS | new RSS | RSS delta |",
+    "| cell | grower | anchor | old | new | vs old | vs anchor | old RSS | new RSS | RSS delta |",
     "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|",
 )
 AB_NA = "n/a"
@@ -125,11 +124,14 @@ QUALITY_GPU_SUFFIX = "-gpu"
 # the ones the CPU suite's committed rows carry. Only bonsai's arms are
 # gated; a reference library's GPU build is reported, not held, because
 # its distance from its own CPU build is that library's to explain.
-QUALITY_PARTNERS = {"bonsai_cuda_depthwise": "bonsai_dw",
-                    "bonsai_cuda_leafwise": "bonsai_lw",
-                    "bonsai_cuda_levelwise": "bonsai_obl",
-                    "xgb_cuda": "xgb", "lgbm_cuda": "lgbm",
-                    "catboost_gpu": "catboost"}
+QUALITY_PARTNERS = {
+    "bonsai_cuda_depthwise": "bonsai_dw",
+    "bonsai_cuda_leafwise": "bonsai_lw",
+    "bonsai_cuda_levelwise": "bonsai_obl",
+    "xgb_cuda": "xgb",
+    "lgbm_cuda": "lgbm",
+    "catboost_gpu": "catboost",
+}
 QUALITY_GATED = tuple(g for g in QUALITY_PARTNERS if g.startswith("bonsai"))
 # An arm the standings leave out because its library does not take the
 # campaign knobs on that device. Its rows are still swept and read in the
@@ -137,11 +139,12 @@ QUALITY_GATED = tuple(g for g in QUALITY_PARTNERS if g.startswith("bonsai"))
 # that repairs it will show the arm holding its host spread again.
 QUALITY_UNRANKED = {
     "lgbm_cuda": "LightGBM's CUDA tree learner does not apply `max_depth` "
-                 "(LightGBM 4.7.0: the only depth check is the serial "
-                 "learner's `BeforeFindBestSplit`, which the CUDA `Train` "
-                 "loop never calls), so at the campaign knobs it grows 63 "
-                 "leaves at any depth where every other arm is capped at "
-                 "depth 6"}
+    "(LightGBM 4.7.0: the only depth check is the serial "
+    "learner's `BeforeFindBestSplit`, which the CUDA `Train` "
+    "loop never calls), so at the campaign knobs it grows 63 "
+    "leaves at any depth where every other arm is capped at "
+    "depth 6"
+}
 QUALITY_KEY = ("suite", "dataset", "seed")
 
 
@@ -183,14 +186,16 @@ def check_decisions(reg: dict) -> list[str]:
             if axis in RETIRED_AXES:
                 continue
             if axis not in reg:
-                errors.append(f"decision {n}: unknown standings axis "
-                              f"{axis!r} (known: {sorted(reg)})")
+                errors.append(
+                    f"decision {n}: unknown standings axis {axis!r} (known: {sorted(reg)})"
+                )
             elif n > reg[axis]["as_of_decision"]:
                 errors.append(
                     f"decision {n} supersedes the {axis!r} standings "
                     f"(as_of_decision {reg[axis]['as_of_decision']}): "
                     "refresh the axis and bump the registry, or drop the "
-                    "tag if the claim does not move the standings")
+                    "tag if the claim does not move the standings"
+                )
     return errors
 
 
@@ -208,7 +213,8 @@ def check_ab(reg: dict) -> list[str]:
         errors.append(
             f"{axis}: the release A/B {name} moved ({'; '.join(moves)}); "
             f"a decision entry tagged `Standings: {axis}` must cite {name} "
-            "and say why the move ships, or the axis is re-measured")
+            "and say why the move ships, or the axis is re-measured"
+        )
     return errors
 
 
@@ -216,8 +222,10 @@ def check_drift(reg: dict) -> list[str]:
     """Every gated device arm holds its CPU partner inside the host spread."""
     errors = []
     for gpu_axis, cpu_axis in drift_pairs(reg):
-        for d in quality_drift(quality_rows(RESULTS / reg[cpu_axis]["file"]),
-                               quality_rows(RESULTS / reg[gpu_axis]["file"])):
+        for d in quality_drift(
+            quality_rows(RESULTS / reg[cpu_axis]["file"]),
+            quality_rows(RESULTS / reg[gpu_axis]["file"]),
+        ):
             if d.held or not d.gated:
                 continue
             errors.append(
@@ -225,7 +233,8 @@ def check_drift(reg: dict) -> list[str]:
                 f"{QUALITY_PARTNERS[d.grower]} on {d.worst_task}, past that "
                 f"task's host seed spread {d.worst_spread:.2e} by more than "
                 f"{QUALITY_DRIFT_FLOOR:.0e} ({d.pairs} pairs); the device "
-                "plane moved a quality standing, so it is a bug or a decision")
+                "plane moved a quality standing, so it is a bug or a decision"
+            )
     return errors
 
 
@@ -235,18 +244,17 @@ def drift_pairs(reg: dict) -> list[tuple[str, str]]:
     for axis, e in reg.items():
         if not axis.endswith(QUALITY_GPU_SUFFIX):
             continue
-        partner = reg.get(axis[:-len(QUALITY_GPU_SUFFIX)], {})
+        partner = reg.get(axis[: -len(QUALITY_GPU_SUFFIX)], {})
         if not (e.get("file") and partner.get("file")):
             continue
-        pairs.append((axis, axis[:-len(QUALITY_GPU_SUFFIX)]))
+        pairs.append((axis, axis[: -len(QUALITY_GPU_SUFFIX)]))
     return pairs
 
 
 def quality_rows(path: pathlib.Path) -> list[dict]:
     """The scored rows of one quality file."""
     rows = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
-    return [r for r in rows
-            if r.get("status") == "ok" and quality_value(r) is not None]
+    return [r for r in rows if r.get("status") == "ok" and quality_value(r) is not None]
 
 
 def quality_value(row: dict) -> float | None:
@@ -260,27 +268,36 @@ def quality_value(row: dict) -> float | None:
 
 def quality_drift(cpu_rows: list[dict], gpu_rows: list[dict]) -> list[Drift]:
     """One Drift per device grower, over the (suite, dataset, seed) it pairs on."""
-    cpu = {(r["variant"], *(r[k] for k in QUALITY_KEY)): quality_value(r)
-           for r in cpu_rows}
+    cpu = {(r["variant"], *(r[k] for k in QUALITY_KEY)): quality_value(r) for r in cpu_rows}
     spread = host_seed_spread(cpu_rows)
-    gaps: dict[str, list[tuple[float, float, str]]] = {
-        g: [] for g in QUALITY_PARTNERS}
+    gaps: dict[str, list[tuple[float, float, str]]] = {g: [] for g in QUALITY_PARTNERS}
     for r in gpu_rows:
         partner = QUALITY_PARTNERS.get(r["variant"])
         base = cpu.get((partner, *(r[k] for k in QUALITY_KEY)))
         if base is None:
             continue
         gaps[r["variant"]].append(
-            (quality_value(r) - base, spread[(partner, r["suite"], r["dataset"])],
-             f"{r['dataset']} s{r['seed']}"))
+            (
+                quality_value(r) - base,
+                spread[(partner, r["suite"], r["dataset"])],
+                f"{r['dataset']} s{r['seed']}",
+            )
+        )
     drifts = []
     for grower, deltas in gaps.items():
         if not deltas:
             continue
         worst, worst_spread, task = max(deltas, key=lambda d: abs(d[0]) - d[1])
-        drifts.append(Drift(grower, len(deltas),
-                            sum(d for d, _, _ in deltas) / len(deltas),
-                            abs(worst), worst_spread, task))
+        drifts.append(
+            Drift(
+                grower,
+                len(deltas),
+                sum(d for d, _, _ in deltas) / len(deltas),
+                abs(worst),
+                worst_spread,
+                task,
+            )
+        )
     return drifts
 
 
@@ -288,8 +305,7 @@ def host_seed_spread(cpu_rows: list[dict]) -> dict[tuple[str, int, str], float]:
     """Max minus min of the metric over seeds, per (variant, suite, dataset)."""
     values: dict[tuple[str, int, str], list[float]] = {}
     for r in cpu_rows:
-        values.setdefault((r["variant"], r["suite"], r["dataset"]), []).append(
-            quality_value(r))
+        values.setdefault((r["variant"], r["suite"], r["dataset"]), []).append(quality_value(r))
     return {k: max(v) - min(v) for k, v in values.items()}
 
 
@@ -299,9 +315,8 @@ def tagged_entries(text: str) -> list[tuple[int, list[str], str]]:
     tagged = []
     for i, m in enumerate(entries):
         end = entries[i + 1].start() if i + 1 < len(entries) else len(text)
-        body = text[m.end():end]
-        axes = [a.strip() for tag in TAG_RE.finditer(body)
-                for a in tag.group(1).split(",")]
+        body = text[m.end() : end]
+        axes = [a.strip() for tag in TAG_RE.finditer(body) for a in tag.group(1).split(",")]
         if axes:
             tagged.append((int(m.group(1)), axes, body))
     return tagged
@@ -318,8 +333,7 @@ def tagged_bodies(text: str) -> dict[str, str]:
 
 def ab_rows(path: pathlib.Path) -> list[dict]:
     """The measured rows of one A/B file."""
-    return measured([json.loads(ln) for ln in path.read_text().splitlines()
-                     if ln.strip()])
+    return measured([json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()])
 
 
 def measured(rows: list[dict]) -> list[dict]:
@@ -351,8 +365,7 @@ def ab_versions(rows: list[dict]) -> dict[str, str]:
 def ab_arm_line(rows: list[dict]) -> str:
     """`anchor 1.15.0, old 2.0.0, new 2.1.0+source`, the arms that ran."""
     versions = ab_versions(rows)
-    return ", ".join(f"{arm} {versions[arm]}" for arm in AB_ARMS
-                     if arm in versions)
+    return ", ".join(f"{arm} {versions[arm]}" for arm in AB_ARMS if arm in versions)
 
 
 def pct_delta(base: float, new: float) -> float:
@@ -383,11 +396,13 @@ def ab_table(rows: list[dict]) -> str:
         fit = {arm: best.get((rw, c, g, arm, AB_FIT)) for arm in AB_ARMS}
         rss = {arm: best.get((rw, c, g, arm, AB_RSS)) for arm in ("old", "new")}
         cells = [
-            f"{rw}x{c}", g,
+            f"{rw}x{c}",
+            g,
             *(_fmt_value(fit[arm], "s") for arm in AB_ARMS),
             _fmt_delta(fit["old"], fit["new"], AB_BAND_PCT),
             _fmt_delta(fit["anchor"], fit["new"], ANCHOR_BAND_PCT),
-            _fmt_value(rss["old"], "GB"), _fmt_value(rss["new"], "GB"),
+            _fmt_value(rss["old"], "GB"),
+            _fmt_value(rss["new"], "GB"),
             _fmt_delta(rss["old"], rss["new"], AB_BAND_PCT),
         ]
         lines.append("| " + " | ".join(cells) + " |")
@@ -417,22 +432,24 @@ def check_release(reg: dict, version: str) -> list[str]:
     errors = []
     for axis, e in reg.items():
         if not e.get("sha"):
-            errors.append(f"{axis}: never refreshed (no measurement sha); "
-                          "run the standings refresh before releasing")
+            errors.append(
+                f"{axis}: never refreshed (no measurement sha); "
+                "run the standings refresh before releasing"
+            )
             continue
         if e.get("refreshed_for") == version and not e.get("carried_forward"):
             print(f"{axis}: fresh refresh for {version!r}")
             continue
         ok, reason = hash_skip(axis, e)
         if ok:
-            label = ("carried-forward stamp" if e.get("carried_forward")
-                     else "hash-unchanged skip")
+            label = "carried-forward stamp" if e.get("carried_forward") else "hash-unchanged skip"
             print(f"{axis}: {label} ({reason})")
         else:
             errors.append(
                 f"{axis}: refreshed for {e.get('refreshed_for')!r}, not "
                 f"{version!r}, and the hash-unchanged skip does not apply "
-                f"({reason}); run the standings refresh before releasing")
+                f"({reason}); run the standings refresh before releasing"
+            )
     return errors
 
 
@@ -449,8 +466,7 @@ def stale_axes(reg: dict) -> list[str]:
     list[str]
         Registry keys in registry order.
     """
-    return [axis for axis, e in reg.items()
-            if not e.get("sha") or not hash_skip(axis, e)[0]]
+    return [axis for axis, e in reg.items() if not e.get("sha") or not hash_skip(axis, e)[0]]
 
 
 def is_quality_axis(axis: str) -> bool:
@@ -513,10 +529,12 @@ def hash_skip(axis: str, entry: dict) -> tuple[bool, str]:
     carried = entry.get("carried_forward")
     if carried:
         kind = carried.get("evidence", {}).get("kind", "unrecorded")
-        return True, (f"{plane} hash set {current} carried forward at "
-                      f"{carried.get('stamped_at')} on {kind} evidence, still "
-                      f"measured at {carried.get('measured_at')}: "
-                      f"{carried.get('reason')}")
+        return True, (
+            f"{plane} hash set {current} carried forward at "
+            f"{carried.get('stamped_at')} on {kind} evidence, still "
+            f"measured at {carried.get('measured_at')}: "
+            f"{carried.get('reason')}"
+        )
     return True, f"{plane} hash set {current} unchanged, refs current"
 
 
@@ -568,8 +586,7 @@ def _plane_paths(plane: str) -> list[pathlib.Path]:
     paths += sorted(p for p in (REPO / "include").rglob("*") if p.is_file())
     paths.append(MODEL_HASH_SCRIPT)
     if plane == PLANE_CPU:
-        return [p for p in paths
-                if not p.relative_to(REPO).as_posix().startswith(CUDA_PREFIXES)]
+        return [p for p in paths if not p.relative_to(REPO).as_posix().startswith(CUDA_PREFIXES)]
     return paths
 
 
@@ -595,12 +612,12 @@ def main() -> int:
                 continue
             ok, reason = hash_skip(axis, e)
             if ok:
-                print(f"note: carried-forward stamp, not a run: {axis}: "
-                      f"{reason}", file=sys.stderr)
+                print(f"note: carried-forward stamp, not a run: {axis}: {reason}", file=sys.stderr)
         return 0
     else:
-        print("usage: check_standings.py --decisions | --release <version> "
-              "| --stale", file=sys.stderr)
+        print(
+            "usage: check_standings.py --decisions | --release <version> | --stale", file=sys.stderr
+        )
         return 2
     if errors:
         for e in errors:

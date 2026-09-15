@@ -72,19 +72,13 @@ def test_model_methods_accept_a_host_dataset():
         np.testing.assert_array_equal(
             np.asarray(getattr(m, name)(X)), np.asarray(getattr(m, name)(ds))
         )
-    np.testing.assert_array_equal(
-        np.asarray(m.predict(X, 5)), np.asarray(m.predict(ds, 5))
-    )
+    np.testing.assert_array_equal(np.asarray(m.predict(X, 5)), np.asarray(m.predict(ds, 5)))
 
     # predict_proba is classification-only; the Dataset arm keeps the guard.
     yc = (y > np.median(y)).astype(np.float32)
     dc = bonsai.Dataset(X, yc)
-    mc = bonsai.train(
-        {"booster.n_iters": "10", "dispatch.objective_name": "logloss"}, dc
-    )
-    np.testing.assert_array_equal(
-        np.asarray(mc.predict_proba(X)), np.asarray(mc.predict_proba(dc))
-    )
+    mc = bonsai.train({"booster.n_iters": "10", "dispatch.objective_name": "logloss"}, dc)
+    np.testing.assert_array_equal(np.asarray(mc.predict_proba(X)), np.asarray(mc.predict_proba(dc)))
     with pytest.raises(Exception, match="classification"):
         m.predict_proba(ds)
 
@@ -106,9 +100,17 @@ def test_dataset_bin_edges_carries_domain_bands_in_the_artifact():
 
     # Within a band the model cannot distinguish raw values: the only cuts on
     # feature 0 are the two domain edges.
-    probe = np.array([[5.0, 0.5, 0.5], [17.9, 0.5, 0.5],
-                      [18.1, 0.5, 0.5], [64.0, 0.5, 0.5],
-                      [66.0, 0.5, 0.5], [99.0, 0.5, 0.5]], dtype=np.float32)
+    probe = np.array(
+        [
+            [5.0, 0.5, 0.5],
+            [17.9, 0.5, 0.5],
+            [18.1, 0.5, 0.5],
+            [64.0, 0.5, 0.5],
+            [66.0, 0.5, 0.5],
+            [99.0, 0.5, 0.5],
+        ],
+        dtype=np.float32,
+    )
     p = np.asarray(m.predict(probe))
     assert p[0] == p[1] and p[2] == p[3] and p[4] == p[5]
     # ...and across bands it must distinguish: the bands are the signal.
@@ -126,9 +128,11 @@ def test_dataset_bin_edges_carries_domain_bands_in_the_artifact():
     np.testing.assert_array_equal(np.asarray(bonsai.load(model_path).predict(probe)), p)
 
     # Malformed edges are rejected at Dataset construction.
-    for bad in ({0: np.array([65.0, 18.0], dtype=np.float32)},   # decreasing
-                {0: np.array([], dtype=np.float32)},             # empty
-                {9: np.array([1.0], dtype=np.float32)}):         # no such column
+    for bad in (
+        {0: np.array([65.0, 18.0], dtype=np.float32)},  # decreasing
+        {0: np.array([], dtype=np.float32)},  # empty
+        {9: np.array([1.0], dtype=np.float32)},
+    ):  # no such column
         with pytest.raises(Exception) as e:
             bonsai.Dataset(X, y, bin_edges=bad)
             assert "bin_edges" in str(e.value)
@@ -144,8 +148,11 @@ def test_dataset_eval_set_early_stopping():
     Xt, yt, Xv, yv = X[:3000], y[:3000], X[3000:], y[3000:]
 
     ds = bonsai.Dataset(Xt, yt)
-    pairs = {"booster.n_iters": "400", "booster.learning_rate": "0.3",
-             "booster.early_stopping_rounds": "10"}
+    pairs = {
+        "booster.n_iters": "400",
+        "booster.learning_rate": "0.3",
+        "booster.early_stopping_rounds": "10",
+    }
     m = bonsai.train(pairs, ds, eval_set=(Xv, yv))
     assert m.n_iters < 400, m.n_iters
 
@@ -155,9 +162,7 @@ def test_dataset_eval_set_early_stopping():
 
     # eval_set path must match the (X, y) path bit for bit under equal binning
     ref = bonsai.train(pairs, Xt, yt, eval_set=(Xv, yv))
-    np.testing.assert_array_equal(
-        np.asarray(ref.predict(Xv)), np.asarray(m.predict(Xv))
-    )
+    np.testing.assert_array_equal(np.asarray(ref.predict(Xv)), np.asarray(m.predict(Xv)))
 
 
 def test_dataset_reference_reuses_the_training_cuts():
@@ -185,22 +190,27 @@ def test_dataset_reference_reuses_the_training_cuts():
         # the fused path fits the same cuts from the same arrays, so the
         # prebinned eval set is routable there too: the precondition is the
         # cuts, not the object
-        for other in (bonsai.train(pairs, train_ds, eval_set=valid_ds),
-                      bonsai.train(pairs, train_ds, eval_set=(Xv, yv)),
-                      bonsai.train(pairs, Xt, yt, eval_set=valid_ds)):
+        for other in (
+            bonsai.train(pairs, train_ds, eval_set=valid_ds),
+            bonsai.train(pairs, train_ds, eval_set=(Xv, yv)),
+            bonsai.train(pairs, Xt, yt, eval_set=valid_ds),
+        ):
             np.testing.assert_array_equal(arrays, np.asarray(other.eval_history))
 
     # ...and the early-stop decision the trace drives is the same one. This
     # fit runs long enough to cross the break-even, which is the case the
     # round count can never be predicted for.
-    es = {"booster.n_iters": "400", "booster.learning_rate": "0.02",
-          "booster.early_stopping_rounds": "20", "tree.max_depth": "6"}
+    es = {
+        "booster.n_iters": "400",
+        "booster.learning_rate": "0.02",
+        "booster.early_stopping_rounds": "20",
+        "tree.max_depth": "6",
+    }
     raw = bonsai.train(es, Xt, yt, eval_set=(Xv, yv))
     assert 86 < len(raw.eval_history) < 400
     stopped = bonsai.train(es, train_ds, eval_set=valid_ds)
     assert stopped.n_iters == raw.n_iters
-    np.testing.assert_array_equal(np.asarray(raw.eval_history),
-                                  np.asarray(stopped.eval_history))
+    np.testing.assert_array_equal(np.asarray(raw.eval_history), np.asarray(stopped.eval_history))
 
 
 def test_dataset_reference_survives_a_warm_start():
@@ -245,8 +255,13 @@ def test_dataset_reference_refuses_a_mapper_mismatch():
 
     # The binning settings belong to the reference; a disagreeing one is an
     # error at construction, not a silently ignored argument.
-    for bad in (dict(max_bin=63), dict(seed=7), dict(min_data_in_bin=5),
-                dict(n_samples=100), dict(bin_edges={0: np.array([0.5], np.float32)})):
+    for bad in (
+        dict(max_bin=63),
+        dict(seed=7),
+        dict(min_data_in_bin=5),
+        dict(n_samples=100),
+        dict(bin_edges={0: np.array([0.5], np.float32)}),
+    ):
         with pytest.raises(Exception, match="reference"):
             bonsai.Dataset(Xv, yv, reference=train_ds, **bad)
     with pytest.raises(Exception, match="columns"):
@@ -265,8 +280,7 @@ def test_dataset_reference_inherits_the_binning_settings():
     coarse = bonsai.Dataset(Xt, yt, max_bin=127, seed=7, min_data_in_bin=3)
     pairs = {"booster.n_iters": "5"}
     inherited = bonsai.Dataset(Xv, yv, reference=coarse)
-    restated = bonsai.Dataset(Xv, yv, reference=coarse, max_bin=127, seed=7,
-                              min_data_in_bin=3)
+    restated = bonsai.Dataset(Xv, yv, reference=coarse, max_bin=127, seed=7, min_data_in_bin=3)
     ref = np.asarray(bonsai.train(pairs, coarse, eval_set=inherited).eval_history)
     np.testing.assert_array_equal(
         ref, np.asarray(bonsai.train(pairs, coarse, eval_set=restated).eval_history)
@@ -286,8 +300,7 @@ def test_dataset_eval_set_refuses_sample_weights():
     Xt, yt, Xv, yv = X[:2000], y[:2000], X[2000:], y[2000:]
 
     train_ds = bonsai.Dataset(Xt, yt)
-    weighted = bonsai.Dataset(Xv, yv, weight=np.ones(1000, np.float32),
-                              reference=train_ds)
+    weighted = bonsai.Dataset(Xv, yv, weight=np.ones(1000, np.float32), reference=train_ds)
     with pytest.raises(Exception, match="unweighted"):
         bonsai.train({"booster.n_iters": "5"}, train_ds, eval_set=weighted)
 
@@ -336,8 +349,11 @@ def test_device_dataset_matches_the_fused_path():
     if not bonsai.cuda_available():
         pytest.skip("no CUDA build or no visible device")
     X, y = _reg_data(n=20000)
-    pairs = {"dispatch.grower_name": "cuda_depthwise", "booster.n_iters": "30",
-             "tree.max_depth": "6"}
+    pairs = {
+        "dispatch.grower_name": "cuda_depthwise",
+        "booster.n_iters": "30",
+        "tree.max_depth": "6",
+    }
     fused = np.asarray(bonsai.train(pairs, X, y).predict(X))
 
     ds = bonsai.Dataset(X, y, device="cuda")
@@ -358,9 +374,7 @@ def test_device_dataset_materializes_host_bins_for_a_cpu_grower():
     X, y = _reg_data(n=20000)
     pairs = {"dispatch.grower_name": "depthwise", "booster.n_iters": "30", "tree.max_depth": "6"}
     host = np.asarray(bonsai.train(pairs, bonsai.Dataset(X, y)).predict(X))
-    device = np.asarray(
-        bonsai.train(pairs, bonsai.Dataset(X, y, device="cuda")).predict(X)
-    )
+    device = np.asarray(bonsai.train(pairs, bonsai.Dataset(X, y, device="cuda")).predict(X))
     np.testing.assert_array_equal(host, device)
 
 
@@ -374,8 +388,7 @@ def test_device_dataset_rejects_a_device_id_mismatch():
     with pytest.raises(Exception, match="device_id=1"):
         bonsai.train({"dispatch.grower_name": "cuda_depthwise", "parallel.device_id": "1"}, ds)
     # a host Dataset carries no residency, so any device placement is fine
-    bonsai.train({"booster.n_iters": "2", "parallel.device_id": "0"},
-                 bonsai.Dataset(X, y))
+    bonsai.train({"booster.n_iters": "2", "parallel.device_id": "0"}, bonsai.Dataset(X, y))
 
 
 def test_dataset_reference_inherits_the_device():

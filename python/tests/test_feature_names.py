@@ -153,7 +153,9 @@ def test_named_monotone_flows_through_the_estimator_params():
 
     def fit(constraints):
         return bonsai.BonsaiRegressor(
-            n_iters=25, max_depth=5, grower="depthwise",
+            n_iters=25,
+            max_depth=5,
+            grower="depthwise",
             params={"tree.monotone_constraints": constraints},
         ).fit(X, y)
 
@@ -166,11 +168,10 @@ def test_named_monotone_flows_through_the_estimator_params():
 
 # feature_names on the fused train =================================================================
 
+
 def test_train_takes_feature_names_for_an_array():
     X, y = _reg_data()
-    model = bonsai.train(
-        {"booster.n_iters": "5", "tree.max_depth": "4"}, X, y, feature_names=NAMES
-    )
+    model = bonsai.train({"booster.n_iters": "5", "tree.max_depth": "4"}, X, y, feature_names=NAMES)
     text = model.dump()
     assert "income <=" in text
     assert "f1 <=" not in text
@@ -181,9 +182,7 @@ def test_train_named_monotone_resolves_against_the_given_names():
     by_name = bonsai.train(_mono({"age": 1, "tenure": -1}), X, y, feature_names=NAMES)
     by_list = bonsai.train(_mono([1, 0, -1, 0, 0, 0]), X, y, feature_names=NAMES)
     assert by_name.config_toml == by_list.config_toml
-    np.testing.assert_array_equal(
-        np.asarray(by_name.predict(X)), np.asarray(by_list.predict(X))
-    )
+    np.testing.assert_array_equal(np.asarray(by_name.predict(X)), np.asarray(by_list.predict(X)))
 
 
 def test_train_feature_names_with_init_model_raises(tmp_path):
@@ -197,6 +196,7 @@ def test_train_feature_names_with_init_model_raises(tmp_path):
 
 
 # The estimator layer ==============================================================================
+
 
 class _Frame:
     """The little of a DataFrame the estimator layer reads: column names, and
@@ -255,9 +255,7 @@ def test_estimator_warm_start_on_a_frame(tmp_path):
     path = str(tmp_path / "warm.msgpack")
     bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(frame, y).save(path)
 
-    warm = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(
-        frame, y, init_model=path
-    )
+    warm = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(frame, y, init_model=path)
     assert warm.n_iters_ == 20
     assert "income <=" in warm.dump()
     # the names are the loaded model's, which here agree with the frame's
@@ -308,11 +306,15 @@ def test_classifier_reads_the_frame_columns():
 def test_named_monotone_works_through_an_estimator_fit_on_a_frame():
     X, y = _reg_data()
     est = bonsai.BonsaiRegressor(
-        n_iters=25, max_depth=5, grower="depthwise",
+        n_iters=25,
+        max_depth=5,
+        grower="depthwise",
         params={"tree.monotone_constraints": {"age": 1, "tenure": -1}},
     ).fit(_Frame(X, NAMES), y)
     by_list = bonsai.BonsaiRegressor(
-        n_iters=25, max_depth=5, grower="depthwise",
+        n_iters=25,
+        max_depth=5,
+        grower="depthwise",
         params={"tree.monotone_constraints": [1, 0, -1, 0, 0, 0]},
     ).fit(_Frame(X, NAMES), y)
     frame = _Frame(X, NAMES)
@@ -320,6 +322,7 @@ def test_named_monotone_works_through_an_estimator_fit_on_a_frame():
 
 
 # Names at predict time ============================================================================
+
 
 def test_predict_warns_when_the_names_go_missing():
     X, y = _reg_data()

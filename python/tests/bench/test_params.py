@@ -18,23 +18,33 @@ CANONICAL_NATIVE = [
 
 
 def test_reference_param_mappings():
-    x = params.xgb_core(learning_rate=0.05, max_depth=6, min_data_in_leaf=20,
-                        lambda_l2=1.0, max_bin=255, seed=42)
+    x = params.xgb_core(
+        learning_rate=0.05, max_depth=6, min_data_in_leaf=20, lambda_l2=1.0, max_bin=255, seed=42
+    )
     assert x["min_child_weight"] == 20 and x["tree_method"] == "hist"
-    lgb = params.lgbm_core(learning_rate=0.1, max_depth=8, num_leaves=256,
-                           min_data_in_leaf=20, lambda_l2=1.0, max_bin=255,
-                           seed=42)
+    lgb = params.lgbm_core(
+        learning_rate=0.1,
+        max_depth=8,
+        num_leaves=256,
+        min_data_in_leaf=20,
+        lambda_l2=1.0,
+        max_bin=255,
+        seed=42,
+    )
     assert lgb["num_leaves"] == 256 and lgb["verbose"] == -1
     # max_bin arrives in BIN semantics; catboost_core owns the borders
     # fencepost (bins - 1) and the GPU 254-border cap (fairness review
     # 2026-07-30: call-site translations had drifted three ways).
-    cb_gpu = params.catboost_core(learning_rate=0.1, max_depth=8, lambda_l2=1.0,
-                                  max_bin=1023, seed=42, device="cuda")
-    cb_cpu = params.catboost_core(learning_rate=0.1, max_depth=8, lambda_l2=1.0,
-                                  max_bin=1023, seed=42, device="cpu")
+    cb_gpu = params.catboost_core(
+        learning_rate=0.1, max_depth=8, lambda_l2=1.0, max_bin=1023, seed=42, device="cuda"
+    )
+    cb_cpu = params.catboost_core(
+        learning_rate=0.1, max_depth=8, lambda_l2=1.0, max_bin=1023, seed=42, device="cpu"
+    )
     assert cb_gpu["border_count"] == 254 and cb_cpu["border_count"] == 1022
-    cb_255 = params.catboost_core(learning_rate=0.1, max_depth=8, lambda_l2=1.0,
-                                  max_bin=255, seed=42, device="cpu")
+    cb_255 = params.catboost_core(
+        learning_rate=0.1, max_depth=8, lambda_l2=1.0, max_bin=255, seed=42, device="cpu"
+    )
     assert cb_255["border_count"] == 254  # 255 bins, matching the others
     assert params.num_leaves_campaign(6) == 63
     assert params.num_leaves_full(6) == 64
@@ -44,6 +54,7 @@ def test_reference_param_mappings():
     # the shim keeps the documented import path alive
     sys.path.insert(0, "scripts")
     from bonsai.bench import params as rp
+
     assert rp.xgb_core is params.xgb_core
 
 
@@ -56,16 +67,35 @@ def test_reference_builders_agree_with_interop():
     spelling here is the drift that produced a published correction once.
     """
     builders = (
-        (params.xgb_core(learning_rate=0.05, max_depth=6, min_data_in_leaf=20,
-                         lambda_l2=1.0, max_bin=255, seed=42),
-         interop.to_xgboost(CANONICAL_NATIVE)),
-        (params.lgbm_core(learning_rate=0.05, max_depth=6, num_leaves=63,
-                          min_data_in_leaf=20, lambda_l2=1.0, max_bin=255,
-                          seed=42),
-         interop.to_lightgbm(CANONICAL_NATIVE)),
-        (params.catboost_core(learning_rate=0.05, max_depth=6, lambda_l2=1.0,
-                              max_bin=255, seed=42, device="cpu"),
-         interop.to_catboost(CANONICAL_NATIVE)),
+        (
+            params.xgb_core(
+                learning_rate=0.05,
+                max_depth=6,
+                min_data_in_leaf=20,
+                lambda_l2=1.0,
+                max_bin=255,
+                seed=42,
+            ),
+            interop.to_xgboost(CANONICAL_NATIVE),
+        ),
+        (
+            params.lgbm_core(
+                learning_rate=0.05,
+                max_depth=6,
+                num_leaves=63,
+                min_data_in_leaf=20,
+                lambda_l2=1.0,
+                max_bin=255,
+                seed=42,
+            ),
+            interop.to_lightgbm(CANONICAL_NATIVE),
+        ),
+        (
+            params.catboost_core(
+                learning_rate=0.05, max_depth=6, lambda_l2=1.0, max_bin=255, seed=42, device="cpu"
+            ),
+            interop.to_catboost(CANONICAL_NATIVE),
+        ),
     )
     for built, mapped in builders:
         assert mapped, "the canonical cell must translate to something"
@@ -75,10 +105,18 @@ def test_reference_builders_agree_with_interop():
 def test_bonsai_core_pairs():
     # The exact dotted keys run_bonsai used to hand-build; a drift here
     # changes every perf row silently.
-    pairs = params.bonsai_core(learning_rate=0.1, max_depth=8, num_leaves=256,
-                               min_data_in_leaf=20, lambda_l2=1.0, max_bin=255,
-                               seed=42, n_iters=100, n_threads=16,
-                               grower="depthwise")
+    pairs = params.bonsai_core(
+        learning_rate=0.1,
+        max_depth=8,
+        num_leaves=256,
+        min_data_in_leaf=20,
+        lambda_l2=1.0,
+        max_bin=255,
+        seed=42,
+        n_iters=100,
+        n_threads=16,
+        grower="depthwise",
+    )
     assert dict(pairs) == {
         "dispatch.grower_name": "depthwise",
         "dispatch.objective_name": "mse",
@@ -93,10 +131,19 @@ def test_bonsai_core_pairs():
         "parallel.n_threads": "16",
     }
     assert all(isinstance(k, str) and isinstance(v, str) for k, v in pairs)
-    logloss = params.bonsai_core(learning_rate=0.1, max_depth=8, num_leaves=256,
-                                 min_data_in_leaf=20, lambda_l2=1.0, max_bin=255,
-                                 seed=42, n_iters=100, n_threads=16,
-                                 grower="levelwise", objective="logloss")
+    logloss = params.bonsai_core(
+        learning_rate=0.1,
+        max_depth=8,
+        num_leaves=256,
+        min_data_in_leaf=20,
+        lambda_l2=1.0,
+        max_bin=255,
+        seed=42,
+        n_iters=100,
+        n_threads=16,
+        grower="levelwise",
+        objective="logloss",
+    )
     assert dict(logloss)["dispatch.objective_name"] == "logloss"
 
 
@@ -107,30 +154,45 @@ def test_early_stop_mappings():
     note), so the four translations are pinned by name here: a rename in a
     reference library must break this test, not a pod session.
     """
-    pairs = dict(params.bonsai_core(learning_rate=0.05, max_depth=8,
-                                    num_leaves=256, min_data_in_leaf=20,
-                                    lambda_l2=1.0, max_bin=255, seed=42,
-                                    n_iters=2000, n_threads=16,
-                                    grower="depthwise",
-                                    early_stopping_rounds=50))
+    pairs = dict(
+        params.bonsai_core(
+            learning_rate=0.05,
+            max_depth=8,
+            num_leaves=256,
+            min_data_in_leaf=20,
+            lambda_l2=1.0,
+            max_bin=255,
+            seed=42,
+            n_iters=2000,
+            n_threads=16,
+            grower="depthwise",
+            early_stopping_rounds=50,
+        )
+    )
     assert pairs["booster.early_stopping_rounds"] == "50"
     assert params.xgb_early_stop(50) == {"early_stopping_rounds": 50}
     assert params.lgbm_early_stop(50)["stopping_rounds"] == 50
-    assert params.catboost_early_stop(50, has_eval_set=True) == {
-        "od_type": "Iter", "od_wait": 50}
+    assert params.catboost_early_stop(50, has_eval_set=True) == {"od_type": "Iter", "od_wait": 50}
     # CatBoost shrinks to its best iteration merely because an eval set was
     # passed, so the fixed-iteration arm must switch that off or it reports
     # a shorter model than the one it was timed training.
-    assert params.catboost_early_stop(0, has_eval_set=True) == {
-        "use_best_model": False}
+    assert params.catboost_early_stop(0, has_eval_set=True) == {"use_best_model": False}
 
 
 def test_early_stop_mappings_are_absent_when_unarmed():
     """Zero patience omits the mechanism instead of writing a default."""
-    pairs = params.bonsai_core(learning_rate=0.1, max_depth=8, num_leaves=256,
-                               min_data_in_leaf=20, lambda_l2=1.0, max_bin=255,
-                               seed=42, n_iters=100, n_threads=16,
-                               grower="depthwise")
+    pairs = params.bonsai_core(
+        learning_rate=0.1,
+        max_depth=8,
+        num_leaves=256,
+        min_data_in_leaf=20,
+        lambda_l2=1.0,
+        max_bin=255,
+        seed=42,
+        n_iters=100,
+        n_threads=16,
+        grower="depthwise",
+    )
     assert "booster.early_stopping_rounds" not in dict(pairs)
     assert params.xgb_early_stop(0) == {}
     assert params.lgbm_early_stop(0) == {}

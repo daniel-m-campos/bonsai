@@ -11,6 +11,7 @@ or, equivalently: python -m bonsai.bench run --spec scaling-rows
 The scaling ladders are bundled specs (`specs` lists them): scaling-rows,
 scaling-cols, scaling-bins, scaling-threads.
 """
+
 from __future__ import annotations
 
 import sys

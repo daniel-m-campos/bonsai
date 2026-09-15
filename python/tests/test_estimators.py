@@ -45,9 +45,7 @@ def test_sample_weight_ones_is_identity():
     Xte, _ = load_csv(TEST_CSV)
     base = bonsai.BonsaiRegressor(**CH_PARAMS).fit(Xtr, ytr).predict(Xte)
     ones = np.ones(len(ytr), dtype=np.float32)
-    weighted = (
-        bonsai.BonsaiRegressor(**CH_PARAMS).fit(Xtr, ytr, sample_weight=ones).predict(Xte)
-    )
+    weighted = bonsai.BonsaiRegressor(**CH_PARAMS).fit(Xtr, ytr, sample_weight=ones).predict(Xte)
     np.testing.assert_array_equal(base, weighted)
 
 
@@ -109,9 +107,9 @@ def test_monotone_constraint_survives_leaf_renewal(objective, grower):
 
 def test_early_stopping_stops():
     Xtr, ytr = load_csv(TRAIN_CSV)
-    m = bonsai.BonsaiRegressor(
-        n_iters=400, learning_rate=0.3, early_stopping_rounds=10
-    ).fit(Xtr[:-2000], ytr[:-2000], eval_set=(Xtr[-2000:], ytr[-2000:]))
+    m = bonsai.BonsaiRegressor(n_iters=400, learning_rate=0.3, early_stopping_rounds=10).fit(
+        Xtr[:-2000], ytr[:-2000], eval_set=(Xtr[-2000:], ytr[-2000:])
+    )
     assert m.n_iters_ < 400
 
 
@@ -149,9 +147,7 @@ def test_fit_accepts_a_prebinned_eval_set():
     )
 
     with pytest.raises(Exception, match="reference=train_dataset"):
-        bonsai.BonsaiRegressor(n_iters=5).fit(
-            Xt, yt, eval_set=bonsai.Dataset(Xv, yv, max_bin=31)
-        )
+        bonsai.BonsaiRegressor(n_iters=5).fit(Xt, yt, eval_set=bonsai.Dataset(Xv, yv, max_bin=31))
 
 
 def test_classifier_prebinned_eval_set_labels_must_be_encoded():
@@ -165,10 +161,8 @@ def test_classifier_prebinned_eval_set_labels_must_be_encoded():
 
     train_ds = bonsai.Dataset(Xt, y[:1000])
     encoded = bonsai.Dataset(Xv, y[1000:], reference=train_ds)
-    arrays = bonsai.BonsaiClassifier(n_iters=20).fit(
-        Xt, named_t, eval_set=(Xv, named_v))
-    prebinned = bonsai.BonsaiClassifier(n_iters=20).fit(
-        Xt, named_t, eval_set=encoded)
+    arrays = bonsai.BonsaiClassifier(n_iters=20).fit(Xt, named_t, eval_set=(Xv, named_v))
+    prebinned = bonsai.BonsaiClassifier(n_iters=20).fit(Xt, named_t, eval_set=encoded)
     assert prebinned.evals_result() == arrays.evals_result()
 
     raw = bonsai.Dataset(Xv, y[1000:] + 3.0, reference=train_ds)
@@ -211,9 +205,7 @@ def test_nan_rows_train_as_missing():
     X[missing, 0] = np.nan
     y = missing.astype(np.float32)
 
-    pred = bonsai.BonsaiRegressor(n_iters=60, learning_rate=0.3, max_depth=3).fit(
-        X, y
-    ).predict(X)
+    pred = bonsai.BonsaiRegressor(n_iters=60, learning_rate=0.3, max_depth=3).fit(X, y).predict(X)
     assert pred[missing].mean() > 0.9
     assert pred[~missing].mean() < 0.1
 
@@ -248,7 +240,8 @@ def test_feature_importance_agreement():
 
     lgbm = lgb.train(
         {"objective": "regression", "verbose": -1, "max_bin": 255},
-        lgb.Dataset(Xtr, label=ytr), num_boost_round=200,
+        lgb.Dataset(Xtr, label=ytr),
+        num_boost_round=200,
     )
     assert int(np.argmax(lgbm.feature_importance("gain"))) == 0
     assert int(np.argmax(lgbm.feature_importance("split"))) in (6, 7)
@@ -271,8 +264,7 @@ def test_toml_base_and_precedence():
         toml.write_text("[booster]\nn_iters = 7\n")
 
         base = bonsai.Params.from_toml(str(toml))
-        m = bonsai.train(base | {"dispatch.grower_name": "depthwise"},
-                         Xtr[:200], ytr[:200])
+        m = bonsai.train(base | {"dispatch.grower_name": "depthwise"}, Xtr[:200], ytr[:200])
         assert m.n_iters == 7
 
         m = bonsai.train(base | {"booster.n_iters": 3}, Xtr[:200], ytr[:200])
@@ -281,9 +273,7 @@ def test_toml_base_and_precedence():
         # An estimator takes the file through params=, which always has the
         # final word: the file overrides kwargs (config= used to sit below
         # them; the explicit routing is the louder contract).
-        r = bonsai.BonsaiRegressor(n_iters=4, params=base.to_dict()).fit(
-            Xtr[:200], ytr[:200]
-        )
+        r = bonsai.BonsaiRegressor(n_iters=4, params=base.to_dict()).fit(Xtr[:200], ytr[:200])
         assert r.n_iters_ == 7
 
     with pytest.raises(FileNotFoundError):
@@ -305,6 +295,7 @@ def test_estimator_params_accepts_a_typed_params():
     est = bonsai.BonsaiRegressor(params=typed)
     assert est.get_params()["params"] is typed
     from sklearn.base import clone
+
     assert clone(est).params == typed
 
 
@@ -315,9 +306,7 @@ def test_estimator_predict_family_accepts_a_dataset():
     est = bonsai.BonsaiRegressor(**CH_PARAMS).fit(Xtr, ytr)
     ds = bonsai.Dataset(Xtr, ytr)
     for name in ("predict", "staged_predict", "predict_leaf", "pred_contribs"):
-        np.testing.assert_array_equal(
-            getattr(est, name)(Xtr), getattr(est, name)(ds)
-        )
+        np.testing.assert_array_equal(getattr(est, name)(Xtr), getattr(est, name)(ds))
 
     Xb, yb = _separable_binary()
     clf = bonsai.BonsaiClassifier(n_iters=20).fit(Xb, yb)
@@ -332,9 +321,7 @@ def test_cuda_available_reports():
     assert isinstance(bonsai.cuda_available(), bool)
     if bonsai.cuda_available():
         Xtr, ytr = load_csv(TRAIN_CSV)
-        m = bonsai.BonsaiRegressor(
-            n_iters=5, grower="cuda_depthwise"
-        ).fit(Xtr[:1000], ytr[:1000])
+        m = bonsai.BonsaiRegressor(n_iters=5, grower="cuda_depthwise").fit(Xtr[:1000], ytr[:1000])
         assert m.n_iters_ == 5
 
 
@@ -398,9 +385,7 @@ def test_sklearn_grid_search_cv():
     model_selection = pytest.importorskip("sklearn.model_selection")
 
     Xtr, ytr = load_csv(TRAIN_CSV)
-    gs = model_selection.GridSearchCV(
-        bonsai.BonsaiRegressor(), {"n_iters": [10, 20]}, cv=2
-    )
+    gs = model_selection.GridSearchCV(bonsai.BonsaiRegressor(), {"n_iters": [10, 20]}, cv=2)
     gs.fit(Xtr[:400], ytr[:400])
     assert gs.best_params_["n_iters"] in (10, 20)
 
@@ -410,10 +395,12 @@ def test_sklearn_pipeline():
     preprocessing = pytest.importorskip("sklearn.preprocessing")
 
     Xtr, ytr = load_csv(TRAIN_CSV)
-    pipe = pipeline.Pipeline([
-        ("sc", preprocessing.StandardScaler()),
-        ("gb", bonsai.BonsaiRegressor(n_iters=20)),
-    ])
+    pipe = pipeline.Pipeline(
+        [
+            ("sc", preprocessing.StandardScaler()),
+            ("gb", bonsai.BonsaiRegressor(n_iters=20)),
+        ]
+    )
     pipe.fit(Xtr[:400], ytr[:400])
     pred = pipe.predict(Xtr[:400])
     assert pred.shape == (400,)
@@ -687,9 +674,7 @@ def test_eval_set_of_the_wrong_width_is_refused():
     x = rng.standard_normal((200, 8)).astype(np.float32)
     y = rng.standard_normal(200).astype(np.float32)
     with pytest.raises(ValueError, match="columns must match"):
-        bonsai.BonsaiRegressor(n_iters=3).fit(
-            x, y, eval_set=(x[:, :7].copy(), y)
-        )
+        bonsai.BonsaiRegressor(n_iters=3).fit(x, y, eval_set=(x[:, :7].copy(), y))
 
 
 def test_warm_start_refuses_a_width_mismatch(tmp_path):
@@ -700,9 +685,7 @@ def test_warm_start_refuses_a_width_mismatch(tmp_path):
     path = str(tmp_path / "m.bonsai")
     bonsai.BonsaiRegressor(n_iters=2).fit(x, y).save(path)
     with pytest.raises(ValueError, match="columns must match"):
-        bonsai.BonsaiRegressor(n_iters=2).fit(
-            x[:, :7].copy(), y, init_model=path
-        )
+        bonsai.BonsaiRegressor(n_iters=2).fit(x[:, :7].copy(), y, init_model=path)
 
 
 def test_zero_round_multiclass_round_trips(tmp_path):
@@ -721,9 +704,7 @@ def test_warm_start_inherits_the_loaded_objective(tmp_path):
     x = rng.standard_normal((120, 5)).astype(np.float32)
     y = (x[:, 0] > 0).astype(np.int64)
     path = str(tmp_path / "logi.bonsai")
-    first = bonsai.train(
-        {"dispatch.objective_name": "logloss", "booster.n_iters": 4}, x, y
-    )
+    first = bonsai.train({"dispatch.objective_name": "logloss", "booster.n_iters": 4}, x, y)
     first.save(path)
 
     again = bonsai.train({"booster.n_iters": 2}, x, y, init_model=path)
@@ -766,8 +747,7 @@ def test_empty_int_list_params_round_trip():
     x = rng.standard_normal((60, 3)).astype(np.float32)
     y = x[:, 0].copy()
     m = bonsai.train(
-        {"data.ignore_columns": [], "tree.monotone_constraints": [],
-         "booster.n_iters": 1},
+        {"data.ignore_columns": [], "tree.monotone_constraints": [], "booster.n_iters": 1},
         x,
         y,
     )
@@ -781,13 +761,10 @@ def test_train_refuses_labels_outside_the_objective_domain():
     y3 = rng.integers(0, 3, 60).astype(np.float32)
 
     with pytest.raises(ValueError, match="logloss labels"):
-        bonsai.train(
-            {"dispatch.objective_name": "logloss", "booster.n_iters": 1}, x, y3
-        )
+        bonsai.train({"dispatch.objective_name": "logloss", "booster.n_iters": 1}, x, y3)
     with pytest.raises(ValueError, match="softmax labels"):
         bonsai.train(
-            {"dispatch.objective_name": "softmax", "objective.n_classes": 2,
-             "booster.n_iters": 1},
+            {"dispatch.objective_name": "softmax", "objective.n_classes": 2, "booster.n_iters": 1},
             x,
             y3,
         )

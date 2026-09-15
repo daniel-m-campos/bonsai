@@ -31,7 +31,5 @@ def _as_f32(a, ndim: int, name: str) -> np.ndarray:
     """
     arr = np.ascontiguousarray(a, dtype=np.float32)
     if arr.ndim != ndim:
-        raise ValueError(
-            f"{name} must be {ndim}-dimensional, got shape {arr.shape}")
+        raise ValueError(f"{name} must be {ndim}-dimensional, got shape {arr.shape}")
     return arr
-

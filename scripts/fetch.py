@@ -7,6 +7,7 @@ built. `fetch` itself validates the name, so this is only the argv plumbing.
 
     python3 scripts/fetch.py higgs
 """
+
 from __future__ import annotations
 
 import importlib.util

@@ -37,8 +37,7 @@ def main() -> int:
     y = ds.target.astype("int64")
 
     df = pd.concat([y.rename("label"), X], axis=1)
-    train, test = train_test_split(df, test_size=0.2, random_state=42,
-                                   stratify=df["label"])
+    train, test = train_test_split(df, test_size=0.2, random_state=42, stratify=df["label"])
     train.to_csv(train_path, index=False)
     test.to_csv(test_path, index=False)
     for name, col in X.items():

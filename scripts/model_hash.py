@@ -24,9 +24,14 @@ import numpy as np
 sys.path.insert(0, "build/python")
 import bonsai
 
-PAIRS = {"dispatch.grower_name": "depthwise", "booster.n_iters": "20",
-         "booster.learning_rate": "0.1", "tree.max_depth": "8",
-         "bin_mapper.max_bin": "255", "parallel.n_threads": "8"}
+PAIRS = {
+    "dispatch.grower_name": "depthwise",
+    "booster.n_iters": "20",
+    "booster.learning_rate": "0.1",
+    "tree.max_depth": "8",
+    "bin_mapper.max_bin": "255",
+    "parallel.n_threads": "8",
+}
 
 
 def _sha(a: np.ndarray) -> str:
@@ -37,8 +42,11 @@ def _gen_data() -> tuple[np.ndarray, np.ndarray]:
     """The fixed 500k x 100 input; the seed sequence is part of the gate."""
     rng = np.random.default_rng(np.random.SeedSequence([42, 500_000, 100]))
     X = rng.random((500_000, 100), dtype=np.float32)
-    y = (X[:, :20].reshape(-1, 4, 5) * (0.6 ** np.arange(4))[None, :, None]) \
-        .sum(axis=(1, 2)).astype(np.float32)
+    y = (
+        (X[:, :20].reshape(-1, 4, 5) * (0.6 ** np.arange(4))[None, :, None])
+        .sum(axis=(1, 2))
+        .astype(np.float32)
+    )
     y += rng.normal(0, y.std() * 0.33, len(y)).astype(np.float32)
     return X, y
 
@@ -68,8 +76,10 @@ def main() -> int:
     # scales block counts with it, per host-determinism), never on
     # the architecture (decisions 59/60). Both lines are asserted equal across
     # arm64/x86-64 by the cross-arch CI gate.
-    print("serial_sha256:",
-          _model_sha(X, y, {"bin_mapper.n_samples": "500000", "parallel.n_threads": "1"}))
+    print(
+        "serial_sha256:",
+        _model_sha(X, y, {"bin_mapper.n_samples": "500000", "parallel.n_threads": "1"}),
+    )
     print("sha256:", _model_sha(X, y))
     return 0
 

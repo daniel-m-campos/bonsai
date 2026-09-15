@@ -57,16 +57,25 @@ def _stale_gpu_axis(monkeypatch, tmp_path) -> pathlib.Path:
     """A gpu axis stamped before a host-side edit moved the gpu digest."""
     _fake_tree(tmp_path)
     monkeypatch.setattr(check_standings, "REPO", tmp_path)
-    monkeypatch.setattr(check_standings, "MODEL_HASH_SCRIPT",
-                        tmp_path / "scripts" / "model_hash.py")
     monkeypatch.setattr(
-        update_standings.subprocess, "run",
-        lambda *a, **k: subprocess.CompletedProcess(a, 0, STAMPED_SHA, ""))
-    entry = {"file": "gpu-tall-2026-08.jsonl", "sha": MEASURED_SHA,
-             "host": "pod-blackwell", "date": "2026-08-05", "plane": "gpu",
-             "refreshed_for": "1.7.0", "as_of_decision": 104,
-             "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
-             "refs": {"xgboost": "3.2.0"}}
+        check_standings, "MODEL_HASH_SCRIPT", tmp_path / "scripts" / "model_hash.py"
+    )
+    monkeypatch.setattr(
+        update_standings.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, STAMPED_SHA, ""),
+    )
+    entry = {
+        "file": "gpu-tall-2026-08.jsonl",
+        "sha": MEASURED_SHA,
+        "host": "pod-blackwell",
+        "date": "2026-08-05",
+        "plane": "gpu",
+        "refreshed_for": "1.7.0",
+        "as_of_decision": 104,
+        "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
+        "refs": {"xgboost": "3.2.0"},
+    }
     registry = _registry(tmp_path, entry)
     monkeypatch.setattr(update_standings, "REGISTRY", registry)
     (tmp_path / "src" / "tree.cpp").write_text("host, restructured\n")
@@ -78,16 +87,31 @@ def _run(monkeypatch, *argv: str) -> int:
     return update_standings.main()
 
 
-def _tolerance_argv(floor_before: str | None = str(FLOOR_BEFORE),
-                    floor_after: str | None = str(FLOOR_AFTER),
-                    cross_commit: str = str(CROSS_COMMIT)) -> list[str]:
+def _tolerance_argv(
+    floor_before: str | None = str(FLOOR_BEFORE),
+    floor_after: str | None = str(FLOOR_AFTER),
+    cross_commit: str = str(CROSS_COMMIT),
+) -> list[str]:
     """A complete tolerance-kind command line, with the numbers swappable."""
-    argv = ["--axis", "gpu-tall", "--restamp-verified",
-            "--reason", DEVICE_REASON, "--evidence-kind", "tolerance",
-            "--metric", "max abs prediction delta",
-            "--cross-commit", cross_commit, "--cell", "500k x 100",
-            "--config", "20 iters, depth 8, threads 16",
-            "--evidence-host", "L40S"]
+    argv = [
+        "--axis",
+        "gpu-tall",
+        "--restamp-verified",
+        "--reason",
+        DEVICE_REASON,
+        "--evidence-kind",
+        "tolerance",
+        "--metric",
+        "max abs prediction delta",
+        "--cross-commit",
+        cross_commit,
+        "--cell",
+        "500k x 100",
+        "--config",
+        "20 iters, depth 8, threads 16",
+        "--evidence-host",
+        "L40S",
+    ]
     if floor_before is not None:
         argv += ["--floor-before", floor_before]
     if floor_after is not None:
@@ -103,23 +127,45 @@ def test_carry_forward_refuses_without_a_recorded_proof(monkeypatch, tmp_path):
     before = registry.read_text()
 
     assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified") == 1
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified",
-                "--reason", REASON) == 1
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified",
-                "--reason", REASON, "--evidence-before", PROOF,
-                "--evidence-after", "0000000000000000") == 1
+    assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified", "--reason", REASON) == 1
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--restamp-verified",
+            "--reason",
+            REASON,
+            "--evidence-before",
+            PROOF,
+            "--evidence-after",
+            "0000000000000000",
+        )
+        == 1
+    )
     assert registry.read_text() == before
     assert check_standings.stale_axes(json.loads(before)) == ["gpu-tall"]
 
 
-def test_carry_forward_round_trip_clears_the_gates(monkeypatch, tmp_path,
-                                                   capsys):
+def test_carry_forward_round_trip_clears_the_gates(monkeypatch, tmp_path, capsys):
     """The stamp moves, the provenance does not, and every report that clears
     the axis says the stamp was carried rather than measured."""
     registry = _stale_gpu_axis(monkeypatch, tmp_path)
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified",
-                "--reason", REASON, "--evidence-before", PROOF,
-                "--evidence-after", PROOF) == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--restamp-verified",
+            "--reason",
+            REASON,
+            "--evidence-before",
+            PROOF,
+            "--evidence-after",
+            PROOF,
+        )
+        == 0
+    )
 
     reg = json.loads(registry.read_text())
     entry = reg["gpu-tall"]
@@ -127,13 +173,13 @@ def test_carry_forward_round_trip_clears_the_gates(monkeypatch, tmp_path,
     assert entry["file"] == "gpu-tall-2026-08.jsonl"
     assert entry["date"] == "2026-08-05"
     assert entry["refreshed_for"] == "1.7.0"
-    assert entry["hash_set"] == check_standings.plane_digest(
-        check_standings.PLANE_GPU)
+    assert entry["hash_set"] == check_standings.plane_digest(check_standings.PLANE_GPU)
     assert entry["carried_forward"] == {
-        "measured_at": MEASURED_SHA, "stamped_at": STAMPED_SHA,
+        "measured_at": MEASURED_SHA,
+        "stamped_at": STAMPED_SHA,
         "reason": REASON,
-        "evidence": {"kind": "model-hash", "grower": "depthwise",
-                     "before": PROOF, "after": PROOF}}
+        "evidence": {"kind": "model-hash", "grower": "depthwise", "before": PROOF, "after": PROOF},
+    }
 
     assert check_standings.stale_axes(reg) == []
     assert check_standings.check_release(reg, "1.8.0") == []
@@ -146,18 +192,30 @@ def test_carry_forward_round_trip_clears_the_gates(monkeypatch, tmp_path,
     assert check_standings.stale_axes(reg) == ["gpu-tall"]
 
 
-def test_device_hash_refuses_without_the_host_it_was_measured_on(monkeypatch,
-                                                                 tmp_path):
+def test_device_hash_refuses_without_the_host_it_was_measured_on(monkeypatch, tmp_path):
     """A cuda_* hash is identity on one device and one build, so the block
     that carries it must say which device; without a host the stamp is
     refused and the registry stays byte-identical."""
     registry = _stale_gpu_axis(monkeypatch, tmp_path)
     before = registry.read_text()
 
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified",
-                "--reason", DEVICE_HASH_REASON,
-                "--evidence-grower", DEVICE_GROWER,
-                "--evidence-before", PROOF, "--evidence-after", PROOF) == 1
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--restamp-verified",
+            "--reason",
+            DEVICE_HASH_REASON,
+            "--evidence-grower",
+            DEVICE_GROWER,
+            "--evidence-before",
+            PROOF,
+            "--evidence-after",
+            PROOF,
+        )
+        == 1
+    )
     assert registry.read_text() == before
 
 
@@ -165,32 +223,60 @@ def test_device_hash_carries_its_grower_and_host(monkeypatch, tmp_path):
     """With the host named, a device hash is a byte-identity proof for the
     device plane, and the block records where that identity holds."""
     registry = _stale_gpu_axis(monkeypatch, tmp_path)
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified",
-                "--reason", DEVICE_HASH_REASON,
-                "--evidence-grower", DEVICE_GROWER,
-                "--evidence-host", DEVICE_HOST,
-                "--evidence-before", PROOF, "--evidence-after", PROOF) == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--restamp-verified",
+            "--reason",
+            DEVICE_HASH_REASON,
+            "--evidence-grower",
+            DEVICE_GROWER,
+            "--evidence-host",
+            DEVICE_HOST,
+            "--evidence-before",
+            PROOF,
+            "--evidence-after",
+            PROOF,
+        )
+        == 0
+    )
 
     reg = json.loads(registry.read_text())
     assert reg["gpu-tall"]["carried_forward"]["evidence"] == {
-        "kind": "model-hash", "grower": DEVICE_GROWER, "host": DEVICE_HOST,
-        "before": PROOF, "after": PROOF}
+        "kind": "model-hash",
+        "grower": DEVICE_GROWER,
+        "host": DEVICE_HOST,
+        "before": PROOF,
+        "after": PROOF,
+    }
     assert check_standings.stale_axes(reg) == []
 
 
-def test_carry_forward_refuses_an_axis_that_is_already_current(monkeypatch,
-                                                               tmp_path):
+def test_carry_forward_refuses_an_axis_that_is_already_current(monkeypatch, tmp_path):
     """Nothing to carry forward is a refusal, not a no-op stamp: an entry only
     grows the block when an equivalence argument was actually needed."""
     registry = _stale_gpu_axis(monkeypatch, tmp_path)
     reg = json.loads(registry.read_text())
-    reg["gpu-tall"]["hash_set"] = check_standings.plane_digest(
-        check_standings.PLANE_GPU)
+    reg["gpu-tall"]["hash_set"] = check_standings.plane_digest(check_standings.PLANE_GPU)
     registry.write_text(json.dumps(reg, indent=2) + "\n")
 
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified",
-                "--reason", REASON, "--evidence-before", PROOF,
-                "--evidence-after", PROOF) == 1
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--restamp-verified",
+            "--reason",
+            REASON,
+            "--evidence-before",
+            PROOF,
+            "--evidence-after",
+            PROOF,
+        )
+        == 1
+    )
     assert "carried_forward" not in json.loads(registry.read_text())["gpu-tall"]
 
 
@@ -198,27 +284,51 @@ def test_supersession_drops_a_carried_forward_block(monkeypatch, tmp_path):
     """A fresh measurement is provenance of its own; the equivalence argument
     that carried the old one must not outlive it."""
     registry = _stale_gpu_axis(monkeypatch, tmp_path)
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified",
-                "--reason", REASON, "--evidence-before", PROOF,
-                "--evidence-after", PROOF) == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--restamp-verified",
+            "--reason",
+            REASON,
+            "--evidence-before",
+            PROOF,
+            "--evidence-after",
+            PROOF,
+        )
+        == 0
+    )
 
     results = tmp_path / "results"
     results.mkdir()
-    (results / "gpu-tall-2026-09.jsonl").write_text(json.dumps(
-        {"git_sha": "abc1234", "host": {"name": "pod-blackwell"},
-         "ts": "2026-09-01T00:00:00"}) + "\n")
+    (results / "gpu-tall-2026-09.jsonl").write_text(
+        json.dumps(
+            {"git_sha": "abc1234", "host": {"name": "pod-blackwell"}, "ts": "2026-09-01T00:00:00"}
+        )
+        + "\n"
+    )
     monkeypatch.setattr(update_standings, "RESULTS", results)
     monkeypatch.setattr(update_standings, "refresh_ref_ledger", lambda refs: None)
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--file",
-                "gpu-tall-2026-09.jsonl", "--version", "1.8.0") == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--file",
+            "gpu-tall-2026-09.jsonl",
+            "--version",
+            "1.8.0",
+        )
+        == 0
+    )
 
     entry = json.loads(registry.read_text())["gpu-tall"]
     assert "carried_forward" not in entry
     assert entry["sha"] == "abc1234" and entry["refreshed_for"] == "1.8.0"
 
 
-def test_tolerance_carries_a_delta_inside_the_noise_floor(monkeypatch,
-                                                          tmp_path, capsys):
+def test_tolerance_carries_a_delta_inside_the_noise_floor(monkeypatch, tmp_path, capsys):
     """The device plane has no byte identity to offer, so the claim is that
     the cross-commit delta is the size of the plane's own run-to-run spread.
     The block records every number that claim rests on, the provenance stays
@@ -229,11 +339,16 @@ def test_tolerance_carries_a_delta_inside_the_noise_floor(monkeypatch,
 
     entry = json.loads(registry.read_text())["gpu-tall"]
     assert entry["carried_forward"]["evidence"] == {
-        "kind": "tolerance", "metric": "max abs prediction delta",
-        "floor_before": FLOOR_BEFORE, "floor_after": FLOOR_AFTER,
+        "kind": "tolerance",
+        "metric": "max abs prediction delta",
+        "floor_before": FLOOR_BEFORE,
+        "floor_after": FLOOR_AFTER,
         "cross_commit": CROSS_COMMIT,
-        "factor": update_standings.TOLERANCE_FACTOR, "cell": "500k x 100",
-        "config": "20 iters, depth 8, threads 16", "host": "L40S"}
+        "factor": update_standings.TOLERANCE_FACTOR,
+        "cell": "500k x 100",
+        "config": "20 iters, depth 8, threads 16",
+        "host": "L40S",
+    }
     assert entry["sha"] == MEASURED_SHA
     assert entry["carried_forward"]["measured_at"] == MEASURED_SHA
     assert entry["file"] == "gpu-tall-2026-08.jsonl"
@@ -242,12 +357,10 @@ def test_tolerance_carries_a_delta_inside_the_noise_floor(monkeypatch,
     reg = json.loads(registry.read_text())
     assert check_standings.check_release(reg, "1.8.0") == []
     assert "carried-forward stamp" in capsys.readouterr().out
-    assert "tolerance evidence" in check_standings.hash_skip(
-        "gpu-tall", reg["gpu-tall"])[1]
+    assert "tolerance evidence" in check_standings.hash_skip("gpu-tall", reg["gpu-tall"])[1]
 
 
-def test_tolerance_refuses_a_delta_outside_the_noise_floor(monkeypatch,
-                                                           tmp_path):
+def test_tolerance_refuses_a_delta_outside_the_noise_floor(monkeypatch, tmp_path):
     """A delta many floors wide is a measured difference: the factor is where
     "the same up to noise" stops and "changed" begins."""
     registry = _stale_gpu_axis(monkeypatch, tmp_path)
@@ -275,9 +388,10 @@ def test_tolerance_refuses_a_zero_noise_floor(monkeypatch, tmp_path):
     registry = _stale_gpu_axis(monkeypatch, tmp_path)
     before = registry.read_text()
 
-    assert _run(monkeypatch, *_tolerance_argv(floor_before="0",
-                                              floor_after="0",
-                                              cross_commit="0")) == 1
+    assert (
+        _run(monkeypatch, *_tolerance_argv(floor_before="0", floor_after="0", cross_commit="0"))
+        == 1
+    )
     assert registry.read_text() == before
 
 
@@ -301,8 +415,7 @@ def _pin_environment(monkeypatch, tmp_path) -> pathlib.Path:
     ledger = tmp_path / "reference_versions.json"
     ledger.write_text(json.dumps({"_": "doc", **LEDGER_REFS}, indent=2) + "\n")
     monkeypatch.setattr(check_standings, "REF_VERSIONS", ledger)
-    monkeypatch.setattr(check_standings, "installed_ref_version",
-                        INSTALLED_REFS.get)
+    monkeypatch.setattr(check_standings, "installed_ref_version", INSTALLED_REFS.get)
     return ledger
 
 
@@ -321,8 +434,9 @@ def _rows(*rows: dict) -> str:
     return "".join(json.dumps(r) + "\n" for r in rows)
 
 
-def _row(sha: str = "abc1234", host: str = "pod-blackwell",
-         ts: str = "2026-09-01T00:00:00") -> dict:
+def _row(
+    sha: str = "abc1234", host: str = "pod-blackwell", ts: str = "2026-09-01T00:00:00"
+) -> dict:
     """One results row, carrying only the fields supersession reads."""
     return {"git_sha": sha, "host": {"name": host}, "ts": ts}
 
@@ -331,8 +445,9 @@ def _measured_axis(monkeypatch, tmp_path, axis: str, entry: dict) -> pathlib.Pat
     """A registry holding one axis, with the fake tree behind its digests."""
     _fake_tree(tmp_path)
     monkeypatch.setattr(check_standings, "REPO", tmp_path)
-    monkeypatch.setattr(check_standings, "MODEL_HASH_SCRIPT",
-                        tmp_path / "scripts" / "model_hash.py")
+    monkeypatch.setattr(
+        check_standings, "MODEL_HASH_SCRIPT", tmp_path / "scripts" / "model_hash.py"
+    )
     _pin_environment(monkeypatch, tmp_path)
     registry = tmp_path / "standings.json"
     registry.write_text(json.dumps({axis: entry}, indent=2) + "\n")
@@ -348,14 +463,26 @@ def _expect(registry: pathlib.Path, axis: str, entry: dict) -> None:
 def test_supersede_refuses_a_file_that_is_not_single_sha(monkeypatch, tmp_path):
     """A standings claim names one commit. Rows from two commits, or rows
     that name none at all, cannot back one, and the registry must not move."""
-    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
-                              {"file": "gpu-tall-2026-08.jsonl",
-                               "sha": MEASURED_SHA, "plane": "gpu",
-                               "refreshed_for": "1.7.0"})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-08.jsonl",
+            "sha": MEASURED_SHA,
+            "plane": "gpu",
+            "refreshed_for": "1.7.0",
+        },
+    )
     before = registry.read_text()
-    _results(monkeypatch, tmp_path, {
-        "two.jsonl": _rows(_row(sha="abc1234"), _row(sha="def5678")),
-        "none.jsonl": _rows({"host": {"name": "pod"}, "ts": "2026-09-01"})})
+    _results(
+        monkeypatch,
+        tmp_path,
+        {
+            "two.jsonl": _rows(_row(sha="abc1234"), _row(sha="def5678")),
+            "none.jsonl": _rows({"host": {"name": "pod"}, "ts": "2026-09-01"}),
+        },
+    )
 
     assert _run(monkeypatch, "--axis", "gpu-tall", "--file", "two.jsonl") == 1
     assert _run(monkeypatch, "--axis", "gpu-tall", "--file", "none.jsonl") == 1
@@ -363,154 +490,285 @@ def test_supersede_refuses_a_file_that_is_not_single_sha(monkeypatch, tmp_path):
 
 
 def test_supersede_refuses_rows_that_name_no_commit(monkeypatch, tmp_path):
-    """"unknown" is what runlog writes when nothing states the commit. It is
+    """ "unknown" is what runlog writes when nothing states the commit. It is
     truthy, so it clears the single-sha check while leaving the rows
     unattributable; the registry would claim provenance it does not have."""
-    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
-                              {"file": "gpu-tall-2026-08.jsonl",
-                               "sha": MEASURED_SHA, "plane": "gpu",
-                               "refreshed_for": "1.7.0"})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-08.jsonl",
+            "sha": MEASURED_SHA,
+            "plane": "gpu",
+            "refreshed_for": "1.7.0",
+        },
+    )
     before = registry.read_text()
-    _results(monkeypatch, tmp_path,
-             {"new.jsonl": _rows(_row(sha="unknown"), _row(sha="unknown"))})
+    _results(monkeypatch, tmp_path, {"new.jsonl": _rows(_row(sha="unknown"), _row(sha="unknown"))})
 
     assert _run(monkeypatch, "--axis", "gpu-tall", "--file", "new.jsonl") == 1
     assert registry.read_text() == before
 
 
-def test_supersede_deletes_the_file_it_replaces_and_stamps_the_gate(
-        monkeypatch, tmp_path, capsys):
+def test_supersede_deletes_the_file_it_replaces_and_stamps_the_gate(monkeypatch, tmp_path, capsys):
     """The whole write on the ordinary path: the superseded file is deleted
     (git history is the archive), the note that described it goes with it,
     the newest row's date wins, and a planed axis regains its skip gate from
     the current sources and the installed reference libraries."""
-    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
-                              {"file": "gpu-tall-2026-08.jsonl",
-                               "sha": MEASURED_SHA, "host": "old-pod",
-                               "date": "2026-08-05", "plane": "gpu",
-                               "refreshed_for": "1.7.0",
-                               "note": "measured under a quota",
-                               "hash_set": "stale",
-                               "refs": {"xgboost": "3.1.0"}})
-    results = _results(monkeypatch, tmp_path, {
-        "gpu-tall-2026-08.jsonl": "old\n",
-        "gpu-tall-2026-09.jsonl": _rows(_row(ts="2026-09-01T00:00:00"),
-                                        _row(ts="2026-09-02T00:00:00"))})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-08.jsonl",
+            "sha": MEASURED_SHA,
+            "host": "old-pod",
+            "date": "2026-08-05",
+            "plane": "gpu",
+            "refreshed_for": "1.7.0",
+            "note": "measured under a quota",
+            "hash_set": "stale",
+            "refs": {"xgboost": "3.1.0"},
+        },
+    )
+    results = _results(
+        monkeypatch,
+        tmp_path,
+        {
+            "gpu-tall-2026-08.jsonl": "old\n",
+            "gpu-tall-2026-09.jsonl": _rows(
+                _row(ts="2026-09-01T00:00:00"), _row(ts="2026-09-02T00:00:00")
+            ),
+        },
+    )
 
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--file",
-                "gpu-tall-2026-09.jsonl", "--version", "2.1.0") == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--file",
+            "gpu-tall-2026-09.jsonl",
+            "--version",
+            "2.1.0",
+        )
+        == 0
+    )
 
-    _expect(registry, "gpu-tall", {
-        "file": "gpu-tall-2026-09.jsonl", "sha": "abc1234",
-        "host": "pod-blackwell", "date": "2026-09-02", "plane": "gpu",
-        "refreshed_for": "2.1.0",
-        "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
-        "refs": STAMPED_REFS})
+    _expect(
+        registry,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-09.jsonl",
+            "sha": "abc1234",
+            "host": "pod-blackwell",
+            "date": "2026-09-02",
+            "plane": "gpu",
+            "refreshed_for": "2.1.0",
+            "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
+            "refs": STAMPED_REFS,
+        },
+    )
     assert not (results / "gpu-tall-2026-08.jsonl").exists()
     assert json.loads((tmp_path / "reference_versions.json").read_text()) == {
-        "_": "doc", **STAMPED_REFS}
+        "_": "doc",
+        **STAMPED_REFS,
+    }
     out = capsys.readouterr().out
     assert "superseded gpu-tall-2026-08.jsonl" in out
     assert "gpu-tall: gpu-tall-2026-09.jsonl at abc1234" in out
 
 
-def test_supersede_stamps_the_reference_versions_the_rows_measured(
-        monkeypatch, tmp_path):
+def test_supersede_stamps_the_reference_versions_the_rows_measured(monkeypatch, tmp_path):
     """The refs answer which reference versions the numbers were measured
     against, so the rows are the witness: a version they record beats the
     checking machine's installed copy and the ledger, which only complete
     the block for a library no row exercised. The ledger learns what the
     rows saw."""
-    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
-                              {"file": "gpu-tall-2026-08.jsonl",
-                               "sha": MEASURED_SHA, "plane": "gpu",
-                               "refreshed_for": "1.7.0"})
-    _results(monkeypatch, tmp_path, {"gpu-tall-2026-09.jsonl": _rows(
-        _row(), dict(_row(), host={"name": "pod-blackwell",
-                                   "libs": {"lightgbm": "4.7.0",
-                                            "numpy": "2.5.2"}}),
-        dict(_row(), host={"name": "pod-blackwell",
-                           "libs": {"lightgbm": "4.7.0"}}))})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-08.jsonl",
+            "sha": MEASURED_SHA,
+            "plane": "gpu",
+            "refreshed_for": "1.7.0",
+        },
+    )
+    _results(
+        monkeypatch,
+        tmp_path,
+        {
+            "gpu-tall-2026-09.jsonl": _rows(
+                _row(),
+                dict(
+                    _row(),
+                    host={"name": "pod-blackwell", "libs": {"lightgbm": "4.7.0", "numpy": "2.5.2"}},
+                ),
+                dict(_row(), host={"name": "pod-blackwell", "libs": {"lightgbm": "4.7.0"}}),
+            )
+        },
+    )
 
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--file",
-                "gpu-tall-2026-09.jsonl", "--version", "2.1.0") == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--file",
+            "gpu-tall-2026-09.jsonl",
+            "--version",
+            "2.1.0",
+        )
+        == 0
+    )
 
     entry = json.loads(registry.read_text())["gpu-tall"]
-    assert entry["refs"] == {"xgboost": "3.3.0", "lightgbm": "4.7.0",
-                             "catboost": "1.2.10"}
+    assert entry["refs"] == {"xgboost": "3.3.0", "lightgbm": "4.7.0", "catboost": "1.2.10"}
     assert json.loads((tmp_path / "reference_versions.json").read_text()) == {
-        "_": "doc", "xgboost": "3.3.0", "lightgbm": "4.7.0",
-        "catboost": "1.2.10"}
+        "_": "doc",
+        "xgboost": "3.3.0",
+        "lightgbm": "4.7.0",
+        "catboost": "1.2.10",
+    }
 
 
-def test_supersede_refuses_rows_measured_against_two_versions(monkeypatch,
-                                                              tmp_path):
+def test_supersede_refuses_rows_measured_against_two_versions(monkeypatch, tmp_path):
     """A resumed sweep that crossed a reference upgrade measured against
     both versions; one refs block cannot say which, so the registry must
     not move."""
-    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
-                              {"file": "gpu-tall-2026-08.jsonl",
-                               "sha": MEASURED_SHA, "plane": "gpu",
-                               "refreshed_for": "1.7.0"})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-08.jsonl",
+            "sha": MEASURED_SHA,
+            "plane": "gpu",
+            "refreshed_for": "1.7.0",
+        },
+    )
     before = registry.read_text()
-    _results(monkeypatch, tmp_path, {"mixed.jsonl": _rows(
-        dict(_row(), host={"name": "pod", "libs": {"xgboost": "3.2.0"}}),
-        dict(_row(), host={"name": "pod", "libs": {"xgboost": "3.3.0"}}))})
+    _results(
+        monkeypatch,
+        tmp_path,
+        {
+            "mixed.jsonl": _rows(
+                dict(_row(), host={"name": "pod", "libs": {"xgboost": "3.2.0"}}),
+                dict(_row(), host={"name": "pod", "libs": {"xgboost": "3.3.0"}}),
+            )
+        },
+    )
 
     assert _run(monkeypatch, "--axis", "gpu-tall", "--file", "mixed.jsonl") == 1
     assert registry.read_text() == before
 
 
-def test_supersede_keeps_the_note_when_the_file_name_does_not_move(monkeypatch,
-                                                                   tmp_path):
+def test_supersede_keeps_the_note_when_the_file_name_does_not_move(monkeypatch, tmp_path):
     """A re-run onto the same dated file supersedes nothing, so there is no
     file to delete and no note to drop: only the measurement is rewritten."""
-    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
-                              {"file": "gpu-tall-2026-09.jsonl",
-                               "sha": MEASURED_SHA, "host": "old-pod",
-                               "date": "2026-08-05", "plane": "gpu",
-                               "refreshed_for": "1.7.0",
-                               "note": "measured under a quota",
-                               "hash_set": "stale",
-                               "refs": {"xgboost": "3.1.0"}})
-    results = _results(monkeypatch, tmp_path,
-                       {"gpu-tall-2026-09.jsonl": _rows(_row())})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-09.jsonl",
+            "sha": MEASURED_SHA,
+            "host": "old-pod",
+            "date": "2026-08-05",
+            "plane": "gpu",
+            "refreshed_for": "1.7.0",
+            "note": "measured under a quota",
+            "hash_set": "stale",
+            "refs": {"xgboost": "3.1.0"},
+        },
+    )
+    results = _results(monkeypatch, tmp_path, {"gpu-tall-2026-09.jsonl": _rows(_row())})
 
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--file",
-                "gpu-tall-2026-09.jsonl", "--version", "2.1.0") == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--file",
+            "gpu-tall-2026-09.jsonl",
+            "--version",
+            "2.1.0",
+        )
+        == 0
+    )
 
-    _expect(registry, "gpu-tall", {
-        "file": "gpu-tall-2026-09.jsonl", "sha": "abc1234",
-        "host": "pod-blackwell", "date": "2026-09-01", "plane": "gpu",
-        "refreshed_for": "2.1.0", "note": "measured under a quota",
-        "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
-        "refs": STAMPED_REFS})
+    _expect(
+        registry,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-09.jsonl",
+            "sha": "abc1234",
+            "host": "pod-blackwell",
+            "date": "2026-09-01",
+            "plane": "gpu",
+            "refreshed_for": "2.1.0",
+            "note": "measured under a quota",
+            "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
+            "refs": STAMPED_REFS,
+        },
+    )
     assert (results / "gpu-tall-2026-09.jsonl").exists()
 
 
-def test_supersede_swaps_the_companion_it_was_given(monkeypatch, tmp_path,
-                                                    capsys):
+def test_supersede_swaps_the_companion_it_was_given(monkeypatch, tmp_path, capsys):
     """The companion is measured with the axis and supersedes with it, so a
     new one deletes the old one and the registry records the new name."""
-    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
-                              {"file": "gpu-tall-2026-08.jsonl",
-                               "sha": MEASURED_SHA, "plane": "gpu",
-                               "refreshed_for": "1.7.0",
-                               "companion": "parity-2026-08.jsonl"})
-    results = _results(monkeypatch, tmp_path, {
-        "parity-2026-08.jsonl": "old parity\n",
-        "gpu-tall-2026-09.jsonl": _rows(_row())})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-08.jsonl",
+            "sha": MEASURED_SHA,
+            "plane": "gpu",
+            "refreshed_for": "1.7.0",
+            "companion": "parity-2026-08.jsonl",
+        },
+    )
+    results = _results(
+        monkeypatch,
+        tmp_path,
+        {"parity-2026-08.jsonl": "old parity\n", "gpu-tall-2026-09.jsonl": _rows(_row())},
+    )
 
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--file",
-                "gpu-tall-2026-09.jsonl", "--companion",
-                "parity-2026-09.jsonl", "--version", "2.1.0") == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--file",
+            "gpu-tall-2026-09.jsonl",
+            "--companion",
+            "parity-2026-09.jsonl",
+            "--version",
+            "2.1.0",
+        )
+        == 0
+    )
 
-    _expect(registry, "gpu-tall", {
-        "file": "gpu-tall-2026-09.jsonl", "sha": "abc1234", "plane": "gpu",
-        "refreshed_for": "2.1.0", "companion": "parity-2026-09.jsonl",
-        "host": "pod-blackwell", "date": "2026-09-01",
-        "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
-        "refs": STAMPED_REFS})
+    _expect(
+        registry,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-09.jsonl",
+            "sha": "abc1234",
+            "plane": "gpu",
+            "refreshed_for": "2.1.0",
+            "companion": "parity-2026-09.jsonl",
+            "host": "pod-blackwell",
+            "date": "2026-09-01",
+            "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
+            "refs": STAMPED_REFS,
+        },
+    )
     assert not (results / "parity-2026-08.jsonl").exists()
     assert "superseded parity-2026-08.jsonl" in capsys.readouterr().out
 
@@ -518,101 +776,190 @@ def test_supersede_swaps_the_companion_it_was_given(monkeypatch, tmp_path,
 def test_supersede_leaves_a_repeated_companion_alone(monkeypatch, tmp_path):
     """Naming the companion the entry already carries deletes nothing: the
     file that would be removed is the one about to be claimed."""
-    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
-                              {"file": "gpu-tall-2026-08.jsonl",
-                               "sha": MEASURED_SHA, "plane": "gpu",
-                               "refreshed_for": "1.7.0",
-                               "companion": "parity-2026-09.jsonl"})
-    results = _results(monkeypatch, tmp_path, {
-        "parity-2026-09.jsonl": "parity\n",
-        "gpu-tall-2026-09.jsonl": _rows(_row())})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-08.jsonl",
+            "sha": MEASURED_SHA,
+            "plane": "gpu",
+            "refreshed_for": "1.7.0",
+            "companion": "parity-2026-09.jsonl",
+        },
+    )
+    results = _results(
+        monkeypatch,
+        tmp_path,
+        {"parity-2026-09.jsonl": "parity\n", "gpu-tall-2026-09.jsonl": _rows(_row())},
+    )
 
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--file",
-                "gpu-tall-2026-09.jsonl", "--companion",
-                "parity-2026-09.jsonl", "--version", "2.1.0") == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-tall",
+            "--file",
+            "gpu-tall-2026-09.jsonl",
+            "--companion",
+            "parity-2026-09.jsonl",
+            "--version",
+            "2.1.0",
+        )
+        == 0
+    )
 
     assert (results / "parity-2026-09.jsonl").exists()
-    assert json.loads(registry.read_text())["gpu-tall"]["companion"] == (
-        "parity-2026-09.jsonl")
+    assert json.loads(registry.read_text())["gpu-tall"]["companion"] == ("parity-2026-09.jsonl")
 
 
-def test_supersede_records_no_host_when_the_rows_disagree(monkeypatch,
-                                                          tmp_path):
+def test_supersede_records_no_host_when_the_rows_disagree(monkeypatch, tmp_path):
     """Rows from two machines cannot name one host of record, so the field
     goes null rather than picking a winner. Rows with no timestamp leave the
     date null, an unnamed version falls back to the project's own, and an
     axis registering no plane keeps its skip gate unstamped."""
-    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
-                              {"file": None, "sha": None, "plane": None,
-                               "refreshed_for": None})
-    _results(monkeypatch, tmp_path, {"gpu-tall-2026-09.jsonl": _rows(
-        {"git_sha": "abc1234", "host": {"name": "pod-a"}},
-        {"git_sha": "abc1234", "host": "pod-b"})})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-tall",
+        {"file": None, "sha": None, "plane": None, "refreshed_for": None},
+    )
+    _results(
+        monkeypatch,
+        tmp_path,
+        {
+            "gpu-tall-2026-09.jsonl": _rows(
+                {"git_sha": "abc1234", "host": {"name": "pod-a"}},
+                {"git_sha": "abc1234", "host": "pod-b"},
+            )
+        },
+    )
 
-    assert _run(monkeypatch, "--axis", "gpu-tall", "--file",
-                "gpu-tall-2026-09.jsonl") == 0
+    assert _run(monkeypatch, "--axis", "gpu-tall", "--file", "gpu-tall-2026-09.jsonl") == 0
 
-    _expect(registry, "gpu-tall", {
-        "file": "gpu-tall-2026-09.jsonl", "sha": "abc1234", "plane": None,
-        "refreshed_for": update_standings.project_version(),
-        "host": None, "date": None})
+    _expect(
+        registry,
+        "gpu-tall",
+        {
+            "file": "gpu-tall-2026-09.jsonl",
+            "sha": "abc1234",
+            "plane": None,
+            "refreshed_for": update_standings.project_version(),
+            "host": None,
+            "date": None,
+        },
+    )
 
 
-def test_supersede_stamps_a_quality_axis_that_registers_no_plane(monkeypatch,
-                                                                 tmp_path):
+def test_supersede_stamps_a_quality_axis_that_registers_no_plane(monkeypatch, tmp_path):
     """A quality axis carries no plane and is gated on the whole-implementation
     digest, which is the gpu plane's by construction."""
-    registry = _measured_axis(monkeypatch, tmp_path, "quality-grinsztajn",
-                              {"file": None, "sha": None,
-                               "refreshed_for": None})
-    _results(monkeypatch, tmp_path,
-             {"quality-grinsztajn-2026-09.jsonl": _rows(_row())})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "quality-grinsztajn",
+        {"file": None, "sha": None, "refreshed_for": None},
+    )
+    _results(monkeypatch, tmp_path, {"quality-grinsztajn-2026-09.jsonl": _rows(_row())})
 
-    assert _run(monkeypatch, "--axis", "quality-grinsztajn", "--file",
-                "quality-grinsztajn-2026-09.jsonl", "--version", "2.1.0") == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "quality-grinsztajn",
+            "--file",
+            "quality-grinsztajn-2026-09.jsonl",
+            "--version",
+            "2.1.0",
+        )
+        == 0
+    )
 
-    _expect(registry, "quality-grinsztajn", {
-        "file": "quality-grinsztajn-2026-09.jsonl", "sha": "abc1234",
-        "refreshed_for": "2.1.0", "host": "pod-blackwell",
-        "date": "2026-09-01",
-        "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
-        "refs": STAMPED_REFS})
+    _expect(
+        registry,
+        "quality-grinsztajn",
+        {
+            "file": "quality-grinsztajn-2026-09.jsonl",
+            "sha": "abc1234",
+            "refreshed_for": "2.1.0",
+            "host": "pod-blackwell",
+            "date": "2026-09-01",
+            "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
+            "refs": STAMPED_REFS,
+        },
+    )
 
 
-def test_supersede_swaps_the_ab_file_it_was_given(monkeypatch, tmp_path,
-                                                  capsys):
-    registry = _measured_axis(monkeypatch, tmp_path, "cpu-tall",
-                              {"file": "cpu-tall-2026-08.jsonl",
-                               "sha": MEASURED_SHA, "plane": "cpu",
-                               "refreshed_for": "1.7.0",
-                               "ab": "ab-cpu-2026-08.jsonl"})
-    results = _results(monkeypatch, tmp_path, {
-        "ab-cpu-2026-08.jsonl": "old ab\n",
-        "cpu-tall-2026-09.jsonl": _rows(_row())})
+def test_supersede_swaps_the_ab_file_it_was_given(monkeypatch, tmp_path, capsys):
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "cpu-tall",
+        {
+            "file": "cpu-tall-2026-08.jsonl",
+            "sha": MEASURED_SHA,
+            "plane": "cpu",
+            "refreshed_for": "1.7.0",
+            "ab": "ab-cpu-2026-08.jsonl",
+        },
+    )
+    results = _results(
+        monkeypatch,
+        tmp_path,
+        {"ab-cpu-2026-08.jsonl": "old ab\n", "cpu-tall-2026-09.jsonl": _rows(_row())},
+    )
 
-    assert _run(monkeypatch, "--axis", "cpu-tall", "--file",
-                "cpu-tall-2026-09.jsonl", "--ab", "ab-cpu-2026-09.jsonl",
-                "--version", "2.1.0") == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "cpu-tall",
+            "--file",
+            "cpu-tall-2026-09.jsonl",
+            "--ab",
+            "ab-cpu-2026-09.jsonl",
+            "--version",
+            "2.1.0",
+        )
+        == 0
+    )
 
-    assert json.loads(registry.read_text())["cpu-tall"]["ab"] == (
-        "ab-cpu-2026-09.jsonl")
+    assert json.loads(registry.read_text())["cpu-tall"]["ab"] == ("ab-cpu-2026-09.jsonl")
     assert not (results / "ab-cpu-2026-08.jsonl").exists()
     assert "superseded ab-cpu-2026-08.jsonl" in capsys.readouterr().out
 
 
 def test_supersede_keeps_the_ab_file_when_none_is_given(monkeypatch, tmp_path):
-    registry = _measured_axis(monkeypatch, tmp_path, "cpu-tall",
-                              {"file": "cpu-tall-2026-08.jsonl",
-                               "sha": MEASURED_SHA, "plane": "cpu",
-                               "refreshed_for": "1.7.0",
-                               "ab": "ab-cpu-2026-08.jsonl"})
-    results = _results(monkeypatch, tmp_path, {
-        "ab-cpu-2026-08.jsonl": "old ab\n",
-        "cpu-tall-2026-09.jsonl": _rows(_row())})
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "cpu-tall",
+        {
+            "file": "cpu-tall-2026-08.jsonl",
+            "sha": MEASURED_SHA,
+            "plane": "cpu",
+            "refreshed_for": "1.7.0",
+            "ab": "ab-cpu-2026-08.jsonl",
+        },
+    )
+    results = _results(
+        monkeypatch,
+        tmp_path,
+        {"ab-cpu-2026-08.jsonl": "old ab\n", "cpu-tall-2026-09.jsonl": _rows(_row())},
+    )
 
-    assert _run(monkeypatch, "--axis", "cpu-tall", "--file",
-                "cpu-tall-2026-09.jsonl", "--version", "2.1.0") == 0
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "cpu-tall",
+            "--file",
+            "cpu-tall-2026-09.jsonl",
+            "--version",
+            "2.1.0",
+        )
+        == 0
+    )
 
-    assert json.loads(registry.read_text())["cpu-tall"]["ab"] == (
-        "ab-cpu-2026-08.jsonl")
+    assert json.loads(registry.read_text())["cpu-tall"]["ab"] == ("ab-cpu-2026-08.jsonl")
     assert (results / "ab-cpu-2026-08.jsonl").exists()

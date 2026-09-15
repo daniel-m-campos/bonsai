@@ -82,14 +82,20 @@ def folds_of(cell: dict) -> list[tuple[np.ndarray, np.ndarray]]:
     n, k = cell["rows"], cell["folds"]
     if cell.get("scheme", "walk_forward") == "walk_forward":
         edge = n // (k + 1)
-        return [(np.arange(0, edge * (i + 1), dtype=np.int64),
-                 np.arange(edge * (i + 1), edge * (i + 2), dtype=np.int64))
-                for i in range(k)]
+        return [
+            (
+                np.arange(0, edge * (i + 1), dtype=np.int64),
+                np.arange(edge * (i + 1), edge * (i + 2), dtype=np.int64),
+            )
+            for i in range(k)
+        ]
     rng = np.random.default_rng(cell["seed"])
     order = rng.permutation(n)
     blocks = np.array_split(order, k)
-    return [(np.sort(np.concatenate(blocks[:i] + blocks[i + 1:])),
-             np.sort(blocks[i])) for i in range(k)]
+    return [
+        (np.sort(np.concatenate(blocks[:i] + blocks[i + 1 :])), np.sort(blocks[i]))
+        for i in range(k)
+    ]
 
 
 def run_cv(spec: dict, X, y) -> dict:
@@ -98,8 +104,10 @@ def run_cv(spec: dict, X, y) -> dict:
     cell = spec[runlog.Row.CELL]
     want = cell.get("strategy", Strategy.VIEW)
     if want not in _STRATEGIES[v.lib]:
-        raise RuntimeError(f"unsupported: {v.lib} offers no {want!r} fold "
-                           f"strategy, only {list(_STRATEGIES[v.lib])}")
+        raise RuntimeError(
+            f"unsupported: {v.lib} offers no {want!r} fold "
+            f"strategy, only {list(_STRATEGIES[v.lib])}"
+        )
     folds = folds_of(cell)
     runner = _RUNNERS[v.lib]
     t0 = time.perf_counter()
@@ -161,11 +169,18 @@ def run_bonsai(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     device = "cuda" if grower.startswith("cuda") else "cpu"
     threads = spec[runlog.Row.THREADS]
     pairs = rp.bonsai_core(
-        learning_rate=cell["lr"], max_depth=cell["depth"],
-        num_leaves=rp.num_leaves_of(cell), **rp.knobs_of(cell),
-        max_bin=cell["bins"], seed=cell["seed"], n_iters=cell["iters"],
-        n_threads=threads, grower=grower, objective="mse",
-        early_stopping_rounds=0)
+        learning_rate=cell["lr"],
+        max_depth=cell["depth"],
+        num_leaves=rp.num_leaves_of(cell),
+        **rp.knobs_of(cell),
+        max_bin=cell["bins"],
+        seed=cell["seed"],
+        n_iters=cell["iters"],
+        n_threads=threads,
+        grower=grower,
+        objective="mse",
+        early_stopping_rounds=0,
+    )
     # The Dataset fixes the binning, and train(pairs, dataset) rejects any
     # bin_mapper.* that would claim otherwise.
     pairs = {k: v for k, v in dict(pairs).items() if not k.startswith("bin_mapper.")}
@@ -175,13 +190,15 @@ def run_bonsai(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     ingest_s = time.perf_counter() - t0
 
     view = cell.get("strategy", Strategy.VIEW) == Strategy.VIEW
+
     def fit(tr):
         if view:
             return bonsai.train(pairs, ds.subset(rows=tr))
         # The materialized baseline: reference= keeps the cuts, so the only
         # difference from the view arm is that the bins are copied.
-        fold = bonsai.Dataset(np.ascontiguousarray(X[tr]), y[tr], reference=ds,
-                              device=device, n_threads=threads)
+        fold = bonsai.Dataset(
+            np.ascontiguousarray(X[tr]), y[tr], reference=ds, device=device, n_threads=threads
+        )
         return bonsai.train(pairs, fold)
 
     # Both strategies score from the raw test matrix. Scoring the view arm
@@ -189,7 +206,8 @@ def run_bonsai(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     # device-resident view still falls back to, and the arms would then
     # differ in how they PREDICT rather than in how they build a fold.
     scores, t_fit, t_score = _fold_loop(
-        folds, y, fit, lambda m, te: m.predict(np.ascontiguousarray(X[te])))
+        folds, y, fit, lambda m, te: m.predict(np.ascontiguousarray(X[te]))
+    )
     return ingest_s, scores, t_fit, t_score
 
 
@@ -200,23 +218,33 @@ def run_lgbm(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     cell = spec[runlog.Row.CELL]
     # The arm's own device, not a constant: a hard-coded cpu here would put a
     # CPU number in an lgbm_cuda row and nothing downstream could tell.
-    p = {**rp.lgbm_core(learning_rate=cell["lr"], max_depth=cell["depth"],
-                        num_leaves=rp.num_leaves_of(cell), **rp.knobs_of(cell),
-                        max_bin=cell["bins_effective"], seed=cell["seed"]),
-         "objective": "regression",
-         "device_type": resolve(spec[runlog.Row.VARIANT]).device,
-         "num_threads": spec[runlog.Row.THREADS], "verbose": -1}
+    p = {
+        **rp.lgbm_core(
+            learning_rate=cell["lr"],
+            max_depth=cell["depth"],
+            num_leaves=rp.num_leaves_of(cell),
+            **rp.knobs_of(cell),
+            max_bin=cell["bins_effective"],
+            seed=cell["seed"],
+        ),
+        "objective": "regression",
+        "device_type": resolve(spec[runlog.Row.VARIANT]).device,
+        "num_threads": spec[runlog.Row.THREADS],
+        "verbose": -1,
+    }
     t0 = time.perf_counter()
-    full = lgb.Dataset(X, label=y, free_raw_data=False,
-                       params={"max_bin": cell["bins"], "verbose": -1})
+    full = lgb.Dataset(
+        X, label=y, free_raw_data=False, params={"max_bin": cell["bins"], "verbose": -1}
+    )
     full.construct()
     ingest_s = time.perf_counter() - t0
 
     scores, t_fit, t_score = _fold_loop(
-        folds, y,
-        lambda tr: lgb.train(p, full.subset(tr).construct(),
-                             num_boost_round=cell["iters"]),
-        lambda m, te: m.predict(X[te]))
+        folds,
+        y,
+        lambda tr: lgb.train(p, full.subset(tr).construct(), num_boost_round=cell["iters"]),
+        lambda m, te: m.predict(X[te]),
+    )
     return ingest_s, scores, t_fit, t_score
 
 
@@ -231,15 +259,25 @@ def run_xgb(spec, X, y, folds) -> tuple[float, list[float], float, float]:
 
     cell = spec[runlog.Row.CELL]
     device = resolve(spec[runlog.Row.VARIANT]).device
-    p = {**rp.xgb_core(learning_rate=cell["lr"], max_depth=cell["depth"],
-                       **rp.knobs_of(cell), max_bin=cell["bins_effective"],
-                       seed=cell["seed"]),
-         "objective": "reg:squarederror", "device": device,
-         "nthread": spec[runlog.Row.THREADS]}
+    p = {
+        **rp.xgb_core(
+            learning_rate=cell["lr"],
+            max_depth=cell["depth"],
+            **rp.knobs_of(cell),
+            max_bin=cell["bins_effective"],
+            seed=cell["seed"],
+        ),
+        "objective": "reg:squarederror",
+        "device": device,
+        "nthread": spec[runlog.Row.THREADS],
+    }
     quantile = cell.get("strategy") == Strategy.QUANTILE
     t0 = time.perf_counter()
-    full = (xgb.QuantileDMatrix(X, label=y, max_bin=cell["bins"]) if quantile
-            else xgb.DMatrix(X, label=y))
+    full = (
+        xgb.QuantileDMatrix(X, label=y, max_bin=cell["bins"])
+        if quantile
+        else xgb.DMatrix(X, label=y)
+    )
     ingest_s = time.perf_counter() - t0
 
     def fit(tr):
@@ -247,12 +285,11 @@ def run_xgb(spec, X, y, folds) -> tuple[float, list[float], float, float]:
             sub = full.slice(tr)
         except Exception as exc:
             raise RuntimeError(
-                f"unsupported: {type(full).__name__}.slice refuses "
-                f"({type(exc).__name__}: {exc})") from exc
+                f"unsupported: {type(full).__name__}.slice refuses ({type(exc).__name__}: {exc})"
+            ) from exc
         return xgb.train(p, sub, num_boost_round=cell["iters"])
 
-    scores, t_fit, t_score = _fold_loop(
-        folds, y, fit, lambda m, te: m.predict(xgb.DMatrix(X[te])))
+    scores, t_fit, t_score = _fold_loop(folds, y, fit, lambda m, te: m.predict(xgb.DMatrix(X[te])))
     return ingest_s, scores, t_fit, t_score
 
 
@@ -262,13 +299,22 @@ def run_catboost(spec, X, y, folds) -> tuple[float, list[float], float, float]:
 
     cell = spec[runlog.Row.CELL]
     device = resolve(spec[runlog.Row.VARIANT]).device
-    p = dict(rp.catboost_core(learning_rate=cell["lr"], max_depth=cell["depth"],
-                              lambda_l2=rp.knobs_of(cell)["lambda_l2"],
-                              max_bin=cell["bins_effective"], seed=cell["seed"],
-                              device=device),
-             iterations=cell["iters"], loss_function="RMSE",
-             task_type=("GPU" if device == Device.CUDA else "CPU"), devices="0",
-             thread_count=spec[runlog.Row.THREADS], verbose=False)
+    p = dict(
+        rp.catboost_core(
+            learning_rate=cell["lr"],
+            max_depth=cell["depth"],
+            lambda_l2=rp.knobs_of(cell)["lambda_l2"],
+            max_bin=cell["bins_effective"],
+            seed=cell["seed"],
+            device=device,
+        ),
+        iterations=cell["iters"],
+        loss_function="RMSE",
+        task_type=("GPU" if device == Device.CUDA else "CPU"),
+        devices="0",
+        thread_count=spec[runlog.Row.THREADS],
+        verbose=False,
+    )
     t0 = time.perf_counter()
     full = Pool(X, label=y)
     ingest_s = time.perf_counter() - t0
@@ -278,8 +324,7 @@ def run_catboost(spec, X, y, folds) -> tuple[float, list[float], float, float]:
         model.fit(full.slice(tr.tolist()), verbose=False)
         return model
 
-    scores, t_fit, t_score = _fold_loop(folds, y, fit,
-                                        lambda m, te: m.predict(X[te]))
+    scores, t_fit, t_score = _fold_loop(folds, y, fit, lambda m, te: m.predict(X[te]))
     return ingest_s, scores, t_fit, t_score
 
 

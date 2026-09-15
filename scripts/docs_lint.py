@@ -62,12 +62,15 @@ LIBS = ("xgboost", "lightgbm", "catboost")
 LIB_CORRECT = {"xgboost": "XGBoost", "lightgbm": "LightGBM", "catboost": "CatBoost"}
 
 BANNED_SUBSTRINGS = (
-    "blazingly", "blazing fast", "clean code",
-    "simple api", "easy to use", "world-class",
+    "blazingly",
+    "blazing fast",
+    "clean code",
+    "simple api",
+    "easy to use",
+    "world-class",
 )
 BANNED_WORD_RES = (
-    (re.compile(r"\brungs?\b"),
-     'bare "rung"; name the thing: "budget", "step", or "stage"'),
+    (re.compile(r"\brungs?\b"), 'bare "rung"; name the thing: "budget", "step", or "stage"'),
 )
 COMPARATIVE_RE = re.compile(r"\b(significantly|much)\s+(faster|slower)\b", re.I)
 
@@ -79,6 +82,7 @@ LIB_RE = re.compile(r"(?<![A-Za-z0-9_/.])(" + "|".join(LIBS) + r")")
 
 
 # ---- text handling -----------------------------------------------------------
+
 
 def classify(lines: list[str]) -> list[tuple[int, str, bool]]:
     """(lineno, text, in_code) per line; fence delimiters count as code."""
@@ -97,7 +101,7 @@ def mask_code_and_links(text: str) -> str:
     """Blank out inline code spans, link targets, and bare URLs; keep link text."""
     text = re.sub(r"``+.*?``+", " ", text)
     text = re.sub(r"`[^`]*`", " ", text)
-    text = re.sub(r"\]\([^)]*\)", "] ", text)      # [text](url) -> keep text
+    text = re.sub(r"\]\([^)]*\)", "] ", text)  # [text](url) -> keep text
     text = re.sub(r"<https?://[^>]*>", " ", text)
     text = re.sub(r"https?://\S+", " ", text)
     text = re.sub(r"\bwww\.\S+", " ", text)
@@ -138,8 +142,8 @@ def to_plain(text: str) -> str:
     """Strip inline markdown so word counts approximate spoken words."""
     text = re.sub(r"``+.*?``+", " codespan ", text)
     text = re.sub(r"`[^`]*`", " codespan ", text)
-    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", text)         # images
-    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)      # links -> text
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", text)  # images
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)  # links -> text
     text = re.sub(r"[*_>#]", "", text)
     return text
 
@@ -181,28 +185,47 @@ def lint_invariants(hard: list[tuple]) -> None:
             continue
         m = CODE_REF_RE.match(line)
         if not m:
-            hard.append((rel, lineno, "invariant-ref",
-                         "malformed code reference; write"
-                         " - code: `path` : `symbol`"))
+            hard.append(
+                (
+                    rel,
+                    lineno,
+                    "invariant-ref",
+                    "malformed code reference; write - code: `path` : `symbol`",
+                )
+            )
             continue
         path_s, symbol = m.groups()
         target = REPO / path_s
         if not target.is_file():
-            hard.append((rel, lineno, "invariant-ref",
-                         f"path does not exist: {path_s}"))
+            hard.append((rel, lineno, "invariant-ref", f"path does not exist: {path_s}"))
             continue
         if " " in symbol:
-            hard.append((rel, lineno, "invariant-ref",
-                         f'"{symbol}" is a phrase, not a symbol; anchor the'
-                         " entry to an identifier so prose cannot hold it"))
+            hard.append(
+                (
+                    rel,
+                    lineno,
+                    "invariant-ref",
+                    f'"{symbol}" is a phrase, not a symbol; anchor the'
+                    " entry to an identifier so prose cannot hold it",
+                )
+            )
             continue
-        body = [ln for ln in target.read_text(errors="replace").splitlines()
-                if not ln.strip().startswith("//")]
+        body = [
+            ln
+            for ln in target.read_text(errors="replace").splitlines()
+            if not ln.strip().startswith("//")
+        ]
         if symbol not in "\n".join(body):
-            hard.append((rel, lineno, "invariant-ref",
-                         f'"{symbol}" not found in the code of {path_s}; the'
-                         " code has outrun this entry, update it in the same"
-                         " PR"))
+            hard.append(
+                (
+                    rel,
+                    lineno,
+                    "invariant-ref",
+                    f'"{symbol}" not found in the code of {path_s}; the'
+                    " code has outrun this entry, update it in the same"
+                    " PR",
+                )
+            )
 
 
 def lint_file(path: pathlib.Path, hard: list[tuple], soft: list[tuple]) -> None:
@@ -225,8 +248,7 @@ def _line_findings(rel: str, lineno: int, text: str) -> list[tuple]:
     """Rules (a), (b), (c-i) and (d): everything one prose line decides."""
     findings: list[tuple] = []
     if EM_DASH in text:
-        findings.append((rel, lineno, "em-dash",
-                         "em-dash; use a comma, colon, or parentheses"))
+        findings.append((rel, lineno, "em-dash", "em-dash; use a comma, colon, or parentheses"))
     findings.extend(_banned_text_findings(rel, lineno, text))
     findings.extend(_lib_casing_findings(rel, lineno, text))
     return findings
@@ -238,8 +260,7 @@ def _banned_text_findings(rel: str, lineno: int, text: str) -> list[tuple]:
     masked_lower = mask_code_and_links(text).lower()
     for phrase in BANNED_SUBSTRINGS:
         if phrase in masked_lower:
-            findings.append((rel, lineno, "banned-phrase",
-                             f'banned phrase "{phrase}"'))
+            findings.append((rel, lineno, "banned-phrase", f'banned phrase "{phrase}"'))
     for word_re, msg in BANNED_WORD_RES:
         if word_re.search(masked_lower):
             findings.append((rel, lineno, "banned-word", msg))
@@ -256,8 +277,9 @@ def _lib_casing_findings(rel: str, lineno: int, text: str) -> list[tuple]:
         if _reads_as_identifier(masked, m.end()) or _sits_in_a_path(masked, m.start()):
             continue
         lib = m.group(1)
-        findings.append((rel, lineno, "lib-casing",
-                         f'"{lib}" in prose; write "{LIB_CORRECT[lib]}"'))
+        findings.append(
+            (rel, lineno, "lib-casing", f'"{lib}" in prose; write "{LIB_CORRECT[lib]}"')
+        )
     return findings
 
 
@@ -269,26 +291,25 @@ def _sits_in_a_path(masked: str, start: int) -> bool:
 
 def _reads_as_identifier(masked: str, end: int) -> bool:
     """Whether what follows a library name makes it an identifier or a path."""
-    nxt = masked[end:end + 1]
+    nxt = masked[end : end + 1]
     if nxt.isalnum() or nxt in ("_", "/"):
         return True
-    return nxt == "." and masked[end + 1:end + 2].isalnum()
+    return nxt == "." and masked[end + 1 : end + 2].isalnum()
 
 
-def _comparative_findings(rel: str, start: int,
-                          sentences: list[str]) -> list[tuple]:
+def _comparative_findings(rel: str, start: int, sentences: list[str]) -> list[tuple]:
     """Rule (c-ii): a comparative with no number in its own sentence."""
     findings: list[tuple] = []
     for sentence in sentences:
         m = COMPARATIVE_RE.search(sentence)
         if m and not re.search(r"\d", sentence):
-            findings.append((rel, start, "comparative",
-                             f'"{m.group(0)}" with no number in the sentence'))
+            findings.append(
+                (rel, start, "comparative", f'"{m.group(0)}" with no number in the sentence')
+            )
     return findings
 
 
-def _long_sentence_findings(rel: str, start: int,
-                            sentences: list[str]) -> list[tuple]:
+def _long_sentence_findings(rel: str, start: int, sentences: list[str]) -> list[tuple]:
     """The soft rule: sentences over the word limit, with their word count."""
     findings: list[tuple] = []
     for sentence in sentences:
@@ -316,13 +337,20 @@ def main() -> int:
         by_rule[code] = by_rule.get(code, 0) + 1
 
     print()
-    print(f"docs-lint: {len(files)} files, {len(hard)} hard findings"
-          + (" (" + ", ".join(f"{k}={v}" for k, v in sorted(by_rule.items())) + ")"
-             if by_rule else ""))
+    print(
+        f"docs-lint: {len(files)} files, {len(hard)} hard findings"
+        + (
+            " (" + ", ".join(f"{k}={v}" for k, v in sorted(by_rule.items())) + ")"
+            if by_rule
+            else ""
+        )
+    )
 
     soft.sort(reverse=True)
-    print(f"docs-lint SOFT: {len(soft)} sentences over {SOFT_WORD_LIMIT} words"
-          + (" (top 10 below)" if soft else ""))
+    print(
+        f"docs-lint SOFT: {len(soft)} sentences over {SOFT_WORD_LIMIT} words"
+        + (" (top 10 below)" if soft else "")
+    )
     for n, rel, lineno, sentence in soft[:10]:
         snippet = sentence if len(sentence) <= 90 else sentence[:87] + "..."
         print(f"  {n}w  {rel}:{lineno}  {snippet}")

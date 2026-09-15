@@ -123,16 +123,17 @@ def test_the_leaf_capped_regime_runs_only_the_learners_a_leaf_count_caps():
     """A depthwise or symmetric tree at depth 62 is a different experiment,
     not a matched one, so the regime's arms are leafwise bonsai and
     lightgbm on each device, and the CLI reaches them by name."""
-    assert grinsztajn.LEAF_CAPPED.arms == {"cpu": ("bonsai_lw", "lgbm"),
-                                          "cuda": ("bonsai_cuda_leafwise", "lgbm_cuda")}
+    assert grinsztajn.LEAF_CAPPED.arms == {
+        "cpu": ("bonsai_lw", "lgbm"),
+        "cuda": ("bonsai_cuda_leafwise", "lgbm_cuda"),
+    }
     assert grinsztajn.LEAF_CAPPED.knobs == dict(grinsztajn.C, depth=62)
     args = grinsztajn.parse_args(["--device", "cuda", "--regime", "leaf-capped", "o.jsonl"])
     assert (args.device, args.regime) == ("cuda", "leaf-capped")
     assert grinsztajn.parse_args(["o.jsonl"]).regime == "campaign"
 
 
-def test_a_row_records_the_reference_version_its_fit_imported(monkeypatch,
-                                                              tmp_path):
+def test_a_row_records_the_reference_version_its_fit_imported(monkeypatch, tmp_path):
     """The standings refs are read from the rows, so a row must carry the
     version of the library that produced it. The host is detected once
     before any reference is imported; the libs are read again at emission,
@@ -140,9 +141,10 @@ def test_a_row_records_the_reference_version_its_fit_imported(monkeypatch,
     task = types.SimpleNamespace()
     openml = types.SimpleNamespace(
         study=types.SimpleNamespace(
-            get_suite=lambda sid: types.SimpleNamespace(
-                tasks=[7] if sid == 297 else [])),
-        tasks=types.SimpleNamespace(get_task=lambda tid, download_splits: task))
+            get_suite=lambda sid: types.SimpleNamespace(tasks=[7] if sid == 297 else [])
+        ),
+        tasks=types.SimpleNamespace(get_task=lambda tid, download_splits: task),
+    )
     monkeypatch.setitem(sys.modules, "openml", openml)
     rng = np.random.default_rng(0)
     X, y = rng.random((40, 3), dtype=np.float32), rng.random(40, dtype=np.float32)
@@ -150,8 +152,7 @@ def test_a_row_records_the_reference_version_its_fit_imported(monkeypatch,
 
     def fit_predict(variant, Xtr, ytr, Xte, kind, knobs):
         if variant == "xgb":
-            monkeypatch.setitem(sys.modules, "xgboost",
-                                types.SimpleNamespace(__version__="9.9.9"))
+            monkeypatch.setitem(sys.modules, "xgboost", types.SimpleNamespace(__version__="9.9.9"))
         return np.zeros(len(Xte))
 
     monkeypatch.setattr(grinsztajn, "fit_predict", fit_predict)

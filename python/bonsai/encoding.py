@@ -68,9 +68,15 @@ class OrderedTargetEncoder:
         If ``cross`` is not 1 or 2.
     """
 
-    def __init__(self, columns, prior_weight: float = 10.0,
-                 n_permutations: int = 1, keep_codes: bool = True,
-                 seed: int = 0, cross: int = 1):
+    def __init__(
+        self,
+        columns,
+        prior_weight: float = 10.0,
+        n_permutations: int = 1,
+        keep_codes: bool = True,
+        seed: int = 0,
+        cross: int = 1,
+    ):
         """Validate ``cross`` and store constructor arguments."""
         self.columns = list(columns)
         self.prior_weight = float(prior_weight)
@@ -81,16 +87,17 @@ class OrderedTargetEncoder:
         if self.cross not in (1, 2):
             raise ValueError("cross must be 1 (singles) or 2 (add pairs)")
         self._stats: dict[int, tuple[np.ndarray, np.ndarray]] | None = None
-        self._pair_stats: dict[tuple[int, int],
-                               tuple[np.ndarray, np.ndarray]] = {}
+        self._pair_stats: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
         self._prior: float = 0.0
 
     def __repr__(self) -> str:
-        return (f"OrderedTargetEncoder(columns={self.columns!r}, "
-                f"prior_weight={self.prior_weight}, "
-                f"n_permutations={self.n_permutations}, "
-                f"keep_codes={self.keep_codes}, seed={self.seed}, "
-                f"cross={self.cross})")
+        return (
+            f"OrderedTargetEncoder(columns={self.columns!r}, "
+            f"prior_weight={self.prior_weight}, "
+            f"n_permutations={self.n_permutations}, "
+            f"keep_codes={self.keep_codes}, seed={self.seed}, "
+            f"cross={self.cross})"
+        )
 
     def fit_transform(self, X, y) -> np.ndarray:
         """Causally encode the train fold and learn full-fold statistics.
@@ -160,8 +167,7 @@ class OrderedTargetEncoder:
             if self.keep_codes:
                 appended.append(X[:, c])
         for i, j in self._pairs():
-            appended.append(
-                self._lookup(*self._pair_stats[(i, j)], _pair_keys(X, i, j)))
+            appended.append(self._lookup(*self._pair_stats[(i, j)], _pair_keys(X, i, j)))
         return np.column_stack([out, *appended]) if appended else out
 
     def _pairs(self):
@@ -193,22 +199,20 @@ class OrderedTargetEncoder:
         y_s, col_s = y[order], col[order]
         cum = np.cumsum(y_s) - y_s
         starts = np.maximum.accumulate(
-            np.where(np.r_[True, col_s[1:] != col_s[:-1]], np.arange(n), 0))
+            np.where(np.r_[True, col_s[1:] != col_s[:-1]], np.arange(n), 0)
+        )
         prev_sum = cum - cum[starts]
         prev_cnt = np.arange(n) - starts
-        enc_s = ((prev_sum + self.prior_weight * self._prior) /
-                 (prev_cnt + self.prior_weight))
+        enc_s = (prev_sum + self.prior_weight * self._prior) / (prev_cnt + self.prior_weight)
         enc = np.empty(n, dtype=np.float64)
         enc[order] = enc_s
         return enc
 
     def _full_stats(self, col, y) -> tuple[np.ndarray, np.ndarray]:
         """Whole-fold (categories, smoothed means) for transform()."""
-        vals, inverse, counts = np.unique(col, return_inverse=True,
-                                          return_counts=True)
+        vals, inverse, counts = np.unique(col, return_inverse=True, return_counts=True)
         sums = np.bincount(inverse, weights=y)
-        means = ((sums + self.prior_weight * self._prior) /
-                 (counts + self.prior_weight))
+        means = (sums + self.prior_weight * self._prior) / (counts + self.prior_weight)
         return vals, means.astype(np.float32)
 
     def _lookup(self, vals, means, col) -> np.ndarray:

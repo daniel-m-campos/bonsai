@@ -46,8 +46,7 @@ TOLERANCE_FACTOR = 2.0
 
 
 def project_version() -> str:
-    m = re.search(r'^version = "([^"]+)"',
-                  (REPO / "pyproject.toml").read_text(), re.M)
+    m = re.search(r'^version = "([^"]+)"', (REPO / "pyproject.toml").read_text(), re.M)
     return m.group(1)
 
 
@@ -61,7 +60,8 @@ def stamp_skip_gate(entry: dict, rows: list[dict]) -> None:
     environment, not the checking machine's.
     """
     entry["hash_set"] = check_standings.plane_digest(
-        entry.get("plane") or check_standings.PLANE_GPU)
+        entry.get("plane") or check_standings.PLANE_GPU
+    )
     ref_versions = current_ref_versions(measured_ref_versions(rows)[0])
     entry["refs"] = ref_versions
     refresh_ref_ledger(ref_versions)
@@ -75,10 +75,12 @@ def current_ref_versions(measured: dict) -> dict:
     compare against.
     """
     recorded = check_standings.recorded_ref_versions()
-    return {name: measured.get(name)
-            or check_standings.installed_ref_version(name)
-            or recorded.get(name)
-            for name in REF_LIBRARIES}
+    return {
+        name: measured.get(name)
+        or check_standings.installed_ref_version(name)
+        or recorded.get(name)
+        for name in REF_LIBRARIES
+    }
 
 
 def measured_ref_versions(rows: list[dict]) -> tuple[dict, str | None]:
@@ -94,8 +96,10 @@ def measured_ref_versions(rows: list[dict]) -> tuple[dict, str | None]:
                 seen[name].add(version)
     for name, versions in seen.items():
         if len(versions) > 1:
-            return {}, (f"rows carry {name} at {sorted(versions)}; a standings "
-                        "file measures one version of each reference")
+            return {}, (
+                f"rows carry {name} at {sorted(versions)}; a standings "
+                "file measures one version of each reference"
+            )
     return {name: next(iter(v)) for name, v in seen.items() if v}, None
 
 
@@ -128,40 +132,55 @@ def restamp_verified(args: argparse.Namespace, reg: dict) -> int:
     """
     entry = reg[args.axis]
     if not args.reason:
-        print("ERROR: --restamp-verified needs --reason: a stamp without a "
-              "recorded argument is a guess, not a carry-forward",
-              file=sys.stderr)
+        print(
+            "ERROR: --restamp-verified needs --reason: a stamp without a "
+            "recorded argument is a guess, not a carry-forward",
+            file=sys.stderr,
+        )
         return 1
     evidence, refusal = EVIDENCE_KINDS[args.evidence_kind](args)
     if refusal:
         print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
     if not entry.get("sha"):
-        print(f"ERROR: {args.axis} has never been measured; there is no "
-              "measurement to carry forward", file=sys.stderr)
+        print(
+            f"ERROR: {args.axis} has never been measured; there is no measurement to carry forward",
+            file=sys.stderr,
+        )
         return 1
-    plane = entry.get("plane") or (check_standings.PLANE_GPU
-                                   if check_standings.is_quality_axis(args.axis)
-                                   else None)
+    plane = entry.get("plane") or (
+        check_standings.PLANE_GPU if check_standings.is_quality_axis(args.axis) else None
+    )
     if plane is None:
-        print(f"ERROR: {args.axis} registers no plane, so there is no digest "
-              "to carry forward", file=sys.stderr)
+        print(
+            f"ERROR: {args.axis} registers no plane, so there is no digest to carry forward",
+            file=sys.stderr,
+        )
         return 1
     ok, reason = check_standings.hash_skip(args.axis, entry)
     if ok:
-        print(f"ERROR: {args.axis} is already current ({reason}); nothing to "
-              "carry forward", file=sys.stderr)
+        print(
+            f"ERROR: {args.axis} is already current ({reason}); nothing to carry forward",
+            file=sys.stderr,
+        )
         return 1
     bumped = check_standings.bumped_ref_majors(entry.get("refs", {}))
     if bumped:
-        print(f"ERROR: {args.axis} is stale on reference-library majors "
-              f"({', '.join(bumped)}), which no source-tree equivalence "
-              "answers; re-measure the axis", file=sys.stderr)
+        print(
+            f"ERROR: {args.axis} is stale on reference-library majors "
+            f"({', '.join(bumped)}), which no source-tree equivalence "
+            "answers; re-measure the axis",
+            file=sys.stderr,
+        )
         return 1
 
-    stamped_at = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                                cwd=REPO, capture_output=True, text=True,
-                                check=True).stdout.strip()
+    stamped_at = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     entry["hash_set"] = check_standings.plane_digest(plane)
     entry["carried_forward"] = {
         "measured_at": entry["sha"],
@@ -170,10 +189,12 @@ def restamp_verified(args: argparse.Namespace, reg: dict) -> int:
         "evidence": evidence,
     }
     REGISTRY.write_text(json.dumps(reg, indent=2) + "\n")
-    print(f"{args.axis}: {plane} stamp carried forward to "
-          f"{entry['carried_forward']['stamped_at']} on "
-          f"{evidence['kind']} evidence, still measured at "
-          f"{entry['sha']} ({args.reason})")
+    print(
+        f"{args.axis}: {plane} stamp carried forward to "
+        f"{entry['carried_forward']['stamped_at']} on "
+        f"{evidence['kind']} evidence, still measured at "
+        f"{entry['sha']} ({args.reason})"
+    )
     return 0
 
 
@@ -201,48 +222,53 @@ def supersede(args: argparse.Namespace, reg: dict) -> int:
         print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
     _retire_superseded_files(entry, args)
-    entry.update(file=args.file, sha=sha, host=_measured_host(rows),
-                 date=_measured_date(rows),
-                 refreshed_for=args.version or project_version())
+    entry.update(
+        file=args.file,
+        sha=sha,
+        host=_measured_host(rows),
+        date=_measured_date(rows),
+        refreshed_for=args.version or project_version(),
+    )
     # A measured stamp is never a carried-forward one.
     entry.pop("carried_forward", None)
     if check_standings.is_quality_axis(args.axis) or entry.get("plane"):
         stamp_skip_gate(entry, rows)
     REGISTRY.write_text(json.dumps(reg, indent=2) + "\n")
-    print(f"{args.axis}: {args.file} at {entry['sha']} "
-          f"(refreshed for {entry['refreshed_for']})")
+    print(f"{args.axis}: {args.file} at {entry['sha']} (refreshed for {entry['refreshed_for']})")
     return 0
 
 
 def _results_rows(name: str) -> list[dict]:
     """The rows of one results file in benchmarks/results."""
-    return [json.loads(ln)
-            for ln in (RESULTS / name).read_text().splitlines() if ln.strip()]
+    return [json.loads(ln) for ln in (RESULTS / name).read_text().splitlines() if ln.strip()]
 
 
-def _measured_sha(rows: list[dict],
-                  name: str) -> tuple[str | None, str | None]:
+def _measured_sha(rows: list[dict], name: str) -> tuple[str | None, str | None]:
     """The one commit a results file attributes its rows to, or a refusal."""
     shas = {r.get("git_sha") for r in rows if r.get("git_sha")}
     if len(shas) != 1:
-        return None, (f"{name} carries shas {sorted(shas)}; a standings file "
-                      "must be single-sha")
+        return None, (f"{name} carries shas {sorted(shas)}; a standings file must be single-sha")
     # "unknown" is what runlog records when nothing states the commit and the
     # cwd is not a checkout. It is truthy, so every downstream check passes
     # while the row stays unattributable; the registry would claim provenance
     # it does not have. Set BONSAI_BENCH_GIT_SHA and re-run.
     if shas == {"unknown"}:
-        return None, (f"{name} carries git_sha \"unknown\", so nothing ties "
-                      "these rows to a commit; re-run with "
-                      "BONSAI_BENCH_GIT_SHA set (the pod script sets it from "
-                      "GIT_SHA)")
+        return None, (
+            f'{name} carries git_sha "unknown", so nothing ties '
+            "these rows to a commit; re-run with "
+            "BONSAI_BENCH_GIT_SHA set (the pod script sets it from "
+            "GIT_SHA)"
+        )
     return shas.pop(), None
 
 
 def _measured_host(rows: list[dict]) -> str | None:
     """The one host the rows were measured on, or None when they disagree."""
-    hosts = {(r["host"].get("name") if isinstance(r.get("host"), dict)
-              else r.get("host")) for r in rows if r.get("host")}
+    hosts = {
+        (r["host"].get("name") if isinstance(r.get("host"), dict) else r.get("host"))
+        for r in rows
+        if r.get("host")
+    }
     return sorted(hosts)[0] if len(hosts) == 1 else None
 
 
@@ -252,8 +278,7 @@ def _measured_date(rows: list[dict]) -> str | None:
     return dates[-1] if dates else None
 
 
-def _retire_superseded_files(entry: dict,
-                             args: argparse.Namespace) -> None:
+def _retire_superseded_files(entry: dict, args: argparse.Namespace) -> None:
     """Delete the files this refresh replaces and adopt the new evidence."""
     if entry.get("file") != args.file:
         _delete_result(entry.get("file"))
@@ -273,8 +298,7 @@ def _delete_result(name: str | None) -> None:
     print(f"superseded {name} (git history is the archive)")
 
 
-def _byte_identity_evidence(
-        args: argparse.Namespace) -> tuple[dict | None, str | None]:
+def _byte_identity_evidence(args: argparse.Namespace) -> tuple[dict | None, str | None]:
     """Build a byte-identity evidence block, or say why it is not one.
 
     The claim is that the same inputs produce the same model bytes at both
@@ -294,26 +318,41 @@ def _byte_identity_evidence(
     tuple[dict | None, str | None]
         `(block, None)` when the evidence holds, `(None, refusal)` otherwise.
     """
-    missing = [name for name, value in
-               (("--evidence-before", args.evidence_before),
-                ("--evidence-after", args.evidence_after)) if not value]
+    missing = [
+        name
+        for name, value in (
+            ("--evidence-before", args.evidence_before),
+            ("--evidence-after", args.evidence_after),
+        )
+        if not value
+    ]
     if missing:
-        return None, (f"model-hash evidence needs {', '.join(missing)}: a "
-                      "stamp without a recorded proof is a guess, not a "
-                      "carry-forward")
+        return None, (
+            f"model-hash evidence needs {', '.join(missing)}: a "
+            "stamp without a recorded proof is a guess, not a "
+            "carry-forward"
+        )
     if args.evidence_before != args.evidence_after:
-        return None, (f"model hashes {args.evidence_before!r} and "
-                      f"{args.evidence_after!r} differ; that is a measured "
-                      "difference, not an equivalence proof")
-    block = {"kind": "model-hash", "grower": args.evidence_grower,
-             "before": args.evidence_before, "after": args.evidence_after}
+        return None, (
+            f"model hashes {args.evidence_before!r} and "
+            f"{args.evidence_after!r} differ; that is a measured "
+            "difference, not an equivalence proof"
+        )
+    block = {
+        "kind": "model-hash",
+        "grower": args.evidence_grower,
+        "before": args.evidence_before,
+        "after": args.evidence_after,
+    }
     if not _is_device_grower(args.evidence_grower):
         return block, None
     if not args.evidence_host:
-        return None, (f"a {args.evidence_grower} hash is identity on one "
-                      "device and one build, so model-hash evidence from it "
-                      "needs --evidence-host: the pod both hashes were "
-                      "measured on")
+        return None, (
+            f"a {args.evidence_grower} hash is identity on one "
+            "device and one build, so model-hash evidence from it "
+            "needs --evidence-host: the pod both hashes were "
+            "measured on"
+        )
     block["host"] = args.evidence_host
     return block, None
 
@@ -322,8 +361,7 @@ def _is_device_grower(grower: str) -> bool:
     return grower.startswith(DEVICE_GROWER_PREFIX)
 
 
-def _tolerance_evidence(
-        args: argparse.Namespace) -> tuple[dict | None, str | None]:
+def _tolerance_evidence(args: argparse.Namespace) -> tuple[dict | None, str | None]:
     """Build a tolerance evidence block, or say why it is not one.
 
     The claim is weaker than byte identity and is the only one available on a
@@ -343,97 +381,148 @@ def _tolerance_evidence(
     tuple[dict | None, str | None]
         `(block, None)` when the evidence holds, `(None, refusal)` otherwise.
     """
-    missing = [name for name, value in (("--metric", args.metric),
-                                        ("--cell", args.cell),
-                                        ("--config", args.config),
-                                        ("--evidence-host", args.evidence_host))
-               if not value]
+    missing = [
+        name
+        for name, value in (
+            ("--metric", args.metric),
+            ("--cell", args.cell),
+            ("--config", args.config),
+            ("--evidence-host", args.evidence_host),
+        )
+        if not value
+    ]
     if missing:
-        return None, (f"tolerance evidence needs {', '.join(missing)}: a "
-                      "tolerance is only readable next to what was compared, "
-                      "on what, and where")
-    absent = [name for name, value in (("--floor-before", args.floor_before),
-                                       ("--floor-after", args.floor_after),
-                                       ("--cross-commit", args.cross_commit))
-              if value is None]
+        return None, (
+            f"tolerance evidence needs {', '.join(missing)}: a "
+            "tolerance is only readable next to what was compared, "
+            "on what, and where"
+        )
+    absent = [
+        name
+        for name, value in (
+            ("--floor-before", args.floor_before),
+            ("--floor-after", args.floor_after),
+            ("--cross-commit", args.cross_commit),
+        )
+        if value is None
+    ]
     if absent:
-        return None, (f"tolerance evidence needs {', '.join(absent)}: with no "
-                      "measured within-commit noise floor there is no scale "
-                      "to read the cross-commit delta against, so there is no "
-                      "evidence")
+        return None, (
+            f"tolerance evidence needs {', '.join(absent)}: with no "
+            "measured within-commit noise floor there is no scale "
+            "to read the cross-commit delta against, so there is no "
+            "evidence"
+        )
     floor = max(args.floor_before, args.floor_after)
     if floor <= 0.0:
-        return None, (f"tolerance evidence records a {floor:g} noise floor, "
-                      "which says this plane reproduces its bytes run to run; "
-                      "prove that with --evidence-kind model-hash instead")
+        return None, (
+            f"tolerance evidence records a {floor:g} noise floor, "
+            "which says this plane reproduces its bytes run to run; "
+            "prove that with --evidence-kind model-hash instead"
+        )
     if args.cross_commit > TOLERANCE_FACTOR * floor:
-        return None, (f"cross-commit {args.cross_commit:g} exceeds "
-                      f"{TOLERANCE_FACTOR:g}x the {floor:g} within-commit "
-                      "noise floor; that is a measured difference, not an "
-                      "equivalence")
-    return {"kind": "tolerance", "metric": args.metric,
-            "floor_before": args.floor_before,
-            "floor_after": args.floor_after,
-            "cross_commit": args.cross_commit,
-            "factor": TOLERANCE_FACTOR, "cell": args.cell,
-            "config": args.config, "host": args.evidence_host}, None
+        return None, (
+            f"cross-commit {args.cross_commit:g} exceeds "
+            f"{TOLERANCE_FACTOR:g}x the {floor:g} within-commit "
+            "noise floor; that is a measured difference, not an "
+            "equivalence"
+        )
+    return {
+        "kind": "tolerance",
+        "metric": args.metric,
+        "floor_before": args.floor_before,
+        "floor_after": args.floor_after,
+        "cross_commit": args.cross_commit,
+        "factor": TOLERANCE_FACTOR,
+        "cell": args.cell,
+        "config": args.config,
+        "host": args.evidence_host,
+    }, None
 
 
-EVIDENCE_KINDS = {"model-hash": _byte_identity_evidence,
-                  "tolerance": _tolerance_evidence}
+EVIDENCE_KINDS = {"model-hash": _byte_identity_evidence, "tolerance": _tolerance_evidence}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--axis", required=True)
-    ap.add_argument("--file", default=None,
-                    help="new results file name (already in benchmarks/results)")
+    ap.add_argument(
+        "--file", default=None, help="new results file name (already in benchmarks/results)"
+    )
     ap.add_argument("--version", default=None)
-    ap.add_argument("--companion", default=None,
-                    help="evidence file measured with this axis (rendered "
-                         "with it, superseded with it)")
-    ap.add_argument("--ab", default=None,
-                    help="the plane's release A/B rows, measured with this "
-                         "axis (rendered with it, gated with it, superseded "
-                         "with it)")
-    ap.add_argument("--restamp-verified", action="store_true",
-                    help="carry the current plane digest forward with no new "
-                         "measurement, for an axis the changed sources cannot "
-                         "reach; needs --reason and its kind's evidence")
-    ap.add_argument("--reason", default=None,
-                    help="carry-forward: why the changed plane cannot reach "
-                         "this axis")
-    ap.add_argument("--evidence-kind", default="model-hash",
-                    choices=sorted(EVIDENCE_KINDS),
-                    help="carry-forward: what kind of equivalence was proven; "
-                         "model-hash is byte identity, tolerance is a delta "
-                         "read against a measured noise floor")
-    ap.add_argument("--evidence-before", default=None,
-                    help="model-hash: the model hash at the measured sha")
-    ap.add_argument("--evidence-after", default=None,
-                    help="model-hash: the model hash at the stamped sha")
-    ap.add_argument("--evidence-grower", default="depthwise",
-                    help="model-hash: the grower model_hash.py ran with; a "
-                         "cuda_* grower's hash is identity on one device and "
-                         "needs --evidence-host")
-    ap.add_argument("--metric", default=None,
-                    help="tolerance: what was compared, e.g. 'max abs "
-                         "prediction delta'")
-    ap.add_argument("--floor-before", type=float, default=None,
-                    help="tolerance: the within-commit noise floor measured at "
-                         "the measured sha")
-    ap.add_argument("--floor-after", type=float, default=None,
-                    help="tolerance: the within-commit noise floor measured at "
-                         "the stamped sha")
-    ap.add_argument("--cross-commit", type=float, default=None,
-                    help="tolerance: the metric between the two commits")
-    ap.add_argument("--cell", default=None,
-                    help="tolerance: the cell the comparison ran on")
-    ap.add_argument("--config", default=None,
-                    help="tolerance: the fit configuration it ran under")
-    ap.add_argument("--evidence-host", default=None,
-                    help="tolerance, and model-hash from a cuda_* grower: the "
-                         "host the comparison ran on")
+    ap.add_argument(
+        "--companion",
+        default=None,
+        help="evidence file measured with this axis (rendered with it, superseded with it)",
+    )
+    ap.add_argument(
+        "--ab",
+        default=None,
+        help="the plane's release A/B rows, measured with this "
+        "axis (rendered with it, gated with it, superseded "
+        "with it)",
+    )
+    ap.add_argument(
+        "--restamp-verified",
+        action="store_true",
+        help="carry the current plane digest forward with no new "
+        "measurement, for an axis the changed sources cannot "
+        "reach; needs --reason and its kind's evidence",
+    )
+    ap.add_argument(
+        "--reason", default=None, help="carry-forward: why the changed plane cannot reach this axis"
+    )
+    ap.add_argument(
+        "--evidence-kind",
+        default="model-hash",
+        choices=sorted(EVIDENCE_KINDS),
+        help="carry-forward: what kind of equivalence was proven; "
+        "model-hash is byte identity, tolerance is a delta "
+        "read against a measured noise floor",
+    )
+    ap.add_argument(
+        "--evidence-before", default=None, help="model-hash: the model hash at the measured sha"
+    )
+    ap.add_argument(
+        "--evidence-after", default=None, help="model-hash: the model hash at the stamped sha"
+    )
+    ap.add_argument(
+        "--evidence-grower",
+        default="depthwise",
+        help="model-hash: the grower model_hash.py ran with; a "
+        "cuda_* grower's hash is identity on one device and "
+        "needs --evidence-host",
+    )
+    ap.add_argument(
+        "--metric",
+        default=None,
+        help="tolerance: what was compared, e.g. 'max abs prediction delta'",
+    )
+    ap.add_argument(
+        "--floor-before",
+        type=float,
+        default=None,
+        help="tolerance: the within-commit noise floor measured at the measured sha",
+    )
+    ap.add_argument(
+        "--floor-after",
+        type=float,
+        default=None,
+        help="tolerance: the within-commit noise floor measured at the stamped sha",
+    )
+    ap.add_argument(
+        "--cross-commit",
+        type=float,
+        default=None,
+        help="tolerance: the metric between the two commits",
+    )
+    ap.add_argument("--cell", default=None, help="tolerance: the cell the comparison ran on")
+    ap.add_argument("--config", default=None, help="tolerance: the fit configuration it ran under")
+    ap.add_argument(
+        "--evidence-host",
+        default=None,
+        help="tolerance, and model-hash from a cuda_* grower: the host the comparison ran on",
+    )
     args = ap.parse_args()
 
     reg = json.loads(REGISTRY.read_text())
@@ -443,8 +532,7 @@ def main() -> int:
     if args.restamp_verified:
         return restamp_verified(args, reg)
     if not args.file:
-        print("ERROR: --file is required unless --restamp-verified is given",
-              file=sys.stderr)
+        print("ERROR: --file is required unless --restamp-verified is given", file=sys.stderr)
         return 1
     return supersede(args, reg)
 

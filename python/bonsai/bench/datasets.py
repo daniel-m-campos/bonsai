@@ -65,56 +65,96 @@ class Dataset:
 
 REGISTRY = {
     "tiny": Dataset(
-        "tiny", Tier.TEST_PIN, "reg", "committed in-repo (tests/data/tiny.csv)",
-        "project-generated", "single file", ("tiny.csv",)),
+        "tiny",
+        Tier.TEST_PIN,
+        "reg",
+        "committed in-repo (tests/data/tiny.csv)",
+        "project-generated",
+        "single file",
+        ("tiny.csv",),
+    ),
     "california": Dataset(
-        "california", Tier.TEST_PIN, "reg",
-        "sklearn fetch_california_housing (StatLib)", "public domain",
+        "california",
+        Tier.TEST_PIN,
+        "reg",
+        "sklearn fetch_california_housing (StatLib)",
+        "public domain",
         "80/20 train_test_split(random_state=42) by scripts/fetch_toy.py",
-        ("california_housing_train.csv", "california_housing_test.csv")),
+        ("california_housing_train.csv", "california_housing_test.csv"),
+    ),
     "amazon": Dataset(
-        "amazon", Tier.TEST_PIN, "binary", "OpenML data id 4135",
+        "amazon",
+        Tier.TEST_PIN,
+        "binary",
+        "OpenML data id 4135",
         "Kaggle competition data, research use",
         "80/20 stratified random_state=42 by scripts/fetch_amazon.py",
-        ("amazon_train.csv", "amazon_test.csv")),
+        ("amazon_train.csv", "amazon_test.csv"),
+    ),
     "grinsztajn": Dataset(
-        "grinsztajn", Tier.QUALITY_EXTERNAL, "mixed",
+        "grinsztajn",
+        Tier.QUALITY_EXTERNAL,
+        "mixed",
         "OpenML suites 297/298/299/304 (Grinsztajn et al. 2022)",
         "per-dataset OpenML licenses",
         "10k-row train cap, 3 seeded splits (bonsai.bench.grinsztajn)",
-        ()),
+        (),
+    ),
     "campaign10": Dataset(
-        "campaign10", Tier.QUALITY_SMOKE, "mixed",
+        "campaign10",
+        Tier.QUALITY_SMOKE,
+        "mixed",
         "ten OpenML datasets (decisions 56-57; benchmarks/quality-campaign-2026-07.md)",
         "per-dataset OpenML licenses",
-        "fetched at runtime via OpenML by the campaign tooling", ()),
+        "fetched at runtime via OpenML by the campaign tooling",
+        (),
+    ),
     "a9a": Dataset(
-        "a9a", Tier.QUALITY_EXTERNAL, "binary",
+        "a9a",
+        Tier.QUALITY_EXTERNAL,
+        "binary",
         "LIBSVM binary collection (Adult, 123 binary features)",
-        "UCI Adult derivative", "upstream fixed train/test split",
-        ("a9a_train.libsvm", "a9a_test.libsvm")),
+        "UCI Adult derivative",
+        "upstream fixed train/test split",
+        ("a9a_train.libsvm", "a9a_test.libsvm"),
+    ),
     "covtype": Dataset(
-        "covtype", Tier.QUALITY_EXTERNAL, "multiclass",
-        "UCI Covertype", "UCI, research use",
+        "covtype",
+        Tier.QUALITY_EXTERNAL,
+        "multiclass",
+        "UCI Covertype",
+        "UCI, research use",
         "first 500k rows train, remainder test",
-        ("covtype_train.csv", "covtype_test.csv")),
+        ("covtype_train.csv", "covtype_test.csv"),
+    ),
     "higgs": Dataset(
-        "higgs", Tier.PERF_SCALE, "binary",
-        "UCI HIGGS (first 550k of 11M rows)", "UCI, CC BY 4.0",
+        "higgs",
+        Tier.PERF_SCALE,
+        "binary",
+        "UCI HIGGS (first 550k of 11M rows)",
+        "UCI, CC BY 4.0",
         "first 500k train, next 50k test",
-        ("higgs_train.csv", "higgs_test.csv")),
+        ("higgs_train.csv", "higgs_test.csv"),
+    ),
     "year_msd": Dataset(
-        "year_msd", Tier.PERF_SCALE, "reg",
-        "UCI YearPredictionMSD", "UCI, research use",
-        "UCI-recommended split: first 463,715 train, last 51,630 test "
-        "(avoids the producer effect)",
-        ("year_prediction_msd_train.csv", "year_prediction_msd_test.csv")),
+        "year_msd",
+        Tier.PERF_SCALE,
+        "reg",
+        "UCI YearPredictionMSD",
+        "UCI, research use",
+        "UCI-recommended split: first 463,715 train, last 51,630 test (avoids the producer effect)",
+        ("year_prediction_msd_train.csv", "year_prediction_msd_test.csv"),
+    ),
     "friedman1": Dataset(
-        "friedman1", Tier.PERF_SYNTHETIC, "reg",
+        "friedman1",
+        Tier.PERF_SYNTHETIC,
+        "reg",
         "bonsai.bench.synth.gen_data (generalized Friedman 1991)",
         "project-generated",
         "deterministic in (seed, rows, cols, n_test) and in nothing else, "
-        "recipe 2; see synth.py provenance", ()),
+        "recipe 2; see synth.py provenance",
+        (),
+    ),
 }
 
 
@@ -141,14 +181,14 @@ def fetch(name: str, force: bool = False) -> list[pathlib.Path]:
     """
     ds = REGISTRY[name]
     if name not in _FETCHERS:
-        raise ValueError(
-            f"{name} ({ds.tier}) is not fetched here: {ds.split}")
+        raise ValueError(f"{name} ({ds.tier}) is not fetched here: {ds.split}")
     root = data_root()
     root.mkdir(parents=True, exist_ok=True)
     if not force and is_fetched(name):
         return paths(name)
     _FETCHERS[name](root)
     return paths(name)
+
 
 # ---- fetchers (stdlib streaming; pandas only where the source demands it) --
 
@@ -171,14 +211,16 @@ def _fetch_a9a(root: pathlib.Path):
 
 
 def _fetch_covtype(root: pathlib.Path):
-    url = ("https://archive.ics.uci.edu/ml/machine-learning-databases/"
-           "covtype/covtype.data.gz")
+    url = "https://archive.ics.uci.edu/ml/machine-learning-databases/covtype/covtype.data.gz"
     n_train, n_feat = 500_000, 54
     header = "label," + ",".join(f"f{i}" for i in range(n_feat)) + "\n"
     req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req) as resp, gzip.open(resp, "rt") as gz, \
-            (root / "covtype_train.csv").open("w") as tr, \
-            (root / "covtype_test.csv").open("w") as te:
+    with (
+        urllib.request.urlopen(req) as resp,
+        gzip.open(resp, "rt") as gz,
+        (root / "covtype_train.csv").open("w") as tr,
+        (root / "covtype_test.csv").open("w") as te,
+    ):
         tr.write(header)
         te.write(header)
         for i, line in enumerate(gz):
@@ -189,14 +231,16 @@ def _fetch_covtype(root: pathlib.Path):
 
 
 def _fetch_higgs(root: pathlib.Path):
-    url = ("https://archive.ics.uci.edu/ml/machine-learning-databases/"
-           "00280/HIGGS.csv.gz")
+    url = "https://archive.ics.uci.edu/ml/machine-learning-databases/00280/HIGGS.csv.gz"
     n_train, n_test, n_feat = 500_000, 50_000, 28
     header = "label," + ",".join(f"f{i}" for i in range(n_feat)) + "\n"
     req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req) as resp, gzip.open(resp, "rt") as gz, \
-            (root / "higgs_train.csv").open("w") as tr, \
-            (root / "higgs_test.csv").open("w") as te:
+    with (
+        urllib.request.urlopen(req) as resp,
+        gzip.open(resp, "rt") as gz,
+        (root / "higgs_train.csv").open("w") as tr,
+        (root / "higgs_test.csv").open("w") as te,
+    ):
         tr.write(header)
         te.write(header)
         for i, line in enumerate(gz):
@@ -208,35 +252,41 @@ def _fetch_higgs(root: pathlib.Path):
 def _fetch_year_msd(root: pathlib.Path):
     import io
     import zipfile
+
     url = "https://archive.ics.uci.edu/static/public/203/yearpredictionmsd.zip"
     n_train, n_feat = 463_715, 90
     header = "label," + ",".join(f"f{i}" for i in range(n_feat)) + "\n"
     req = urllib.request.Request(url, headers=_UA)
     with urllib.request.urlopen(req) as resp:
         blob = resp.read()
-    with zipfile.ZipFile(io.BytesIO(blob)) as zf, \
-            zf.open("YearPredictionMSD.txt") as member, \
-            io.TextIOWrapper(member) as text, \
-            (root / "year_prediction_msd_train.csv").open("w") as tr, \
-            (root / "year_prediction_msd_test.csv").open("w") as te:
+    with (
+        zipfile.ZipFile(io.BytesIO(blob)) as zf,
+        zf.open("YearPredictionMSD.txt") as member,
+        io.TextIOWrapper(member) as text,
+        (root / "year_prediction_msd_train.csv").open("w") as tr,
+        (root / "year_prediction_msd_test.csv").open("w") as te,
+    ):
         tr.write(header)
         te.write(header)
         for i, line in enumerate(text):
             (tr if i < n_train else te).write(line)
 
 
-_FETCHERS = {"a9a": _fetch_a9a, "covtype": _fetch_covtype,
-             "higgs": _fetch_higgs, "year_msd": _fetch_year_msd}
+_FETCHERS = {
+    "a9a": _fetch_a9a,
+    "covtype": _fetch_covtype,
+    "higgs": _fetch_higgs,
+    "year_msd": _fetch_year_msd,
+}
 
 
 if __name__ == "__main__":
     import sys
+
     for arg in sys.argv[1:] or ["--list"]:
         if arg == "--list":
             for d in REGISTRY.values():
-                state = "fetched" if is_fetched(d.name) else (
-                    "n/a" if not d.files else "missing")
-                print(f"{d.name:12s} {d.tier:17s} {d.task:10s} [{state}] "
-                      f"{d.source}")
+                state = "fetched" if is_fetched(d.name) else ("n/a" if not d.files else "missing")
+                print(f"{d.name:12s} {d.tier:17s} {d.task:10s} [{state}] {d.source}")
         else:
             print(fetch(arg))
