@@ -92,7 +92,7 @@ def _monotone_sweep_violation(objective, grower):
     )
     reg.fit(X, y)
     grid = np.tile(np.median(X, axis=0), (200, 1)).astype(np.float32)
-    grid[:, 0] = np.linspace(X[:, 0].min(), X[:, 0].max(), 200)
+    grid[:, 0] = np.linspace(np.min(X[:, 0]), np.max(X[:, 0]), 200)
     return float(np.max(-np.diff(reg.predict(grid)), initial=0.0))
 
 
