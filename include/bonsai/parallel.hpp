@@ -5,12 +5,16 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <print>
 #include <string_view>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 #ifdef __linux__
 #include <fstream>
+#include <sched.h>
 #include <string>
 #endif
 
@@ -121,6 +125,121 @@ inline void warn_if_over_quota(int requested)
                  "set OMP_WAIT_POLICY=passive to avoid it.",
                  requested, quota, quota);
 }
+// One CPU the process may run on, with the package and core it sits in.
+struct CpuPlace
+{
+    int cpu;
+    int package;
+    int core;
+};
+
+// The order a team fills CPUs in: one CPU per core, one package before the
+// next (invariants: team-packs-one-package-first).
+inline std::vector<int> place_order(std::vector<CpuPlace> places)
+{
+    std::ranges::sort(places,
+                      [](CpuPlace const &a, CpuPlace const &b)
+                      {
+                          return std::tie(a.package, a.core, a.cpu) <
+                                 std::tie(b.package, b.core, b.cpu);
+                      });
+    std::vector<int> order;
+    for (size_t i = 0; i < places.size(); ++i)
+    {
+        if (i == 0 || places[i].package != places[i - 1].package ||
+            places[i].core != places[i - 1].core)
+        {
+            order.push_back(places[i].cpu);
+        }
+    }
+    return order;
+}
+
+#ifdef __linux__
+inline int topology_id(int cpu, char const *leaf)
+{
+    std::string const path =
+        "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/topology/" + leaf;
+    int               id   = cpu;
+    std::string const line = first_line(path.c_str());
+    std::from_chars(line.data(), line.data() + line.size(), id);
+    return id;
+}
+
+// The process mask in team order, read once before any thread is bound.
+inline std::vector<int> const &team_cpus()
+{
+    static std::vector<int> const cpus = []
+    {
+        std::vector<CpuPlace> places;
+        cpu_set_t             set;
+        CPU_ZERO(&set);
+        if (sched_getaffinity(0, sizeof set, &set) == 0)
+        {
+            for (int c = 0; c < CPU_SETSIZE; ++c)
+            {
+                if (CPU_ISSET(c, &set))
+                {
+                    places.push_back({.cpu     = c,
+                                      .package = topology_id(c, "physical_package_id"),
+                                      .core    = topology_id(c, "core_id")});
+                }
+            }
+        }
+        return place_order(std::move(places));
+    }();
+    return cpus;
+}
+
+// Any of the runtime's placement variables, OMP_PROC_BIND=false included,
+// leaves placement to the runtime.
+inline bool runtime_places_threads()
+{
+    static bool const set = std::getenv("OMP_PROC_BIND") != nullptr ||
+                            std::getenv("OMP_PLACES") != nullptr ||
+                            std::getenv("KMP_AFFINITY") != nullptr ||
+                            std::getenv("GOMP_CPU_AFFINITY") != nullptr;
+    return set;
+}
+
+inline void run_on(int cpu)
+{
+    cpu_set_t one;
+    CPU_ZERO(&one);
+    CPU_SET(cpu, &one);
+    sched_setaffinity(0, sizeof one, &one);
+}
+#endif
+
+inline std::atomic<int> &placed_callers()
+{
+    static std::atomic<int> n{0};
+    return n;
+}
+
+// A worker binds to the tid-th team CPU once and keeps it, only while a
+// CallerPlace is open: without one the team runs wherever the scheduler
+// puts it, as it did before placement existed.
+inline void bind_worker(int tid, int team)
+{
+#ifdef __linux__
+    static thread_local bool bound = false;
+    if (bound || tid == 0 || placed_callers().load(std::memory_order_relaxed) == 0)
+    {
+        return;
+    }
+    std::vector<int> const &cpus = team_cpus();
+    if (runtime_places_threads() || cpus.size() < static_cast<size_t>(team))
+    {
+        return;
+    }
+    bound = true;
+    run_on(cpus[static_cast<size_t>(tid)]);
+#else
+    (void) tid;
+    (void) team;
+#endif
+}
 } // namespace internal
 
 // The configuration point, called before a fit and never inside a parallel
@@ -160,15 +279,62 @@ inline int n_threads()
 #endif
 }
 
-// Runs f(i) for i in [0, n) on a team of `workers`. Iterations must be
-// independent. Each index is processed by exactly one thread, so per-index
-// OUTPUTS are bit-identical at any thread count; sites whose work
-// DECOMPOSITION consults n_threads() (the fill plan) key the model bits to
-// the configured count, the fixed-N contract
-// (invariants: host-determinism). Dynamic scheduling keeps asymmetric
-// cores (e.g. P/E) busy; the chunk size scales with n so per-chunk overhead
-// stays negligible for big loops while small loops still spread one index
-// per thread. A team of one runs the loop inline, entering no region.
+// The placement scope, opened by a fit's entry point for the length of the
+// call: the calling thread takes the team's first CPU, so everything it
+// allocates between regions homes on the team's node, and its workers bind
+// to the CPUs after it. The mask comes back when the scope closes, so no
+// thread created outside a fit inherits a one-CPU mask. Skipped when the
+// runtime's placement variables are set or the mask is narrower than the
+// team (invariants: caller-mask-restored-after-fit).
+class CallerPlace
+{
+  public:
+    CallerPlace()
+    {
+#ifdef __linux__
+        std::vector<int> const &cpus = internal::team_cpus();
+        if (internal::runtime_places_threads() ||
+            cpus.size() < static_cast<size_t>(n_threads()))
+        {
+            return;
+        }
+        restore_ = sched_getaffinity(0, sizeof saved_, &saved_) == 0;
+        if (restore_)
+        {
+            internal::run_on(cpus[0]);
+            internal::placed_callers().fetch_add(1, std::memory_order_relaxed);
+        }
+#endif
+    }
+    ~CallerPlace()
+    {
+#ifdef __linux__
+        if (restore_)
+        {
+            internal::placed_callers().fetch_sub(1, std::memory_order_relaxed);
+            sched_setaffinity(0, sizeof saved_, &saved_);
+        }
+#endif
+    }
+    CallerPlace(CallerPlace const &)            = delete;
+    CallerPlace &operator=(CallerPlace const &) = delete;
+
+  private:
+#ifdef __linux__
+    bool      restore_ = false;
+    cpu_set_t saved_{};
+#endif
+};
+
+// Runs f(i) for i in [0, n) on a team of `workers`, each worker at its
+// place while a CallerPlace is open. Iterations must be independent. Each index is
+// processed by exactly one thread, so per-index OUTPUTS are bit-identical at any
+// thread count; sites whose work DECOMPOSITION consults n_threads() (the fill plan)
+// key the model bits to the configured count, the fixed-N contract (invariants:
+// host-determinism). Dynamic scheduling keeps asymmetric cores (e.g. P/E) busy; the
+// chunk size scales with n so per-chunk overhead stays negligible for big loops
+// while small loops still spread one index per thread. A team of one runs the loop
+// inline, entering no region.
 template <typename F> void for_each_index_on(int workers, size_t n, F &&f)
 {
 #ifdef BONSAI_USE_OPENMP
@@ -179,10 +345,14 @@ template <typename F> void for_each_index_on(int workers, size_t n, F &&f)
         // compilation passes drop even with OpenMP enabled host-side.
         [[maybe_unused]] auto const chunk = static_cast<int64_t>(
             std::max<size_t>(1, n / (static_cast<size_t>(nt) * 4)));
-#pragma omp parallel for schedule(dynamic, chunk) num_threads(nt)
-        for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
+#pragma omp parallel num_threads(nt)
         {
-            f(static_cast<size_t>(i));
+            internal::bind_worker(omp_get_thread_num(), nt);
+#pragma omp for schedule(dynamic, chunk)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
+            {
+                f(static_cast<size_t>(i));
+            }
         }
         return;
     }

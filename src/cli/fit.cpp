@@ -37,7 +37,8 @@ void print_metric_row(std::string_view label, floats_view raw, floats_view preds
 
 int run_fit(FitOpts const &opts)
 {
-    auto cfg = resolve_config(opts.common);
+    auto                        cfg = resolve_config(opts.common);
+    parallel::CallerPlace const placed;
 
     io::LoadedBooster init;
     if (!opts.init_model_path.empty())
