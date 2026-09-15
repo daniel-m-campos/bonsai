@@ -87,11 +87,10 @@ test-tsan: build-tsan $(TOY_SENTINEL)  ## Run the suite under ThreadSanitizer (L
 clean:  ## Remove build/, build-cuda/, and build-asan/.
 	@rm -rf build build-cuda build-asan
 
-# Ruff, pinned the way LLVM is: linter drift breaks CI, not the code. No
-# paths: ruff walks the tree itself, honouring .gitignore, and from 0.16 that
-# includes the Python fences in Markdown, so the docs' examples are held to
-# the same layout as the package.
+# Ruff and ty, pinned the way LLVM is: tool drift breaks CI, not the code.
+# No paths: both walk the tree honouring .gitignore, Markdown fences included.
 RUFF_VERSION := 0.16.7
+TY_VERSION := 0.0.81
 
 format:  ## clang-format the C++ tree and ruff format every Python source and Markdown fence, in place.
 	@$(LLVM_BIN)/clang-format -i $(SOURCES)
@@ -103,9 +102,6 @@ format-check:  ## Check both formatters, clang-format --dry-run --Werror and ruf
 
 lint-python:  ## Run ruff check over the tree (pinned via uvx).
 	@uvx ruff@$(RUFF_VERSION) check
-
-# ty, pinned likewise; it reads the built package, so the target builds first.
-TY_VERSION := 0.0.81
 
 typecheck: python  ## Run ty over the tree (pinned via uvx).
 	@uvx ty@$(TY_VERSION) check
