@@ -22,6 +22,7 @@ docstring onto its static twin. The site build has the extension built, so
 the import is available; anywhere it is not, the functions render undocumented
 rather than failing the build.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -52,7 +53,7 @@ class LiveDocstrings(griffe.Extension):
         except ImportError:
             return
         for name, member in mod.members.items():
-            if member.is_alias or not member.is_function or member.docstring:
+            if isinstance(member, griffe.Alias) or not member.is_function or member.docstring:
                 continue
             text = getattr(getattr(live, name, None), "__doc__", None)
             if text:

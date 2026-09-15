@@ -58,6 +58,7 @@ from bonsai.params import Params, Booster, Dispatch
 
 BASE = Params(dispatch=Dispatch(grower_name="levelwise"), booster=Booster(n_iters=200))
 
+
 def objective(trial):
     depth = trial.suggest_int("tree.max_depth", 3, 12)
     m = bonsai.train(BASE | {"tree.max_depth": depth}, ds, eval_set=valid)

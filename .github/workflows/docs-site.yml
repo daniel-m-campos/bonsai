@@ -42,7 +42,7 @@ jobs:
         with:
           path: build/_deps
           key: deps-build-${{ hashFiles('CMakeLists.txt') }}
-      - run: uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python "nanobind<3" numpy
+      - run: uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python "nanobind<3" numpy typing_extensions
       - run: make site
       - uses: actions/upload-pages-artifact@v3
         with:
