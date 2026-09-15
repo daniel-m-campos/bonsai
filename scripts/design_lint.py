@@ -10,7 +10,8 @@ message says why, so a regression is a decision rather than a drift.
 Gated numbers, each standing for one sentence of the house style:
 
 ``clone_windows``
-    Redundant copies of six-line windows with literals normalized. One
+    Redundant copies of six-line windows with literals normalized, a Python
+    file read one row per statement so the layout of a call is not a line. One
     concept has one home; the second copy is the one that gets fixed
     without the first. Include and import blocks and rows made only of
     literals (a string table, a knob map, an initializer) are outside any
@@ -63,10 +64,12 @@ from __future__ import annotations
 
 import argparse
 import collections
+import io
 import json
 import pathlib
 import re
 import sys
+import tokenize
 from dataclasses import dataclass
 from typing import Final
 
@@ -92,6 +95,11 @@ KEYWORDS: Final = frozenset(
     def import from as in not and or is None True False lambda with pass raise yield
     break continue self cls""".split()
 )
+SKIPPED_TOKENS: Final = frozenset(
+    {tokenize.NL, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING, tokenize.COMMENT,
+     tokenize.ENDMARKER}
+)
+CLOSERS: Final = frozenset({")", "]", "}"})
 BELOW_SEAM: Final = frozenset({"cuda", "metal", "registry"})
 HARDWARE_WORDS: Final = re.compile(r"\b(?:cuda\w*|warp\w*|pinned|occupancy|nvml\w*)\b", re.I)
 TYPE_DECLARATION: Final = re.compile(
@@ -212,7 +220,48 @@ def _production_files(root: pathlib.Path) -> list[pathlib.Path]:
 
 
 def _lines(f: pathlib.Path) -> list[str]:
-    return [line for line in f.read_text(errors="replace").splitlines() if line.strip()]
+    text = f.read_text(errors="replace")
+    if f.suffix == ".py":
+        return _python_statements(text)
+    return [line for line in text.splitlines() if line.strip()]
+
+
+def _python_statements(text: str) -> list[str]:
+    """One row per statement, spelled from its tokens, so how a call wraps its
+    arguments cannot move the count; a literal table inside a statement keeps
+    its opener and closer as the rows the count sees, the way a C++
+    initializer does."""
+    physical = text.splitlines()
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, SyntaxError):
+        return [line for line in physical if line.strip()]
+    out: list[str] = []
+    statement: list[tokenize.TokenInfo] = []
+    for tok in tokens:
+        if tok.type in SKIPPED_TOKENS:
+            continue
+        if tok.type != tokenize.NEWLINE:
+            statement.append(tok)
+            continue
+        if statement:
+            out.extend(_statement_rows(physical, statement))
+            statement = []
+    return out
+
+
+def _statement_rows(physical: list[str], statement: list[tokenize.TokenInfo]) -> list[str]:
+    first, last = statement[0].start[0], statement[-1].end[0]
+    rows = [line for line in physical[first - 1 : last] if line.strip()]
+    if len(rows) >= 3 and all(_is_bare_literal(r) for r in rows[1:-1]):
+        return [rows[0], rows[-1]]
+    words = [
+        tok.string
+        for tok, following in zip(statement, [*statement[1:], None])
+        if not (tok.string == "," and following is not None and following.string in CLOSERS)
+    ]
+    indent = physical[first - 1][: len(physical[first - 1]) - len(physical[first - 1].lstrip())]
+    return [indent + " ".join(words)]
 
 
 def _normalize(line: str, blind_to_identifiers: bool) -> str:
