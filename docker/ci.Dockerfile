@@ -30,7 +30,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 # quality-grinsztajn axis dies on import partway through a rental.
 RUN uv venv --python 3.12 /opt/venv \
     && uv pip install --python /opt/venv/bin/python \
-        cmake ninja numpy "nanobind<3" scikit-learn pandas tabulate matplotlib \
+        cmake ninja numpy typing_extensions "nanobind<3" scikit-learn pandas tabulate matplotlib \
         "xgboost>=3.2,<3.4" catboost nvidia-ml-py openml
 ENV PATH="/opt/venv/bin:${PATH}"
 

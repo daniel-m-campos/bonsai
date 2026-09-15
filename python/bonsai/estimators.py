@@ -19,18 +19,17 @@ import tempfile
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, ClassVar, TypeVar, cast
+from typing import Any, ClassVar, cast
 
 import numpy as np
 import numpy.typing as npt
+from typing_extensions import Self
 
 from bonsai._bonsai import Dataset, Model, load, train
 from bonsai._coerce import _as_f32
 from bonsai._params_ops import ParamsOps
 
 __all__ = ["BonsaiClassifier", "BonsaiRegressor"]
-
-_E = TypeVar("_E", bound="_BonsaiEstimator")
 
 
 # Shared Base ======================================================================================
@@ -93,7 +92,7 @@ class _BonsaiEstimator:
         """
         return {name: getattr(self, name) for name in _constructor_names(type(self))}
 
-    def set_params(self: _E, **params) -> _E:
+    def set_params(self, **params) -> Self:
         """Set constructor attributes in place.
 
         Part of the sklearn estimator contract.
@@ -179,14 +178,14 @@ class _BonsaiEstimator:
         )
 
     def fit(
-        self: _E,
+        self,
         X: npt.ArrayLike,
         y: npt.ArrayLike,
         sample_weight: npt.ArrayLike | None = None,
         eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None = None,
         init_model: str | None = None,
         feature_names: Sequence[str] | None = None,
-    ) -> _E:
+    ) -> Self:
         """Fit to training data.
 
         ``BonsaiClassifier`` reads its classes off ``y`` here and picks
@@ -383,7 +382,7 @@ class _BonsaiEstimator:
         self._fitted().save(path)
 
     @classmethod
-    def from_file(cls: type[_E], path: str) -> _E:
+    def from_file(cls, path: str) -> Self:
         """Load a fitted model from a saved ``.msgpack`` file.
 
         The loaded model carries its feature count and its column names, so
