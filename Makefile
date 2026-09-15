@@ -87,17 +87,20 @@ test-tsan: build-tsan $(TOY_SENTINEL)  ## Run the suite under ThreadSanitizer (L
 clean:  ## Remove build/, build-cuda/, and build-asan/.
 	@rm -rf build build-cuda build-asan
 
-format:  ## clang-format in place over src/, include/, tests/, benchmarks/.
-	@$(LLVM_BIN)/clang-format -i $(SOURCES)
-
-format-check:  ## Check formatting with clang-format --dry-run --Werror (CI gate).
-	@$(LLVM_BIN)/clang-format --dry-run --Werror $(SOURCES)
-
 # Ruff, pinned the way LLVM is: linter drift breaks CI, not the code.
 RUFF_VERSION := 0.15.21
+PYTHON_SOURCES := python scripts docs/hooks
 
-lint-python:  ## Run ruff over python/ and scripts/ (pinned via uvx).
-	@uvx ruff@$(RUFF_VERSION) check python scripts
+format:  ## clang-format the C++ tree and ruff format the Python tree, in place.
+	@$(LLVM_BIN)/clang-format -i $(SOURCES)
+	@uvx ruff@$(RUFF_VERSION) format $(PYTHON_SOURCES)
+
+format-check:  ## Check both formatters, clang-format --dry-run --Werror and ruff format --check (CI gate).
+	@$(LLVM_BIN)/clang-format --dry-run --Werror $(SOURCES)
+	@uvx ruff@$(RUFF_VERSION) format --check $(PYTHON_SOURCES)
+
+lint-python:  ## Run ruff check over the Python tree (pinned via uvx).
+	@uvx ruff@$(RUFF_VERSION) check $(PYTHON_SOURCES)
 
 # run-clang-tidy exits non-zero when findings exist; a non-zero exit with
 # no findings means the tool itself failed and must not pass silently.
