@@ -54,8 +54,10 @@ def _child_env() -> dict:
     if pp:
         env["PYTHONPATH"] = os.pathsep.join(
             os.path.join(_INVOKED_FROM, part) if part and not os.path.isabs(part) else part
-            for part in pp.split(os.pathsep))
+            for part in pp.split(os.pathsep)
+        )
     return env
+
 
 OPEN_RE = re.compile(r"^(\s*)(`{3,}|~{3,})\{([^}]*)\}\s*$")
 
@@ -105,8 +107,8 @@ def run_block(code: str) -> tuple[bool, str, float]:
         script.write_text(code + "\n")
         t0 = time.perf_counter()
         proc = subprocess.run(
-            [sys.executable, str(script)],
-            cwd=td, capture_output=True, text=True, env=_child_env())
+            [sys.executable, str(script)], cwd=td, capture_output=True, text=True, env=_child_env()
+        )
         dt = time.perf_counter() - t0
     ok = proc.returncode == 0
     return ok, proc.stderr.strip(), dt
@@ -140,8 +142,10 @@ def main() -> int:
                 print("     " + err.replace("\n", "\n     "))
 
     print()
-    print(f"docs-examples: {ran} blocks run in {total_time:.1f}s, "
-          f"{failures} failed, {skipped_gpu} gpu block(s) skipped")
+    print(
+        f"docs-examples: {ran} blocks run in {total_time:.1f}s, "
+        f"{failures} failed, {skipped_gpu} gpu block(s) skipped"
+    )
     return 1 if failures else 0
 
 

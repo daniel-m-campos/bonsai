@@ -58,16 +58,22 @@ def _run(args) -> int:
         resume = out
     host = runlog.detect_host(args.host_name)
     knobs = dict(spec.get("defaults", {}), num_leaves_convention="full")
-    return run_jobs(jobs, out=out, suite=spec.get("suite", spec["name"]),
-                    knobs=knobs, host=host,
-                    run_label=args.run_label or spec["name"],
-                    dry_run=args.dry_run, resume_path=resume,
-                    timeout_cap=(args.timeout_cap
-                                 if args.timeout_cap is not None
-                                 else spec.get("timeout_cap", 3600)),
-                    gates=spec.get("gates", {}),
-                    mem_sampler=not args.no_mem_sampler,
-                    data_cache=args.data_cache)
+    return run_jobs(
+        jobs,
+        out=out,
+        suite=spec.get("suite", spec["name"]),
+        knobs=knobs,
+        host=host,
+        run_label=args.run_label or spec["name"],
+        dry_run=args.dry_run,
+        resume_path=resume,
+        timeout_cap=(
+            args.timeout_cap if args.timeout_cap is not None else spec.get("timeout_cap", 3600)
+        ),
+        gates=spec.get("gates", {}),
+        mem_sampler=not args.no_mem_sampler,
+        data_cache=args.data_cache,
+    )
 
 
 def _default_out(spec: dict) -> str:
@@ -82,8 +88,7 @@ def _default_out(spec: dict) -> str:
 def _specs() -> int:
     for name in spec_mod.bundled_specs():
         s = spec_mod.load_spec(name)
-        print(f"{name:28} suite={s.get('suite', s['name'])} "
-              f"variants={len(s['variants'])}")
+        print(f"{name:28} suite={s.get('suite', s['name'])} variants={len(s['variants'])}")
     return 0
 
 
@@ -98,28 +103,29 @@ def _variants(args) -> int:
 
 def _worker() -> int:
     from bonsai.bench.runners import worker
+
     child = json.loads(sys.stdin.read())
     print("RESULT " + json.dumps(worker(child)), flush=True)
     return 0
 
 
 def _add_run_flags(p: argparse.ArgumentParser):
-    p.add_argument("--spec", default=None,
-                   help="JSON spec file, or a bundled name (see `specs`)")
+    p.add_argument("--spec", default=None, help="JSON spec file, or a bundled name (see `specs`)")
     p.add_argument("--out", default=None)
     p.add_argument("--run-label", default=None)
     p.add_argument("--host-name", default=None)
     p.add_argument("--variants", default=None)
     p.add_argument("--repeats", type=int, default=None)
     p.add_argument("--timeout-cap", type=int, default=None)
-    p.add_argument("--resume", default=None,
-                   help="jsonl of prior results (defaults to --out)")
+    p.add_argument("--resume", default=None, help="jsonl of prior results (defaults to --out)")
     p.add_argument("--no-resume", action="store_true")
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--no-mem-sampler", action="store_true",
-                   help="disable the device-memory sampler")
-    p.add_argument("--data-cache", default=None,
-                   help="directory for memoized gen_data arrays (pods: /dev/shm)")
+    p.add_argument(
+        "--no-mem-sampler", action="store_true", help="disable the device-memory sampler"
+    )
+    p.add_argument(
+        "--data-cache", default=None, help="directory for memoized gen_data arrays (pods: /dev/shm)"
+    )
 
 
 if __name__ == "__main__":

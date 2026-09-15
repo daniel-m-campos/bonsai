@@ -14,10 +14,18 @@ from bonsai.bench import synth
 # DATA_RECIPE records. The generator must stay byte-stable within a recipe
 # or every perf-division result loses comparability.
 GEN_DATA_GOLDENS = {
-    (10_000, 20, 42, 1000, 20): ["9bdbdb370123e008", "5384529fb415ba2e",
-                                 "d5cd6d231953154b", "f7729ed56e856d80"],
-    (5000, 7, 0, 500, 5): ["738b8194e1340bd1", "d81c920d666b38d2",
-                           "9d518cfe85657fa7", "ba65f8f194723fa6"],
+    (10_000, 20, 42, 1000, 20): [
+        "9bdbdb370123e008",
+        "5384529fb415ba2e",
+        "d5cd6d231953154b",
+        "f7729ed56e856d80",
+    ],
+    (5000, 7, 0, 500, 5): [
+        "738b8194e1340bd1",
+        "d81c920d666b38d2",
+        "9d518cfe85657fa7",
+        "ba65f8f194723fa6",
+    ],
 }
 
 # Bumped in the same commit as the goldens, always. A recipe change that
@@ -26,8 +34,7 @@ GOLDEN_RECIPE = 2
 
 
 def _digest(args) -> list[str]:
-    return [hashlib.sha256(a.tobytes()).hexdigest()[:16]
-            for a in synth.gen_data(*args)]
+    return [hashlib.sha256(a.tobytes()).hexdigest()[:16] for a in synth.gen_data(*args)]
 
 
 def test_gen_data_bytestable():
@@ -43,8 +50,7 @@ def test_the_goldens_name_the_recipe_they_were_taken_under():
 
 
 @pytest.mark.parametrize("workers", [1, 2, 3, 7, 64])
-def test_the_data_does_not_depend_on_how_many_threads_draw_it(monkeypatch,
-                                                              workers):
+def test_the_data_does_not_depend_on_how_many_threads_draw_it(monkeypatch, workers):
     """The block count is the contract; the worker count is scheduling.
 
     If these ever diverge, a 27-core pod and a 128-core pod generate

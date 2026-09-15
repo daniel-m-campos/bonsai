@@ -58,16 +58,31 @@ REGISTRY = {v.name: v for v in _TABLE}
 _BY_ALIAS = {a: v for v in _TABLE for a in v.aliases}
 
 # Per-suite membership, in each suite's historical order and spelling.
-SCALING = ("bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
-           "bonsai_cuda_depthwise", "bonsai_cuda_levelwise", "xgb_hist",
-           "xgb_cuda", "lgbm_cpu", "lgbm_cuda", "catboost_cpu", "catboost_gpu")
+SCALING = (
+    "bonsai_depthwise",
+    "bonsai_leafwise",
+    "bonsai_levelwise",
+    "bonsai_cuda_depthwise",
+    "bonsai_cuda_levelwise",
+    "xgb_hist",
+    "xgb_cuda",
+    "lgbm_cpu",
+    "lgbm_cuda",
+    "catboost_cpu",
+    "catboost_gpu",
+)
 GRINSZTAJN = ("bonsai_dw", "bonsai_lw", "bonsai_obl", "xgb", "lgbm", "catboost")
 # The device sweep of the same suite: every library on its GPU build, so
 # the device standings rank like for like and each arm has one CPU
 # partner (same position in GRINSZTAJN) to be read against.
-GRINSZTAJN_CUDA = ("bonsai_cuda_depthwise", "bonsai_cuda_leafwise",
-                   "bonsai_cuda_levelwise", "xgb_cuda", "lgbm_cuda",
-                   "catboost_gpu")
+GRINSZTAJN_CUDA = (
+    "bonsai_cuda_depthwise",
+    "bonsai_cuda_leafwise",
+    "bonsai_cuda_levelwise",
+    "xgb_cuda",
+    "lgbm_cuda",
+    "catboost_gpu",
+)
 # The leaf-capped regime: only the learners a leaf count alone can cap,
 # bonsai's leafwise grower and lightgbm, head to head on each device.
 GRINSZTAJN_LEAF_CAPPED = ("bonsai_lw", "lgbm")

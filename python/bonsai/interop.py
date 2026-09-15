@@ -47,6 +47,7 @@ UNCAPPED_DEPTH: Final = 255
 
 # Mapping Table ====================================================================================
 
+
 class _Values:
     """A closed value table for one knob, translated both ways.
 
@@ -119,10 +120,15 @@ class _Knob:
         explicitly translated key.
     """
 
-    def __init__(self, native: str, *spellings: str, values: _Values | None = None,
-                 to_native: Callable[[Any], Any] | None = None,
-                 to_foreign: Callable[[Any], Any] | None = None,
-                 implies: Mapping[str, Any] | None = None):
+    def __init__(
+        self,
+        native: str,
+        *spellings: str,
+        values: _Values | None = None,
+        to_native: Callable[[Any], Any] | None = None,
+        to_foreign: Callable[[Any], Any] | None = None,
+        implies: Mapping[str, Any] | None = None,
+    ):
         self.native = native
         self.spellings = spellings
         self.foreign = spellings[0]
@@ -181,24 +187,30 @@ _DROPPED_NATIVE_SHARED: Final = {
 
 # XGBoost ==========================================================================================
 
-_XGB_OBJECTIVES: Final = _Values("objective", {
-    "reg:squarederror": "mse",
-    "reg:linear": "mse",
-    "reg:absoluteerror": "mae",
-    "reg:quantileerror": "quantile",
-    # bonsai's huber is the exact Huber loss, not XGBoost's pseudo-Huber
-    # approximation: same shape, different curvature near the elbow.
-    "reg:pseudohubererror": "huber",
-    "count:poisson": "poisson",
-    "binary:logistic": "logloss",
-    "multi:softprob": "softmax",
-    "multi:softmax": "softmax",
-})
+_XGB_OBJECTIVES: Final = _Values(
+    "objective",
+    {
+        "reg:squarederror": "mse",
+        "reg:linear": "mse",
+        "reg:absoluteerror": "mae",
+        "reg:quantileerror": "quantile",
+        # bonsai's huber is the exact Huber loss, not XGBoost's pseudo-Huber
+        # approximation: same shape, different curvature near the elbow.
+        "reg:pseudohubererror": "huber",
+        "count:poisson": "poisson",
+        "binary:logistic": "logloss",
+        "multi:softprob": "softmax",
+        "multi:softmax": "softmax",
+    },
+)
 
-_XGB_GROW_POLICY: Final = _Policies("grow_policy", {
-    "depthwise": "depthwise",
-    "lossguide": "leafwise",
-})
+_XGB_GROW_POLICY: Final = _Policies(
+    "grow_policy",
+    {
+        "depthwise": "depthwise",
+        "lossguide": "leafwise",
+    },
+)
 
 _XGBOOST: Final = _Library(
     name="xgboost",
@@ -252,23 +264,26 @@ _XGBOOST: Final = _Library(
 
 # LightGBM =========================================================================================
 
-_LGBM_OBJECTIVES: Final = _Values("objective", {
-    "regression": "mse",
-    "regression_l2": "mse",
-    "l2": "mse",
-    "mean_squared_error": "mse",
-    "mse": "mse",
-    "regression_l1": "mae",
-    "l1": "mae",
-    "mean_absolute_error": "mae",
-    "mae": "mae",
-    "huber": "huber",
-    "quantile": "quantile",
-    "poisson": "poisson",
-    "binary": "logloss",
-    "multiclass": "softmax",
-    "softmax": "softmax",
-})
+_LGBM_OBJECTIVES: Final = _Values(
+    "objective",
+    {
+        "regression": "mse",
+        "regression_l2": "mse",
+        "l2": "mse",
+        "mean_squared_error": "mse",
+        "mse": "mse",
+        "regression_l1": "mae",
+        "l1": "mae",
+        "mean_absolute_error": "mae",
+        "mae": "mae",
+        "huber": "huber",
+        "quantile": "quantile",
+        "poisson": "poisson",
+        "binary": "logloss",
+        "multiclass": "softmax",
+        "softmax": "softmax",
+    },
+)
 
 
 def _lgbm_depth(value: Any) -> int:
@@ -281,8 +296,14 @@ _LIGHTGBM: Final = _Library(
     name="lightgbm",
     title="LightGBM",
     knobs=(
-        _Knob("booster.n_iters", "n_estimators", "num_iterations", "num_boost_round",
-              "num_round", "num_trees"),
+        _Knob(
+            "booster.n_iters",
+            "n_estimators",
+            "num_iterations",
+            "num_boost_round",
+            "num_round",
+            "num_trees",
+        ),
         _Knob("booster.learning_rate", "learning_rate", "shrinkage_rate", "eta"),
         # max_depth=-1 is LightGBM's uncapped growth. bonsai has no sentinel,
         # so it travels as UNCAPPED_DEPTH and num_leaves stays the binding
@@ -308,10 +329,8 @@ _LIGHTGBM: Final = _Library(
         _Knob("parallel.n_threads", "num_threads", "n_jobs", "nthread"),
         # LightGBM arms patience through a callback, not this key; the key
         # is accepted here because its params-dict spelling is documented.
-        _Knob("booster.early_stopping_rounds", "early_stopping_round",
-              "early_stopping_rounds"),
-        _Knob("dispatch.objective_name", "objective", "application",
-              values=_LGBM_OBJECTIVES),
+        _Knob("booster.early_stopping_rounds", "early_stopping_round", "early_stopping_rounds"),
+        _Knob("dispatch.objective_name", "objective", "application", values=_LGBM_OBJECTIVES),
         _Knob("objective.n_classes", "num_class", "num_classes"),
         _Knob("booster.dart_drop_rate", "drop_rate"),
         _Knob("tree.monotone_constraints", "monotone_constraints"),
@@ -343,19 +362,25 @@ _LIGHTGBM: Final = _Library(
 # dispatch.objective_name plus objective.huber_delta / objective.quantile_alpha.
 # RMSE maps to mse because both minimize squared error; only the reported
 # metric differs, and the root is monotone.
-_CATBOOST_OBJECTIVES: Final = _Values("loss_function", {
-    "RMSE": "mse",
-    "MAE": "mae",
-    "Poisson": "poisson",
-    "Logloss": "logloss",
-    "MultiClass": "softmax",
-})
+_CATBOOST_OBJECTIVES: Final = _Values(
+    "loss_function",
+    {
+        "RMSE": "mse",
+        "MAE": "mae",
+        "Poisson": "poisson",
+        "Logloss": "logloss",
+        "MultiClass": "softmax",
+    },
+)
 
-_CATBOOST_GROW_POLICY: Final = _Policies("grow_policy", {
-    "SymmetricTree": "levelwise",
-    "Depthwise": "depthwise",
-    "Lossguide": "leafwise",
-})
+_CATBOOST_GROW_POLICY: Final = _Policies(
+    "grow_policy",
+    {
+        "SymmetricTree": "levelwise",
+        "Depthwise": "depthwise",
+        "Lossguide": "leafwise",
+    },
+)
 
 _CATBOOST: Final = _Library(
     name="catboost",
@@ -372,8 +397,13 @@ _CATBOOST: Final = _Library(
         # The fencepost: border_count counts SPLITS where max_bin counts
         # BINS, so the two differ by one in every direction. Getting this
         # wrong shortchanged two published suites by a bin once.
-        _Knob("bin_mapper.max_bin", "border_count", "max_bin",
-              to_native=lambda v: int(v) + 1, to_foreign=lambda v: int(v) - 1),
+        _Knob(
+            "bin_mapper.max_bin",
+            "border_count",
+            "max_bin",
+            to_native=lambda v: int(v) + 1,
+            to_foreign=lambda v: int(v) - 1,
+        ),
         # rsm samples features per level, tree.feature_fraction per tree, so
         # the same fraction decorrelates differently.
         _Knob("tree.feature_fraction", "rsm", "colsample_bylevel"),
@@ -383,8 +413,7 @@ _CATBOOST: Final = _Library(
         # CatBoost's patience is od_wait under od_type="Iter"; the
         # constructor's early_stopping_rounds sets the same detector.
         _Knob("booster.early_stopping_rounds", "early_stopping_rounds", "od_wait"),
-        _Knob("dispatch.objective_name", "loss_function", "objective",
-              values=_CATBOOST_OBJECTIVES),
+        _Knob("dispatch.objective_name", "loss_function", "objective", values=_CATBOOST_OBJECTIVES),
         _Knob("objective.n_classes", "classes_count"),
         _Knob("dispatch.grower_name", "grow_policy", values=_CATBOOST_GROW_POLICY),
         _Knob("tree.monotone_constraints", "monotone_constraints"),
@@ -476,91 +505,97 @@ def _doc(template: str, lib: _Library, call: str, result: str, notes: str = "") 
     own example and translation notes."""
     if notes:
         notes = f"\n{notes}\n"
-    return template.format(title=lib.title, name=lib.name, notes=notes,
-                           call=call, result=result)
+    return template.format(title=lib.title, name=lib.name, notes=notes, call=call, result=result)
 
 
 # Public Functions =================================================================================
 
-def from_xgboost(params: Mapping[str, Any], *,
-                 strict: bool = True) -> Params:
+
+def from_xgboost(params: Mapping[str, Any], *, strict: bool = True) -> Params:
     return _from_library(_XGBOOST, params, strict)
 
 
 from_xgboost.__doc__ = _doc(
-    _FROM_DOC, _XGBOOST,
+    _FROM_DOC,
+    _XGBOOST,
     call='{"n_estimators": 300, "reg_lambda": 2.0}',
     result="Params(tree=Tree(lambda_l2=2.0), booster=Booster(n_iters=300))",
 )
 
 
-def from_lightgbm(params: Mapping[str, Any], *,
-                  strict: bool = True) -> Params:
+def from_lightgbm(params: Mapping[str, Any], *, strict: bool = True) -> Params:
     return _from_library(_LIGHTGBM, params, strict)
 
 
 from_lightgbm.__doc__ = _doc(
-    _FROM_DOC, _LIGHTGBM,
+    _FROM_DOC,
+    _LIGHTGBM,
     notes="``max_depth=-1`` (LightGBM's uncapped growth) becomes\n"
-          "``tree.max_depth = 255``: bonsai has no sentinel, and under leafwise\n"
-          "growth ``num_leaves`` is the binding budget either way.",
+    "``tree.max_depth = 255``: bonsai has no sentinel, and under leafwise\n"
+    "growth ``num_leaves`` is the binding budget either way.",
     call='{"num_leaves": 63, "max_depth": -1}',
     result="Params(tree=Tree(max_depth=255, max_leaves=63))",
 )
 
 
-def from_catboost(params: Mapping[str, Any], *,
-                  strict: bool = True) -> Params:
+def from_catboost(params: Mapping[str, Any], *, strict: bool = True) -> Params:
     return _from_library(_CATBOOST, params, strict)
 
 
 from_catboost.__doc__ = _doc(
-    _FROM_DOC, _CATBOOST,
+    _FROM_DOC,
+    _CATBOOST,
     notes="``border_count`` counts splits where ``bin_mapper.max_bin`` counts bins,\n"
-          "so the value gains one crossing over. CatBoost's parametrized losses\n"
-          "(``Huber:delta=...``, ``Quantile:alpha=...``) raise: set\n"
-          "``dispatch.objective_name`` and the loss parameter by hand.",
+    "so the value gains one crossing over. CatBoost's parametrized losses\n"
+    "(``Huber:delta=...``, ``Quantile:alpha=...``) raise: set\n"
+    "``dispatch.objective_name`` and the loss parameter by hand.",
     call='{"depth": 6, "border_count": 254}',
     result="Params(bin_mapper=BinMapper(max_bin=255), tree=Tree(max_depth=6))",
 )
 
 
-def to_xgboost(pairs: ParamsOps | Iterable[tuple[str, Any]], *,
-               strict: bool = True) -> dict[str, Any]:
+def to_xgboost(
+    pairs: ParamsOps | Iterable[tuple[str, Any]], *, strict: bool = True
+) -> dict[str, Any]:
     return _to_library(_XGBOOST, pairs, strict)
 
 
 to_xgboost.__doc__ = _doc(
-    _TO_DOC, _XGBOOST,
+    _TO_DOC,
+    _XGBOOST,
     notes="bonsai's ``levelwise`` grower has no XGBoost policy and raises.",
     call='[("tree.lambda_l2", 2.0)]',
     result="{'reg_lambda': 2.0}",
 )
 
 
-def to_lightgbm(pairs: ParamsOps | Iterable[tuple[str, Any]], *,
-                strict: bool = True) -> dict[str, Any]:
+def to_lightgbm(
+    pairs: ParamsOps | Iterable[tuple[str, Any]], *, strict: bool = True
+) -> dict[str, Any]:
     return _to_library(_LIGHTGBM, pairs, strict)
 
 
 to_lightgbm.__doc__ = _doc(
-    _TO_DOC, _LIGHTGBM,
+    _TO_DOC,
+    _LIGHTGBM,
     call='[("tree.max_leaves", 63)]',
     result="{'num_leaves': 63}",
 )
 
 
-def to_catboost(pairs: ParamsOps | Iterable[tuple[str, Any]], *,
-                strict: bool = True) -> dict[str, Any]:
+def to_catboost(
+    pairs: ParamsOps | Iterable[tuple[str, Any]], *, strict: bool = True
+) -> dict[str, Any]:
     return _to_library(_CATBOOST, pairs, strict)
 
 
 to_catboost.__doc__ = _doc(
-    _TO_DOC, _CATBOOST,
+    _TO_DOC,
+    _CATBOOST,
     notes="``bin_mapper.max_bin`` loses one crossing over: CatBoost's\n"
-          "``border_count`` counts splits, not bins. bonsai's ``huber`` and\n"
-          "``quantile`` objectives raise, since their CatBoost spellings carry a\n"
-          "parameter.",
+    "``border_count`` counts splits, not bins. bonsai's ``huber`` and\n"
+    "``quantile`` objectives raise, since their CatBoost spellings carry a\n"
+    "parameter.",
     call='[("bin_mapper.max_bin", 255)]',
     result="{'border_count': 254}",
 )
@@ -568,8 +603,8 @@ to_catboost.__doc__ = _doc(
 
 # Private Functions ================================================================================
 
-def _from_library(lib: _Library, params: Mapping[str, Any],
-                  strict: bool) -> Params:
+
+def _from_library(lib: _Library, params: Mapping[str, Any], strict: bool) -> Params:
     """Foreign dict to a ``Params``; the shared engine behind ``from_*``."""
     index = {spelling: knob for knob in lib.knobs for spelling in knob.spellings}
     implied: dict[str, Any] = {}
@@ -588,8 +623,9 @@ def _from_library(lib: _Library, params: Mapping[str, Any],
     return Params.from_dict({**implied, **mapped})
 
 
-def _to_library(lib: _Library, pairs: ParamsOps | Iterable[tuple[str, Any]],
-                strict: bool) -> dict[str, Any]:
+def _to_library(
+    lib: _Library, pairs: ParamsOps | Iterable[tuple[str, Any]], strict: bool
+) -> dict[str, Any]:
     """bonsai pairs to a foreign dict; the shared engine behind ``to_*``."""
     index = {knob.native: knob for knob in lib.knobs}
     out: dict[str, Any] = {}

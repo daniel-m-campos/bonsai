@@ -96,8 +96,14 @@ KEYWORDS: Final = frozenset(
     break continue self cls""".split()
 )
 SKIPPED_TOKENS: Final = frozenset(
-    {tokenize.NL, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING, tokenize.COMMENT,
-     tokenize.ENDMARKER}
+    {
+        tokenize.NL,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.ENCODING,
+        tokenize.COMMENT,
+        tokenize.ENDMARKER,
+    }
 )
 CLOSERS: Final = frozenset({")", "]", "}"})
 BELOW_SEAM: Final = frozenset({"cuda", "metal", "registry"})
@@ -186,19 +192,20 @@ def churn(before: dict[str, Reading], after: dict[str, Reading]):
 def main() -> int:
     """Entry point; exit 1 on a regression against the baseline."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--update-baseline", action="store_true",
-                        help="pin the current values as the new baseline")
+    parser.add_argument(
+        "--update-baseline", action="store_true", help="pin the current values as the new baseline"
+    )
     parser.add_argument("--root", type=pathlib.Path, default=ROOT)
-    parser.add_argument("--against", type=pathlib.Path,
-                        help="a second tree (an export of origin/main) whose readings "
-                             "to diff site by site")
+    parser.add_argument(
+        "--against",
+        type=pathlib.Path,
+        help="a second tree (an export of origin/main) whose readings to diff site by site",
+    )
     args = parser.parse_args()
 
     readings = measure(args.root)
     if args.update_baseline:
-        BASELINE.write_text(
-            json.dumps({k: r.value for k, r in readings.items()}, indent=2) + "\n"
-        )
+        BASELINE.write_text(json.dumps({k: r.value for k, r in readings.items()}, indent=2) + "\n")
         print(f"design-lint: baseline pinned to {BASELINE.relative_to(ROOT)}")
         return 0
     baseline = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
@@ -301,9 +308,7 @@ def _split_words(name: str) -> list[str]:
 
 
 def _vocabulary_singletons(headers: list[pathlib.Path]) -> Reading:
-    names = {
-        name for f in headers for line in _lines(f) if (name := _declared_name(line))
-    }
+    names = {name for f in headers for line in _lines(f) if (name := _declared_name(line))}
     counts: collections.Counter[str] = collections.Counter()
     for name in names:
         counts.update(_split_words(name))

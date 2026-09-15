@@ -20,6 +20,7 @@ def test_metrics_against_sklearn():
         r2_score,
         roc_auc_score,
     )
+
     assert abs(metrics.r2(y, pred) - r2_score(y, pred)) < 1e-12
     assert abs(metrics.rmse(y, pred) - mean_squared_error(y, pred) ** 0.5) < 1e-12
     assert abs(metrics.mae(y, pred) - mean_absolute_error(y, pred)) < 1e-12
@@ -27,6 +28,7 @@ def test_metrics_against_sklearn():
     # the numpy fallback must agree with sklearn, including under ties
     tied = np.round(scores, 1)
     import unittest.mock as mock
+
     with mock.patch.dict(sys.modules, {"sklearn.metrics": None, "sklearn": None}):
         fallback = metrics.auc(yb, tied)
     assert abs(fallback - roc_auc_score(yb, tied)) < 1e-12

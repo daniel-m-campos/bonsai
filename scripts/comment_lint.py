@@ -53,15 +53,38 @@ DIGIT = re.compile(r"\d")
 
 # A sync comment must name one of these, and the file must really use it.
 SYNC_VOCAB = (
-    "for_each_index", "parallel::", "pragma omp", "call_once", "once_flag",
-    "atomic", "mutex", "lock", "thread", "cudaSetDevice", "cudaStream",
-    "cudaEvent", "cudaMemcpy", "Async", "__syncthreads", "fence", "barrier",
+    "for_each_index",
+    "parallel::",
+    "pragma omp",
+    "call_once",
+    "once_flag",
+    "atomic",
+    "mutex",
+    "lock",
+    "thread",
+    "cudaSetDevice",
+    "cudaStream",
+    "cudaEvent",
+    "cudaMemcpy",
+    "Async",
+    "__syncthreads",
+    "fence",
+    "barrier",
     "gil",
 )
 
 # An ffi comment must name one of these, and only src/python/ may carry one.
-FFI_VOCAB = ("nb::", "capsule", "gil", "PyObject", "DLPack", "keep_alive",
-             "NB_MODULE", "dlpack", "__dlpack__")
+FFI_VOCAB = (
+    "nb::",
+    "capsule",
+    "gil",
+    "PyObject",
+    "DLPack",
+    "keep_alive",
+    "NB_MODULE",
+    "dlpack",
+    "__dlpack__",
+)
 
 
 def block_findings(path: pathlib.Path) -> list[tuple[int, str]]:
@@ -78,8 +101,7 @@ def block_findings(path: pathlib.Path) -> list[tuple[int, str]]:
         One entry per offending comment, the line number being 1-based.
     """
     lines = path.read_text().splitlines()
-    code_text = "\n".join(ln for ln in lines
-                          if not ln.strip().startswith("//"))
+    code_text = "\n".join(ln for ln in lines if not ln.strip().startswith("//"))
     block_end = dict(_comment_blocks(lines))
     findings: list[tuple[int, str]] = []
     i = 0
@@ -120,8 +142,11 @@ def _block_findings(
     """Judge one run of whole-line comments against the policy."""
     block = [lines[k].strip() for k in range(start, end)]
     if not _is_tagged(block[0]):
-        return [(k + 1, lines[k].strip()[:80]) for k in range(start, end)
-                if not STRUCTURAL.search(lines[k].strip())]
+        return [
+            (k + 1, lines[k].strip()[:80])
+            for k in range(start, end)
+            if not STRUCTURAL.search(lines[k].strip())
+        ]
     declaration = lines[end] if end < len(lines) else ""
     message = _tag_violation(block, declaration, path, code_text)
     return [(start + 1, message)] if message else []
@@ -143,20 +168,16 @@ def _tag_violation(
     if PERF.match(first):
         if any(DIGIT.search(b) for b in [*block, declaration]):
             return None
-        return ("perf: carries no number, so it is"
-                f" not a measurement: {first[:52]}")
+        return f"perf: carries no number, so it is not a measurement: {first[:52]}"
     if SYNC.match(first):
         if _names(block, code_text, SYNC_VOCAB):
             return None
-        return ("sync: names no construct this file"
-                f" uses: {first[:56]}")
+        return f"sync: names no construct this file uses: {first[:56]}"
     if not _under_src_python(path):
-        return ("ffi: only src/python/ may carry"
-                f" this tag: {first[:56]}")
+        return f"ffi: only src/python/ may carry this tag: {first[:56]}"
     if _names(block, code_text, FFI_VOCAB):
         return None
-    return ("ffi: names no boundary construct"
-            f" this file uses: {first[:56]}")
+    return f"ffi: names no boundary construct this file uses: {first[:56]}"
 
 
 def _under_src_python(path: pathlib.Path) -> bool:
@@ -210,7 +231,7 @@ def _split_at_comment(raw: str) -> tuple[str, str] | None:
         elif c in "\"'":
             quote = c
         elif raw.startswith("//", i):
-            return raw[:i], raw[i + 2:]
+            return raw[:i], raw[i + 2 :]
         i += 1
     return None
 

@@ -31,6 +31,7 @@ CGROUP_V1_MEMORY_LIMIT = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
 # word, so any limit at or above this one is no limit at all.
 CGROUP_V1_MEMORY_UNLIMITED = 2**62
 
+
 class Row:
     """Field names shared by the result rows every suite emits."""
 
@@ -73,8 +74,9 @@ def git_sha() -> str:
     if stated:
         return stated
     try:
-        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True, timeout=10)
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=10
+        )
         return out.stdout.strip() or "unknown"
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return "unknown"
@@ -119,8 +121,7 @@ def cpu_quota() -> float | None:
         Cores the cgroup allows, or None on a host neither mechanism caps
         (bare metal, or macOS, where the controller files do not exist).
     """
-    caps = [cap for cap in (_cfs_quota_cores(), _cpuset_cores())
-            if cap is not None]
+    caps = [cap for cap in (_cfs_quota_cores(), _cpuset_cores()) if cap is not None]
     return min(caps) if caps else None
 
 
@@ -169,25 +170,32 @@ def detect_host(name: str | None = None) -> dict:
     """
     gpu, vram = None, None
     try:
-        out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total",
-                              "--format=csv,noheader,nounits"],
-                             capture_output=True, text=True, timeout=10)
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
         if out.returncode == 0 and out.stdout.strip():
             gpu, vram = _gpu_name_and_vram_gb(out.stdout.strip().splitlines()[0])
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     driver = None
     try:
-        out = subprocess.run(["nvidia-smi", "--query-gpu=driver_version",
-                              "--format=csv,noheader"],
-                             capture_output=True, text=True, timeout=10)
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
         if out.returncode == 0 and out.stdout.strip():
             driver = out.stdout.strip().splitlines()[0].strip()
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     if sys.platform == "darwin":
-        cpu = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
-                             capture_output=True, text=True).stdout.strip()
+        cpu = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True
+        ).stdout.strip()
     else:
         cpu = ""
         for line in pathlib.Path("/proc/cpuinfo").read_text().splitlines():
@@ -195,24 +203,38 @@ def detect_host(name: str | None = None) -> dict:
                 cpu = line.split(":", 1)[1].strip()
                 break
     ram = usable_ram_gb()
-    return {"name": name or platform.node(), "gpu": gpu, "driver": driver,
-            "gpu_vram_gb": vram, "cpu_model": cpu, "n_vcpu": usable_cpus(),
-            "cpu_quota": cpu_quota(),
-            "omp_wait_policy": os.environ.get("OMP_WAIT_POLICY"),
-            "ram_gb": ram, "os": platform.platform(),
-            "python": platform.python_version(), "libs": lib_versions()}
+    return {
+        "name": name or platform.node(),
+        "gpu": gpu,
+        "driver": driver,
+        "gpu_vram_gb": vram,
+        "cpu_model": cpu,
+        "n_vcpu": usable_cpus(),
+        "cpu_quota": cpu_quota(),
+        "omp_wait_policy": os.environ.get("OMP_WAIT_POLICY"),
+        "ram_gb": ram,
+        "os": platform.platform(),
+        "python": platform.python_version(),
+        "libs": lib_versions(),
+    }
 
 
-def emit_row(path: str | pathlib.Path, *, division: str, suite: str,
-             knobs: dict | None = None, host: dict | None = None,
-             timing_mode: str | None = None, **fields) -> dict:
+def emit_row(
+    path: str | pathlib.Path,
+    *,
+    division: str,
+    suite: str,
+    knobs: dict | None = None,
+    host: dict | None = None,
+    timing_mode: str | None = None,
+    **fields,
+) -> dict:
     """Append one schema-v1 row; returns the row. Extra keyword fields pass
     through verbatim so suite-specific columns (cell, kind, ...) survive."""
     if division not in DIVISIONS:
         raise ValueError(f"unknown division {division!r} (known: {DIVISIONS})")
     if timing_mode is not None and timing_mode not in TIMING_MODES:
-        raise ValueError(
-            f"unknown timing_mode {timing_mode!r} (known: {TIMING_MODES})")
+        raise ValueError(f"unknown timing_mode {timing_mode!r} (known: {TIMING_MODES})")
     row = {
         "schema": SCHEMA_VERSION,
         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -238,6 +260,7 @@ def emit_row(path: str | pathlib.Path, *, division: str, suite: str,
 def peak_rss_gb() -> float:
     """This process's peak RSS. ru_maxrss: bytes on macOS, KiB on Linux."""
     import resource
+
     ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return round(ru / (2**30 if sys.platform == "darwin" else 2**20), 2)
 
@@ -257,6 +280,7 @@ def repo_root() -> pathlib.Path | None:
 
 
 # Private Functions ================================================================================
+
 
 def _gpu_name_and_vram_gb(smi_line: str) -> tuple[str, float | None]:
     """Parse one ``name,memory.total`` line from nvidia-smi.
@@ -311,7 +335,6 @@ def _cgroup_memory_limit_bytes() -> int | None:
 def _machine_ram_bytes() -> int:
     """Physical RAM the machine owns, container limits ignored."""
     if sys.platform == "darwin":
-        out = subprocess.run(["sysctl", "-n", "hw.memsize"],
-                             capture_output=True, text=True).stdout
+        out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True).stdout
         return int(out.strip())
     return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")

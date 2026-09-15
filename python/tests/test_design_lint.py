@@ -11,13 +11,15 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import design_lint  # noqa: E402
 
 TABLE = "".join(f'    "key{i}": "value{i}",\n' for i in range(12))
-BLOCK = ("def walk(items):\n"
-         "    total = 0\n"
-         "    for item in items:\n"
-         "        if item.weight > LIMIT:\n"
-         "            continue\n"
-         "        total += item.weight * item.count\n"
-         "    return total\n")
+BLOCK = (
+    "def walk(items):\n"
+    "    total = 0\n"
+    "    for item in items:\n"
+    "        if item.weight > LIMIT:\n"
+    "            continue\n"
+    "        total += item.weight * item.count\n"
+    "    return total\n"
+)
 
 
 def _tree(tmp_path: pathlib.Path, files: dict[str, str]) -> pathlib.Path:
@@ -44,10 +46,13 @@ def test_a_literal_only_row_sits_outside_the_narrative():
 def test_clone_windows_count_copied_code_and_not_a_shared_table(tmp_path):
     """The same twelve-row table in two files is data; the same seven-line
     function in two files is the one clone the metric reports."""
-    root = _tree(tmp_path, {
-        "python/bonsai/a.py": f"A = {{\n{TABLE}}}\n\n{BLOCK}",
-        "python/bonsai/b.py": f"B = {{\n{TABLE}}}\n\n{BLOCK}",
-    })
+    root = _tree(
+        tmp_path,
+        {
+            "python/bonsai/a.py": f"A = {{\n{TABLE}}}\n\n{BLOCK}",
+            "python/bonsai/b.py": f"B = {{\n{TABLE}}}\n\n{BLOCK}",
+        },
+    )
     files = design_lint._production_files(root)
 
     reading = design_lint._clone_windows(files, root, blind_to_identifiers=False)
@@ -58,37 +63,55 @@ def test_clone_windows_count_copied_code_and_not_a_shared_table(tmp_path):
 def test_production_files_reach_scripts_and_skip_the_rest(tmp_path):
     """The gate scripts are production code the ratchet reads; generated
     files, build trees, shell, and docs are not."""
-    root = _tree(tmp_path, {
-        "include/a.hpp": "", "src/b.cpp": "", "python/bonsai/c.py": "",
-        "python/bonsai/_params.py": "", "scripts/d.py": "",
-        "scripts/e.sh": "", "scripts/build/f.py": "", "docs/g.py": "",
-        "python/tests/h.py": "",
-    })
+    root = _tree(
+        tmp_path,
+        {
+            "include/a.hpp": "",
+            "src/b.cpp": "",
+            "python/bonsai/c.py": "",
+            "python/bonsai/_params.py": "",
+            "scripts/d.py": "",
+            "scripts/e.sh": "",
+            "scripts/build/f.py": "",
+            "docs/g.py": "",
+            "python/tests/h.py": "",
+        },
+    )
 
     assert [str(f.relative_to(root)) for f in design_lint._production_files(root)] == [
-        "include/a.hpp", "python/bonsai/c.py", "scripts/d.py", "src/b.cpp"]
+        "include/a.hpp",
+        "python/bonsai/c.py",
+        "scripts/d.py",
+        "src/b.cpp",
+    ]
 
 
-CALL_ONE_LINE = ("def build(rows):\n"
-                 "    total = rows.sum()\n"
-                 "    panel = Panel(rows, total, weight=rows.weight, count=rows.count)\n"
-                 "    panel.close()\n"
-                 "    if panel.empty:\n"
-                 "        return None\n"
-                 "    return panel\n")
+CALL_ONE_LINE = (
+    "def build(rows):\n"
+    "    total = rows.sum()\n"
+    "    panel = Panel(rows, total, weight=rows.weight, count=rows.count)\n"
+    "    panel.close()\n"
+    "    if panel.empty:\n"
+    "        return None\n"
+    "    return panel\n"
+)
 CALL_WRAPPED = CALL_ONE_LINE.replace(
     "Panel(rows, total, weight=rows.weight, count=rows.count)",
     "Panel(\n        rows,\n        total,\n        weight=rows.weight,\n"
-    "        count=rows.count,\n    )")
+    "        count=rows.count,\n    )",
+)
 
 
 def test_clone_windows_read_a_python_call_the_same_however_it_wraps(tmp_path):
     """The same function with its call on one line and one argument per line
     is one clone, counted once, so a formatter cannot move the number."""
-    root = _tree(tmp_path, {
-        "python/bonsai/a.py": CALL_ONE_LINE,
-        "python/bonsai/b.py": CALL_WRAPPED,
-    })
+    root = _tree(
+        tmp_path,
+        {
+            "python/bonsai/a.py": CALL_ONE_LINE,
+            "python/bonsai/b.py": CALL_WRAPPED,
+        },
+    )
     files = design_lint._production_files(root)
 
     reading = design_lint._clone_windows(files, root, blind_to_identifiers=False)

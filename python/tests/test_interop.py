@@ -9,21 +9,24 @@ from bonsai.params import Params
 
 # from_xgboost =====================================================================================
 
+
 def test_from_xgboost_translates_the_canonical_call():
-    out = interop.from_xgboost({
-        "n_estimators": 80,
-        "learning_rate": 0.1,
-        "max_depth": 4,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "min_child_weight": 1.0,
-        "gamma": 0.0,
-        "reg_lambda": 1.0,
-        "objective": "reg:squarederror",
-        "random_state": 0,
-        "n_jobs": 2,
-        "early_stopping_rounds": 10,
-    }).to_dict()
+    out = interop.from_xgboost(
+        {
+            "n_estimators": 80,
+            "learning_rate": 0.1,
+            "max_depth": 4,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "min_child_weight": 1.0,
+            "gamma": 0.0,
+            "reg_lambda": 1.0,
+            "objective": "reg:squarederror",
+            "random_state": 0,
+            "n_jobs": 2,
+            "early_stopping_rounds": 10,
+        }
+    ).to_dict()
     assert out == {
         "booster.n_iters": 80,
         "booster.learning_rate": 0.1,
@@ -55,8 +58,7 @@ def test_from_xgboost_strict_names_every_unmappable_key():
 
 
 def test_from_xgboost_lenient_drops_unmappable_keys():
-    p = interop.from_xgboost({"colsample_bylevel": 0.5, "max_depth": 4},
-                             strict=False)
+    p = interop.from_xgboost({"colsample_bylevel": 0.5, "max_depth": 4}, strict=False)
     assert p.to_dict() == {"tree.max_depth": 4}
 
 
@@ -78,6 +80,7 @@ def test_from_xgboost_accepts_the_booster_api_aliases():
 
 # from_lightgbm ====================================================================================
 
+
 def test_from_lightgbm_maps_uncapped_depth_to_the_leaf_budget():
     out = interop.from_lightgbm({"max_depth": -1, "num_leaves": 63}).to_dict()
     assert out["tree.max_depth"] == interop.UNCAPPED_DEPTH
@@ -89,9 +92,13 @@ def test_from_lightgbm_keeps_a_positive_depth_cap():
 
 
 def test_from_lightgbm_accepts_the_documented_aliases():
-    assert interop.from_lightgbm({
-        "num_iterations": 100, "min_child_samples": 20, "bagging_fraction": 0.5,
-    }).to_dict() == {
+    assert interop.from_lightgbm(
+        {
+            "num_iterations": 100,
+            "min_child_samples": 20,
+            "bagging_fraction": 0.5,
+        }
+    ).to_dict() == {
         "booster.n_iters": 100,
         "tree.min_data_in_leaf": 20,
         "sampler.subsample": 0.5,
@@ -114,10 +121,9 @@ def test_from_lightgbm_drops_the_overloaded_alpha():
 
 # from_catboost ====================================================================================
 
+
 def test_from_catboost_adds_the_border_fencepost():
-    assert interop.from_catboost({"border_count": 254}).to_dict() == {
-        "bin_mapper.max_bin": 255
-    }
+    assert interop.from_catboost({"border_count": 254}).to_dict() == {"bin_mapper.max_bin": 255}
 
 
 def test_from_catboost_translates_the_grow_policy():
@@ -137,6 +143,7 @@ def test_from_catboost_drops_the_best_model_flag():
 
 # to_xgboost =======================================================================================
 
+
 def test_to_xgboost_keeps_value_types():
     out = interop.to_xgboost({"tree.lambda_l2": 2.0, "booster.n_iters": 200})
     assert out == {"reg_lambda": 2.0, "n_estimators": 200}
@@ -145,6 +152,7 @@ def test_to_xgboost_keeps_value_types():
 def test_to_xgboost_accepts_params():
     """A Params renders to the same foreign dict as the equivalent pairs."""
     from bonsai.params import Params
+
     pairs = {"tree.lambda_l2": 2.0, "booster.n_iters": 200}
     assert interop.to_xgboost(Params.from_dict(dict(pairs))) == interop.to_xgboost(pairs)
 
@@ -154,9 +162,12 @@ def test_to_xgboost_picks_one_spelling_per_key():
 
 
 def test_to_xgboost_drops_the_implied_sampler():
-    assert interop.to_xgboost([
-        ("sampler.subsample", 0.8), ("dispatch.sampler_name", "bernoulli"),
-    ]) == {"subsample": 0.8}
+    assert interop.to_xgboost(
+        [
+            ("sampler.subsample", 0.8),
+            ("dispatch.sampler_name", "bernoulli"),
+        ]
+    ) == {"subsample": 0.8}
 
 
 def test_to_xgboost_strict_names_every_unmappable_key():
@@ -171,12 +182,19 @@ def test_to_xgboost_rejects_the_levelwise_grower():
 
 # to_lightgbm ======================================================================================
 
+
 def test_to_lightgbm_uses_the_canonical_names():
-    assert interop.to_lightgbm([
-        ("tree.max_leaves", 63), ("tree.lambda_l2", 1.0),
-        ("tree.min_data_in_leaf", 20), ("bin_mapper.max_bin", 255),
-    ]) == {
-        "num_leaves": 63, "lambda_l2": 1.0, "min_data_in_leaf": 20,
+    assert interop.to_lightgbm(
+        [
+            ("tree.max_leaves", 63),
+            ("tree.lambda_l2", 1.0),
+            ("tree.min_data_in_leaf", 20),
+            ("bin_mapper.max_bin", 255),
+        ]
+    ) == {
+        "num_leaves": 63,
+        "lambda_l2": 1.0,
+        "min_data_in_leaf": 20,
         "max_bin": 255,
     }
 
@@ -187,10 +205,9 @@ def test_to_lightgbm_drops_the_grower_name():
 
 # to_catboost ======================================================================================
 
+
 def test_to_catboost_subtracts_the_border_fencepost():
-    assert interop.to_catboost({"bin_mapper.max_bin": 255}) == {
-        "border_count": 254
-    }
+    assert interop.to_catboost({"bin_mapper.max_bin": 255}) == {"border_count": 254}
 
 
 def test_to_catboost_maps_a_cuda_grower_to_its_growth_policy():
@@ -201,10 +218,14 @@ def test_to_catboost_maps_a_cuda_grower_to_its_growth_policy():
 
 # round trips ======================================================================================
 
+
 def test_round_trip_preserves_the_shared_knobs():
     original = {
-        "learning_rate": 0.05, "max_depth": 6, "reg_lambda": 1.0,
-        "max_bin": 255, "seed": 42,
+        "learning_rate": 0.05,
+        "max_depth": 6,
+        "reg_lambda": 1.0,
+        "max_bin": 255,
+        "seed": 42,
     }
     p = interop.from_xgboost(original)
     assert interop.to_xgboost(p) == original

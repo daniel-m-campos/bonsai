@@ -32,11 +32,17 @@ def _prelude() -> dict:
     return {
         # Docs conventionally import once in the first fence; later fences
         # are fragments that assume it.
-        "bonsai": bonsai, "np": np,
-        "X": X, "y": y,
-        "X_train": X[:half], "y_train": y[:half],
-        "X_valid": X[half:], "y_valid": y[half:],
-        "X_test": X[half:], "Xv": X[half:], "yv": y[half:],
+        "bonsai": bonsai,
+        "np": np,
+        "X": X,
+        "y": y,
+        "X_train": X[:half],
+        "y_train": y[:half],
+        "X_valid": X[half:],
+        "y_valid": y[half:],
+        "X_test": X[half:],
+        "Xv": X[half:],
+        "yv": y[half:],
         "w": np.ones(half, dtype=np.float32),
         "grid": [
             {"booster.n_iters": "5"},
@@ -69,4 +75,3 @@ def test_doc_python_snippets():
                     os.chdir(cwd)
             total += 1
     print(f"doc snippets: {total} python fences executed across {len(DOCS)} files")
-

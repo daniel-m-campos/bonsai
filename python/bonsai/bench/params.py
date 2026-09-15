@@ -22,12 +22,10 @@ from bonsai.params import Params
 
 # The campaign regime: quality-division suites (Grinsztajn standings, the
 # internal smoke campaign, admission-gate probes). Decisions 56 and 68.
-CAMPAIGN = dict(iters=200, lr=0.05, depth=6, bins=255, min_data_in_leaf=20,
-                lambda_l2=1.0, seed=42)
+CAMPAIGN = dict(iters=200, lr=0.05, depth=6, bins=255, min_data_in_leaf=20, lambda_l2=1.0, seed=42)
 
 # The scale regime: perf-division synthetic sweeps. Decision 46.
-SCALING = dict(iters=100, lr=0.1, depth=8, bins=255, min_data_in_leaf=20,
-               lambda_l2=1.0, seed=42)
+SCALING = dict(iters=100, lr=0.1, depth=8, bins=255, min_data_in_leaf=20, lambda_l2=1.0, seed=42)
 
 # The early-stopping regime, layered on SCALING for the time-to-stop arm: a
 # cap high enough that the valid set, not the cap, ends the fit, a patience
@@ -40,11 +38,13 @@ EARLY_STOP = dict(iters=2000, lr=0.05, patience=50, eval_frac=0.1)
 # bonsai dotted keys for the campaign regime (the estimator kwargs carry the
 # rest); used by quality suites and probes. Values come from CAMPAIGN, keys
 # are validated against the registry, so neither can drift alone.
-BONSAI_CAMPAIGN_PARAMS = Params.from_dict({
-    "tree.min_data_in_leaf": CAMPAIGN["min_data_in_leaf"],
-    "tree.lambda_l2": CAMPAIGN["lambda_l2"],
-    "bin_mapper.max_bin": CAMPAIGN["bins"],
-}).to_dict()
+BONSAI_CAMPAIGN_PARAMS = Params.from_dict(
+    {
+        "tree.min_data_in_leaf": CAMPAIGN["min_data_in_leaf"],
+        "tree.lambda_l2": CAMPAIGN["lambda_l2"],
+        "bin_mapper.max_bin": CAMPAIGN["bins"],
+    }
+).to_dict()
 
 
 def num_leaves_campaign(depth: int) -> int:
@@ -79,14 +79,24 @@ def knobs_of(cell: dict) -> dict:
     them do not, and their rows were measured at the SCALING values, so that
     is what the fallback has to be.
     """
-    return {k: cell.get(k, SCALING[k])
-            for k in ("min_data_in_leaf", "lambda_l2")}
+    return {k: cell.get(k, SCALING[k]) for k in ("min_data_in_leaf", "lambda_l2")}
 
 
-def bonsai_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
-                lambda_l2, max_bin, seed, n_iters, n_threads, grower,
-                objective="mse",
-                early_stopping_rounds=0) -> list[tuple[str, str]]:
+def bonsai_core(
+    *,
+    learning_rate,
+    max_depth,
+    num_leaves,
+    min_data_in_leaf,
+    lambda_l2,
+    max_bin,
+    seed,
+    n_iters,
+    n_threads,
+    grower,
+    objective="mse",
+    early_stopping_rounds=0,
+) -> list[tuple[str, str]]:
     """Dotted-key pairs for bonsai.train, mirroring the reference mappings
     below so harnesses stop hand-building (and drifting) the pair list.
 
@@ -112,13 +122,11 @@ def bonsai_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
         ("parallel.n_threads", str(n_threads)),
     ]
     if early_stopping_rounds:
-        pairs.append(("booster.early_stopping_rounds",
-                      str(early_stopping_rounds)))
+        pairs.append(("booster.early_stopping_rounds", str(early_stopping_rounds)))
     return pairs
 
 
-def xgb_core(*, learning_rate, max_depth, min_data_in_leaf, lambda_l2, max_bin,
-             seed) -> dict:
+def xgb_core(*, learning_rate, max_depth, min_data_in_leaf, lambda_l2, max_bin, seed) -> dict:
     """xgboost params matched to the shared knob names.
 
     The campaign's row floor rides xgboost's hessian floor: bonsai's
@@ -129,34 +137,42 @@ def xgb_core(*, learning_rate, max_depth, min_data_in_leaf, lambda_l2, max_bin,
     false conclusion once. tree_method is the histogram method bonsai always
     uses, and has no bonsai key to be renamed from.
     """
-    core = interop.to_xgboost(Params.from_dict({
-        "booster.learning_rate": learning_rate,
-        "tree.max_depth": max_depth,
-        "tree.min_child_hess": min_data_in_leaf,
-        "tree.lambda_l2": lambda_l2,
-        "bin_mapper.max_bin": max_bin,
-        "booster.random_seed": seed,
-    }))
+    core = interop.to_xgboost(
+        Params.from_dict(
+            {
+                "booster.learning_rate": learning_rate,
+                "tree.max_depth": max_depth,
+                "tree.min_child_hess": min_data_in_leaf,
+                "tree.lambda_l2": lambda_l2,
+                "bin_mapper.max_bin": max_bin,
+                "booster.random_seed": seed,
+            }
+        )
+    )
     return {**core, "tree_method": "hist"}
 
 
-def lgbm_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
-              lambda_l2, max_bin, seed) -> dict:
+def lgbm_core(
+    *, learning_rate, max_depth, num_leaves, min_data_in_leaf, lambda_l2, max_bin, seed
+) -> dict:
     """lightgbm params matched to the shared knob names, silenced logs."""
-    core = interop.to_lightgbm(Params.from_dict({
-        "booster.learning_rate": learning_rate,
-        "tree.max_depth": max_depth,
-        "tree.max_leaves": num_leaves,
-        "tree.min_data_in_leaf": min_data_in_leaf,
-        "tree.lambda_l2": lambda_l2,
-        "bin_mapper.max_bin": max_bin,
-        "booster.random_seed": seed,
-    }))
+    core = interop.to_lightgbm(
+        Params.from_dict(
+            {
+                "booster.learning_rate": learning_rate,
+                "tree.max_depth": max_depth,
+                "tree.max_leaves": num_leaves,
+                "tree.min_data_in_leaf": min_data_in_leaf,
+                "tree.lambda_l2": lambda_l2,
+                "bin_mapper.max_bin": max_bin,
+                "booster.random_seed": seed,
+            }
+        )
+    )
     return {**core, "verbose": -1}
 
 
-def catboost_core(*, learning_rate, max_depth, lambda_l2, max_bin, seed,
-                  device) -> dict:
+def catboost_core(*, learning_rate, max_depth, lambda_l2, max_bin, seed, device) -> dict:
     """catboost params matched to the shared knob names.
 
     max_bin arrives in BIN semantics (what bonsai/xgboost/lightgbm count);
@@ -165,13 +181,17 @@ def catboost_core(*, learning_rate, max_depth, lambda_l2, max_bin, seed,
     translation stays here: GPU caps border_count at 254 (= 255 bins,
     matching the campaign/scale default exactly).
     """
-    core = interop.to_catboost(Params.from_dict({
-        "booster.learning_rate": learning_rate,
-        "tree.max_depth": max_depth,
-        "tree.lambda_l2": lambda_l2,
-        "bin_mapper.max_bin": max_bin,
-        "booster.random_seed": seed,
-    }))
+    core = interop.to_catboost(
+        Params.from_dict(
+            {
+                "booster.learning_rate": learning_rate,
+                "tree.max_depth": max_depth,
+                "tree.lambda_l2": lambda_l2,
+                "bin_mapper.max_bin": max_bin,
+                "booster.random_seed": seed,
+            }
+        )
+    )
     if device == Device.CUDA:
         core["border_count"] = min(core["border_count"], 254)
     return core

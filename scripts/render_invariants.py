@@ -78,12 +78,14 @@ def scan_tests() -> list[dict]:
                     if hit:
                         name = hit.group(1)
                         break
-                found.append({
-                    "id": m.group(1),
-                    "claim": " ".join(claim),
-                    "test": name,
-                    "path": path.relative_to(REPO).as_posix(),
-                })
+                found.append(
+                    {
+                        "id": m.group(1),
+                        "claim": " ".join(claim),
+                        "test": name,
+                        "path": path.relative_to(REPO).as_posix(),
+                    }
+                )
     return found
 
 
@@ -126,7 +128,8 @@ def render(entries: list[dict], residue: str) -> str:
         " Others are testable and simply are not marked yet, which makes"
         " this section the backlog: promoting one is writing its test and"
         " adding the marker. The `code:` lines name the source carrying"
-        " each claim, and docs-check fails when one stops resolving.")
+        " each claim, and docs-check fails when one stops resolving."
+    )
     out.append("")
     out.append(residue.strip())
     out.append("")

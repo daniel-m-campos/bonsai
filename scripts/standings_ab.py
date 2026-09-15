@@ -36,9 +36,16 @@ import sys
 # The standings-rows anchor knobs. Restated rather than loaded from the spec
 # because the old arm would load the wheel's copy of it; a drift guard lives
 # in python/tests/bench/test_runners.py.
-ANCHOR_KNOBS = {"lr": 0.1, "depth": 8, "bins": 255, "seed": 42,
-                "min_data_in_leaf": 20, "lambda_l2": 1.0, "informative": 20,
-                "n_test": 1000}
+ANCHOR_KNOBS = {
+    "lr": 0.1,
+    "depth": 8,
+    "bins": 255,
+    "seed": 42,
+    "min_data_in_leaf": 20,
+    "lambda_l2": 1.0,
+    "informative": 20,
+    "n_test": 1000,
+}
 
 
 def main() -> int:
@@ -49,32 +56,56 @@ def main() -> int:
     ap.add_argument("--arm", required=True)
     ap.add_argument("--iters", type=int, default=100)
     ap.add_argument("--threads", type=int, default=16)
-    ap.add_argument("--fused", action="store_true",
-                    help="fit through train(pairs, X, y) (parity arm)")
-    ap.add_argument("--skip-without-cuda", action="store_true",
-                    help="print a skipped row instead of failing off-GPU")
+    ap.add_argument(
+        "--fused", action="store_true", help="fit through train(pairs, X, y) (parity arm)"
+    )
+    ap.add_argument(
+        "--skip-without-cuda",
+        action="store_true",
+        help="print a skipped row instead of failing off-GPU",
+    )
     args = ap.parse_args()
 
     import bonsai
     from bonsai.bench import runners
 
-    if (args.skip_without_cuda and args.grower.startswith("cuda")
-            and not bonsai.cuda_available()):
-        print(json.dumps({"arm": args.arm, "grower": args.grower,
-                          "skipped": "no CUDA build or no visible device"}))
+    if args.skip_without_cuda and args.grower.startswith("cuda") and not bonsai.cuda_available():
+        print(
+            json.dumps(
+                {
+                    "arm": args.arm,
+                    "grower": args.grower,
+                    "skipped": "no CUDA build or no visible device",
+                }
+            )
+        )
         return 0
-    cell = dict(ANCHOR_KNOBS, rows=args.rows, cols=args.cols,
-                iters=args.iters)
-    out = runners.worker({"cell": cell, "variant": f"bonsai_{args.grower}",
-                          "threads": args.threads, "fused": args.fused})
-    print(json.dumps({"arm": args.arm, "rows": args.rows, "cols": args.cols,
-                      "grower": args.grower, "fit_s": out["fit_s"],
-                      "ingest_s": out.get("ingest_s"),
-                      "train_s": out.get("train_s"),
-                      "peak_rss_gb": out.get("peak_rss_gb"),
-                      "r2_test": out.get("r2_test"),
-                      "version": getattr(bonsai, "__version__", "source"),
-                      "module": bonsai.__file__}))
+    cell = dict(ANCHOR_KNOBS, rows=args.rows, cols=args.cols, iters=args.iters)
+    out = runners.worker(
+        {
+            "cell": cell,
+            "variant": f"bonsai_{args.grower}",
+            "threads": args.threads,
+            "fused": args.fused,
+        }
+    )
+    print(
+        json.dumps(
+            {
+                "arm": args.arm,
+                "rows": args.rows,
+                "cols": args.cols,
+                "grower": args.grower,
+                "fit_s": out["fit_s"],
+                "ingest_s": out.get("ingest_s"),
+                "train_s": out.get("train_s"),
+                "peak_rss_gb": out.get("peak_rss_gb"),
+                "r2_test": out.get("r2_test"),
+                "version": getattr(bonsai, "__version__", "source"),
+                "module": bonsai.__file__,
+            }
+        )
+    )
     return 0
 
 

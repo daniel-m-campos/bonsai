@@ -30,20 +30,29 @@ GPU_MAX_COLS = 16_384
 
 PROFILE_RE = re.compile(r"(\w+)=([\d.]+)s?(?![\w.])")
 
-PROFILE_PREFIXES = ("cuda-profile:", "grow-profile:", "ingest-profile:",
-                    "fit-profile:", "cuda-upload-decomp:", "cuda-round-decomp:",
-                    "cuda-level-decomp:", "cuda-part-decomp:")
+PROFILE_PREFIXES = (
+    "cuda-profile:",
+    "grow-profile:",
+    "ingest-profile:",
+    "fit-profile:",
+    "cuda-upload-decomp:",
+    "cuda-round-decomp:",
+    "cuda-level-decomp:",
+    "cuda-part-decomp:",
+)
 
 # Backtrace frames and the exit-time profiler lines print AFTER the actual
 # exception, so the last stderr line is usually noise; the campaign's first
 # OOM was classified "error" with a bare "[bt] (8) ..." message because of it.
-_NOISE_RE = re.compile(r"^\s*(\[bt\]|Stack trace|"
-                       + "|".join(re.escape(p) for p in PROFILE_PREFIXES) + ")")
+_NOISE_RE = re.compile(
+    r"^\s*(\[bt\]|Stack trace|" + "|".join(re.escape(p) for p in PROFILE_PREFIXES) + ")"
+)
 
 _GATE_KEYS = {"mem_gate", "gpu_max_cols"}
 
 
 # Public Functions =================================================================================
+
 
 def parse_profiles(stderr: str) -> dict:
     """The exit-time profiler lines as one flat {bucket_key: value} dict.
@@ -85,20 +94,28 @@ def timeout_for(cell: dict) -> int:
 def classify_error(message: str) -> str:
     """oom / unsupported / error, from keywords anywhere in the text."""
     low = message.lower()
-    if any(s in low for s in ("out of memory", "memoryerror", "bad_alloc",
-                              "cannot allocate", "oom",
-                              "cudaerrormemoryallocation")):
+    if any(
+        s in low
+        for s in (
+            "out of memory",
+            "memoryerror",
+            "bad_alloc",
+            "cannot allocate",
+            "oom",
+            "cudaerrormemoryallocation",
+        )
+    ):
         return "oom"
-    if any(s in low for s in ("unsupported", "max_bin", "border_count",
-                              "invalid parameter", "must be")):
+    if any(
+        s in low for s in ("unsupported", "max_bin", "border_count", "invalid parameter", "must be")
+    ):
         return "unsupported"
     return "error"
 
 
 def error_message(stderr: str) -> str:
     """The last non-noise stderr line, truncated for the row."""
-    lines = [ln for ln in stderr.strip().splitlines()
-             if ln.strip() and not _NOISE_RE.match(ln)]
+    lines = [ln for ln in stderr.strip().splitlines() if ln.strip() and not _NOISE_RE.match(ln)]
     return (lines[-1] if lines else "no output")[:300]
 
 
@@ -128,8 +145,7 @@ class DeviceMemSampler:
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def __repr__(self) -> str:
-        return (f"DeviceMemSampler(pid={self.pid}, source={self.source!r}, "
-                f"samples={self._samples})")
+        return f"DeviceMemSampler(pid={self.pid}, source={self.source!r}, samples={self._samples})"
 
     def __enter__(self):
         self._thread.start()
@@ -144,12 +160,15 @@ class DeviceMemSampler:
         if not self._samples:
             return None
         gb = 1024.0
-        out = {"peak_gb_pid": (round(self._peak_pid / gb, 2)
-                               if self._peak_pid is not None else None),
-               "peak_gb_total": (round(self._peak_total / gb, 2)
-                                 if self._peak_total is not None else None),
-               "samples": self._samples, "interval_s": self.interval_s,
-               "source": self.source}
+        out = {
+            "peak_gb_pid": (round(self._peak_pid / gb, 2) if self._peak_pid is not None else None),
+            "peak_gb_total": (
+                round(self._peak_total / gb, 2) if self._peak_total is not None else None
+            ),
+            "samples": self._samples,
+            "interval_s": self.interval_s,
+            "source": self.source,
+        }
         if self._failed:
             out["stopped_early"] = True
         return out
@@ -173,8 +192,7 @@ class DeviceMemSampler:
             self._stop.wait(self.interval_s)
 
 
-def run_one(spec: dict, timeout: int, sampler: bool = False,
-            data_cache: str | None = None) -> dict:
+def run_one(spec: dict, timeout: int, sampler: bool = False, data_cache: str | None = None) -> dict:
     """One worker child, one cell: the payload dict for the row.
 
     Timeouts, signals, and nonzero exits come back as status rows
@@ -183,15 +201,18 @@ def run_one(spec: dict, timeout: int, sampler: bool = False,
     a campaign measuring wall clock wants: the counters cost time on planes
     whose rounds are short enough for a profile sync to be the round.
     """
-    proc = subprocess.Popen([sys.executable, "-m", "bonsai.bench", "worker"],
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True,
-                            env=_worker_env(spec, data_cache))
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "bonsai.bench", "worker"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_worker_env(spec, data_cache),
+    )
     sm = DeviceMemSampler(proc.pid) if sampler else None
     try:
         with sm or contextlib.nullcontext():
-            stdout, stderr = proc.communicate(input=json.dumps(spec),
-                                              timeout=timeout)
+            stdout, stderr = proc.communicate(input=json.dumps(spec), timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_wedged(proc)
         out = {runlog.Row.STATUS: "timeout", runlog.Row.MESSAGE: f"exceeded {timeout}s"}
@@ -218,10 +239,22 @@ def resume_keys(path: str | pathlib.Path) -> set[tuple]:
             continue
         host = r.get("host")
         host_name = host.get("name") if isinstance(host, dict) else host
-        done.add((r.get(runlog.Row.VARIANT), r.get(runlog.Row.THREADS), r.get(runlog.Row.REPEAT),
-                  c.get("rows"), c.get("cols"), c.get("bins"), c.get("depth"),
-                  c.get("iters"), c.get("seed"), c.get("eval_mode"),
-                  host_name, r.get(runlog.Row.RUN)))
+        done.add(
+            (
+                r.get(runlog.Row.VARIANT),
+                r.get(runlog.Row.THREADS),
+                r.get(runlog.Row.REPEAT),
+                c.get("rows"),
+                c.get("cols"),
+                c.get("bins"),
+                c.get("depth"),
+                c.get("iters"),
+                c.get("seed"),
+                c.get("eval_mode"),
+                host_name,
+                r.get(runlog.Row.RUN),
+            )
+        )
     return done
 
 
@@ -245,26 +278,39 @@ def skip_reason(job: dict, host: dict, gates: dict) -> tuple[str, str] | None:
     return None
 
 
-def run_jobs(jobs: list[dict], *, out: str, suite: str, knobs: dict,
-             host: dict, run_label: str | None = None, dry_run: bool = False,
-             resume_path: str | None = None, timeout_cap: int = 3600,
-             gates: dict | None = None, mem_sampler: bool = True,
-             data_cache: str | None = None) -> int:
+def run_jobs(
+    jobs: list[dict],
+    *,
+    out: str,
+    suite: str,
+    knobs: dict,
+    host: dict,
+    run_label: str | None = None,
+    dry_run: bool = False,
+    resume_path: str | None = None,
+    timeout_cap: int = 3600,
+    gates: dict | None = None,
+    mem_sampler: bool = True,
+    data_cache: str | None = None,
+) -> int:
     """Run (or dry-plan) a job list, one row per attempt, resume-aware."""
     gates = gates or {}
     unknown_gates = set(gates) - _GATE_KEYS
     if unknown_gates:
-        raise ValueError(f"unknown gate keys: {sorted(unknown_gates)} "
-                         f"(known: {sorted(_GATE_KEYS)})")
+        raise ValueError(
+            f"unknown gate keys: {sorted(unknown_gates)} (known: {sorted(_GATE_KEYS)})"
+        )
     out_path = pathlib.Path(out)
     if not dry_run:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-    sink = _Sink(out_path=out_path, suite=suite, knobs=knobs, host=host,
-                 run_label=run_label)
+    sink = _Sink(out_path=out_path, suite=suite, knobs=knobs, host=host, run_label=run_label)
     done = resume_keys(resume_path) if resume_path else set()
     for job in jobs:
-        cell, variant, threads = (job[runlog.Row.CELL], job[runlog.Row.VARIANT],
-                                  job[runlog.Row.THREADS])
+        cell, variant, threads = (
+            job[runlog.Row.CELL],
+            job[runlog.Row.VARIANT],
+            job[runlog.Row.THREADS],
+        )
         v = resolve(variant)
         # CatBoost-GPU caps borders at 254 inside catboost_core; the row must
         # record the bins that actually ran (protocol: bins_effective).
@@ -275,26 +321,35 @@ def run_jobs(jobs: list[dict], *, out: str, suite: str, knobs: dict,
             _handle_skip(sink, job, cell, skip, dry_run=dry_run, done=done)
             continue
         cell_timeout = cell.get("timeout_s")
-        timeout = min(cell_timeout if cell_timeout is not None
-                      else timeout_for(cell), timeout_cap)
+        timeout = min(cell_timeout if cell_timeout is not None else timeout_for(cell), timeout_cap)
         if dry_run:
             _print_dry_plan(sink, job, cell, timeout, done)
             continue
         sample = mem_sampler and v.device == Device.CUDA
         for rep in range(job["repeats"]):
             if _job_key(job, rep, sink.host_name, run_label) in done:
-                print(f"  {variant:>24} t={threads:<3} {cell['rows']}x"
-                      f"{cell['cols']}x{cell['bins']} rep={rep} -> resume-skip")
+                print(
+                    f"  {variant:>24} t={threads:<3} {cell['rows']}x"
+                    f"{cell['cols']}x{cell['bins']} rep={rep} -> resume-skip"
+                )
                 continue
-            child = {runlog.Row.CELL: cell, runlog.Row.VARIANT: variant,
-                     runlog.Row.THREADS: threads}
-            sink.emit(cell, variant, threads, rep,
-                      run_one(child, timeout, sampler=sample,
-                              data_cache=data_cache))
+            child = {
+                runlog.Row.CELL: cell,
+                runlog.Row.VARIANT: variant,
+                runlog.Row.THREADS: threads,
+            }
+            sink.emit(
+                cell,
+                variant,
+                threads,
+                rep,
+                run_one(child, timeout, sampler=sample, data_cache=data_cache),
+            )
     return 0
 
 
 # Private Helpers ==================================================================================
+
 
 def _device_index() -> int:
     """The first entry of CUDA_VISIBLE_DEVICES is the device the worker child
@@ -318,6 +373,7 @@ def _default_query() -> tuple:
     # fallback, never a dead sampler.
     try:
         import pynvml
+
         pynvml.nvmlInit()
         handle = pynvml.nvmlDeviceGetHandleByIndex(_device_index())
     except Exception:
@@ -339,13 +395,22 @@ def _smi_query(pid: int):
     dev = ["-i", str(_device_index())]
     try:
         apps = subprocess.run(
-            ["nvidia-smi", *dev, "--query-compute-apps=pid,used_memory",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5)
+            [
+                "nvidia-smi",
+                *dev,
+                "--query-compute-apps=pid,used_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
         total = subprocess.run(
-            ["nvidia-smi", *dev, "--query-gpu=memory.used",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5)
+            ["nvidia-smi", *dev, "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return None
     if apps.returncode != 0 or total.returncode != 0:
@@ -362,10 +427,15 @@ def _smi_query(pid: int):
 def _worker_env(spec: dict, data_cache: str | None) -> dict[str, str]:
     """The child's environment: profile counters on for bonsai, cache path if any."""
     env = dict(os.environ)
-    if (resolve(spec[runlog.Row.VARIANT]).lib == Lib.BONSAI
-            and not env.get("BONSAI_BENCH_NO_PROFILE")):
-        env.update(BONSAI_GROW_PROFILE="1", BONSAI_INGEST_PROFILE="1",
-                   BONSAI_CUDA_PROFILE="1", BONSAI_FIT_PROFILE="1")
+    if resolve(spec[runlog.Row.VARIANT]).lib == Lib.BONSAI and not env.get(
+        "BONSAI_BENCH_NO_PROFILE"
+    ):
+        env.update(
+            BONSAI_GROW_PROFILE="1",
+            BONSAI_INGEST_PROFILE="1",
+            BONSAI_CUDA_PROFILE="1",
+            BONSAI_FIT_PROFILE="1",
+        )
     if data_cache:
         env["BONSAI_BENCH_DATA_CACHE"] = data_cache
     return env
@@ -384,15 +454,16 @@ def _kill_wedged(proc: subprocess.Popen):
 
 def _row_from_exit(returncode: int, stdout: str, stderr: str) -> dict:
     """Status row for a child that ran to completion, well or badly."""
-    result_line = next((ln for ln in stdout.splitlines()
-                        if ln.startswith("RESULT ")), None)
+    result_line = next((ln for ln in stdout.splitlines() if ln.startswith("RESULT ")), None)
     if returncode < 0:
         return _signal_row(-returncode)
     if returncode != 0 or result_line is None:
         # Classify from the WHOLE stderr (the OOM keyword rarely sits on the
         # last line); report the last non-noise line as the message.
-        return {runlog.Row.STATUS: classify_error(stderr),
-                runlog.Row.MESSAGE: error_message(stderr)}
+        return {
+            runlog.Row.STATUS: classify_error(stderr),
+            runlog.Row.MESSAGE: error_message(stderr),
+        }
     out = json.loads(result_line.removeprefix("RESULT "))
     out[runlog.Row.STATUS] = "ok"
     out[runlog.Row.MESSAGE] = None
@@ -404,12 +475,15 @@ def _signal_row(sig: int) -> dict:
     """SIGKILL is the OOM killer's signature; any other signal is a crash in
     the library under test and reads as one, because "arm ran out of memory"
     and "arm cannot do this at all" are different findings."""
-    return {runlog.Row.STATUS: "oom" if sig == signal.SIGKILL else "error",
-            runlog.Row.MESSAGE: f"killed by signal {sig}"}
+    return {
+        runlog.Row.STATUS: "oom" if sig == signal.SIGKILL else "error",
+        runlog.Row.MESSAGE: f"killed by signal {sig}",
+    }
 
 
-def _device_skip(cell: dict, host: dict, gpu_max_cols: int | None,
-                 mem_gate: bool) -> tuple[str, str] | None:
+def _device_skip(
+    cell: dict, host: dict, gpu_max_cols: int | None, mem_gate: bool
+) -> tuple[str, str] | None:
     """The gates a CUDA variant must clear on this host."""
     if host["gpu"] is None:
         return ("skipped", "no CUDA device on host")
@@ -428,8 +502,7 @@ def _host_memory_skip(cell: dict, lib: str, host: dict) -> tuple[str, str] | Non
     return None
 
 
-def _job_key(job: dict, repeat: int, host_name: str | None,
-             run_label: str | None) -> tuple:
+def _job_key(job: dict, repeat: int, host_name: str | None, run_label: str | None) -> tuple:
     """The resume identity of one attempt; must mirror resume_keys().
 
     eval_mode is part of the identity because the early-stopping suite runs
@@ -438,9 +511,20 @@ def _job_key(job: dict, repeat: int, host_name: str | None,
     Legacy cells carry no eval_mode, so committed rows still match on None.
     """
     c = job[runlog.Row.CELL]
-    return (job[runlog.Row.VARIANT], job[runlog.Row.THREADS], repeat, c["rows"], c["cols"],
-            c["bins"], c.get("depth"), c.get("iters"), c.get("seed"),
-            c.get("eval_mode"), host_name, run_label)
+    return (
+        job[runlog.Row.VARIANT],
+        job[runlog.Row.THREADS],
+        repeat,
+        c["rows"],
+        c["cols"],
+        c["bins"],
+        c.get("depth"),
+        c.get("iters"),
+        c.get("seed"),
+        c.get("eval_mode"),
+        host_name,
+        run_label,
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -457,51 +541,70 @@ class _Sink:
     def host_name(self) -> str | None:
         return self.host.get("name")
 
-    def emit(self, cell: dict, variant: str, threads: int, repeat: int,
-             payload: dict):
+    def emit(self, cell: dict, variant: str, threads: int, repeat: int, payload: dict):
         """One row to the jsonl plus the one-line progress print."""
         payload = dict(payload)
         # The worker reports the versions it imported; fold into host.libs.
         libs = payload.pop("libs", None)
-        row_host = (dict(self.host, libs={**self.host.get("libs", {}), **libs})
-                    if libs else self.host)
+        row_host = (
+            dict(self.host, libs={**self.host.get("libs", {}), **libs}) if libs else self.host
+        )
         payload.setdefault(runlog.Row.PROFILE, None)
         extra = {runlog.Row.RUN: self.run_label} if self.run_label else {}
-        runlog.emit_row(self.out_path, division="perf", suite=self.suite,
-                        knobs=self.knobs, host=row_host,
-                        timing_mode="in_memory",
-                        dataset="synthetic-friedman1",
-                        data_recipe=synth.DATA_RECIPE, task="reg", cell=cell,
-                        variant=variant, threads=threads, repeat=repeat,
-                        **extra, **payload)
-        print(f"  {variant:>24} t={threads:<3} rows={cell['rows']:>8} "
-              f"cols={cell['cols']:>5} bins={cell['bins']:>5} "
-              f"-> {payload[runlog.Row.STATUS]}"
-              + (f" fit={payload[runlog.Row.FIT_S]}s r2={payload[runlog.Row.R2_TEST]}"
-                 if payload[runlog.Row.STATUS] == "ok" else f" ({payload[runlog.Row.MESSAGE]})"))
+        runlog.emit_row(
+            self.out_path,
+            division="perf",
+            suite=self.suite,
+            knobs=self.knobs,
+            host=row_host,
+            timing_mode="in_memory",
+            dataset="synthetic-friedman1",
+            data_recipe=synth.DATA_RECIPE,
+            task="reg",
+            cell=cell,
+            variant=variant,
+            threads=threads,
+            repeat=repeat,
+            **extra,
+            **payload,
+        )
+        print(
+            f"  {variant:>24} t={threads:<3} rows={cell['rows']:>8} "
+            f"cols={cell['cols']:>5} bins={cell['bins']:>5} "
+            f"-> {payload[runlog.Row.STATUS]}"
+            + (
+                f" fit={payload[runlog.Row.FIT_S]}s r2={payload[runlog.Row.R2_TEST]}"
+                if payload[runlog.Row.STATUS] == "ok"
+                else f" ({payload[runlog.Row.MESSAGE]})"
+            )
+        )
 
 
-def _handle_skip(sink: _Sink, job: dict, cell: dict, skip: tuple[str, str], *,
-                 dry_run: bool, done: set[tuple]):
+def _handle_skip(
+    sink: _Sink, job: dict, cell: dict, skip: tuple[str, str], *, dry_run: bool, done: set[tuple]
+):
     """Record a gated job: a status row normally, a print when dry/duplicate."""
     variant, threads = job[runlog.Row.VARIANT], job[runlog.Row.THREADS]
     key = _job_key(job, 0, sink.host_name, sink.run_label)
     if not dry_run and key not in done:
-        sink.emit(cell, variant, threads, 0,
-                  {runlog.Row.STATUS: skip[0], runlog.Row.MESSAGE: skip[1]})
+        sink.emit(
+            cell, variant, threads, 0, {runlog.Row.STATUS: skip[0], runlog.Row.MESSAGE: skip[1]}
+        )
         return
-    print(f"  {variant:>24} {cell['rows']}x{cell['cols']}x"
-          f"{cell['bins']} -> {skip[0]}: {skip[1]}")
+    print(f"  {variant:>24} {cell['rows']}x{cell['cols']}x{cell['bins']} -> {skip[0]}: {skip[1]}")
 
 
-def _print_dry_plan(sink: _Sink, job: dict, cell: dict, timeout: int,
-                    done: set[tuple]):
+def _print_dry_plan(sink: _Sink, job: dict, cell: dict, timeout: int, done: set[tuple]):
     """The dry-run line for one job, with its resume-skip count."""
     variant, threads = job[runlog.Row.VARIANT], job[runlog.Row.THREADS]
-    already = sum(1 for rep in range(job["repeats"])
-                  if _job_key(job, rep, sink.host_name, sink.run_label) in done)
-    print(f"  {variant:>24} t={threads:<3} {cell['rows']}x"
-          f"{cell['cols']}x{cell['bins']} timeout={timeout}s "
-          f"repeats={job['repeats']}"
-          + (f" resume-skip={already}/{job['repeats']}" if already else ""))
-
+    already = sum(
+        1
+        for rep in range(job["repeats"])
+        if _job_key(job, rep, sink.host_name, sink.run_label) in done
+    )
+    print(
+        f"  {variant:>24} t={threads:<3} {cell['rows']}x"
+        f"{cell['cols']}x{cell['bins']} timeout={timeout}s "
+        f"repeats={job['repeats']}"
+        + (f" resume-skip={already}/{job['repeats']}" if already else "")
+    )

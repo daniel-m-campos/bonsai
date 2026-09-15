@@ -27,8 +27,7 @@ def test_em_dash_outside_code_is_hard_and_inside_is_not(tmp_path, monkeypatch):
     body = "A line with an em-dash — here.\n\n```\ncode — dash\n```\n"
     hard, soft = _lint(tmp_path, monkeypatch, "emdash.md", body)
     assert hard == [
-        ("emdash.md", 1, "em-dash",
-         "em-dash; use a comma, colon, or parentheses"),
+        ("emdash.md", 1, "em-dash", "em-dash; use a comma, colon, or parentheses"),
     ]
     assert soft == []
 
@@ -45,29 +44,38 @@ def test_banned_phrase_and_word_fire_outside_code_spans(tmp_path, monkeypatch):
     hard, soft = _lint(tmp_path, monkeypatch, "banned.md", body)
     assert hard == [
         ("banned.md", 1, "banned-phrase", 'banned phrase "blazingly"'),
-        ("banned.md", 3, "banned-word",
-         'bare "rung"; name the thing: "budget", "step", or "stage"'),
+        (
+            "banned.md",
+            3,
+            "banned-word",
+            'bare "rung"; name the thing: "budget", "step", or "stage"',
+        ),
     ]
     assert soft == []
 
 
 def test_lib_casing_fires_in_prose_only(tmp_path, monkeypatch):
     """Rule (b) skips table rows, identifiers, paths, and dotted calls."""
-    body = "\n".join([
-        "We benchmark against xgboost daily.",
-        "",
-        "| tool | xgboost | note |",
-        "",
-        "The symbol xgboost_train appears.",
-        "",
-        "The path docs/xgboost/index holds it.",
-        "",
-        "The call xgboost.train returns.",
-        "",
-        "Also lightgbm and catboost lag.",
-        "",
-        "The page use/from-xgboost is a path, from-xgboost alone is not.",
-    ]) + "\n"
+    body = (
+        "\n".join(
+            [
+                "We benchmark against xgboost daily.",
+                "",
+                "| tool | xgboost | note |",
+                "",
+                "The symbol xgboost_train appears.",
+                "",
+                "The path docs/xgboost/index holds it.",
+                "",
+                "The call xgboost.train returns.",
+                "",
+                "Also lightgbm and catboost lag.",
+                "",
+                "The page use/from-xgboost is a path, from-xgboost alone is not.",
+            ]
+        )
+        + "\n"
+    )
     hard, soft = _lint(tmp_path, monkeypatch, "libs.md", body)
     assert hard == [
         ("libs.md", 1, "lib-casing", '"xgboost" in prose; write "XGBoost"'),
@@ -80,15 +88,15 @@ def test_lib_casing_fires_in_prose_only(tmp_path, monkeypatch):
 
 def test_comparative_needs_a_number_in_its_sentence(tmp_path, monkeypatch):
     """Rule (c-ii) fires per sentence and a digit anywhere in it clears."""
-    body = (
-        "It is significantly faster than the rest.\n"
-        "\n"
-        "It is significantly faster, by 2x.\n"
-    )
+    body = "It is significantly faster than the rest.\n\nIt is significantly faster, by 2x.\n"
     hard, soft = _lint(tmp_path, monkeypatch, "comparative.md", body)
     assert hard == [
-        ("comparative.md", 1, "comparative",
-         '"significantly faster" with no number in the sentence'),
+        (
+            "comparative.md",
+            1,
+            "comparative",
+            '"significantly faster" with no number in the sentence',
+        ),
     ]
     assert soft == []
 
@@ -103,7 +111,8 @@ def test_overlong_sentence_is_soft_with_its_word_count(tmp_path, monkeypatch):
 
 
 def test_link_dense_paragraph_skips_soft_but_not_comparative(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Three or more link targets suppress the length rule alone."""
     filler = " ".join(["alpha", "beta", "gamma", "delta"] * 6)
@@ -113,7 +122,6 @@ def test_link_dense_paragraph_skips_soft_but_not_comparative(
     )
     hard, soft = _lint(tmp_path, monkeypatch, "dense.md", body)
     assert hard == [
-        ("dense.md", 1, "comparative",
-         '"much slower" with no number in the sentence'),
+        ("dense.md", 1, "comparative", '"much slower" with no number in the sentence'),
     ]
     assert soft == []

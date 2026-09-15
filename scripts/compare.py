@@ -96,10 +96,8 @@ def hp_from(cfg: dict) -> HP:
         n_classes=int(objective.get("n_classes", 3)),
         huber_delta=float(objective.get("huber_delta", 1.0)),
         quantile_alpha=float(objective.get("quantile_alpha", 0.5)),
-        monotone_constraints=parse_constraints(
-            tree.get("monotone_constraints", [])),
-        interaction_constraints=parse_groups(
-            tree.get("interaction_constraints", [])),
+        monotone_constraints=parse_constraints(tree.get("monotone_constraints", [])),
+        interaction_constraints=parse_groups(tree.get("interaction_constraints", [])),
         max_bin=int(bin_mapper.get("max_bin", 255)),
         random_seed=int(booster.get("random_seed", 42)),
     )
@@ -205,15 +203,23 @@ CATBOOST_LOSS = {
 }
 
 
-def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
-               hp_overrides: list[str] | None = None, test_df=None) -> Result:
+def run_bonsai(
+    config_path: pathlib.Path,
+    hp: HP,
+    grower: str,
+    sampler: str,
+    hp_overrides: list[str] | None = None,
+    test_df=None,
+) -> Result:
     binary = REPO_ROOT / "build" / "src" / "bonsai"
     stem = f"{grower}_{sampler}"
     model = REPO_ROOT / "build" / f"_compare_model_{stem}.msgpack"
     preds = REPO_ROOT / "build" / f"_compare_preds_{stem}.csv"
     overrides = [
-        "--set", f"dispatch.grower_name={grower}",
-        "--set", f"dispatch.sampler_name={sampler}",
+        "--set",
+        f"dispatch.grower_name={grower}",
+        "--set",
+        f"dispatch.sampler_name={sampler}",
     ]
     for ov in hp_overrides or []:
         overrides += ["--set", ov]
@@ -222,8 +228,7 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
 
     t0 = time.perf_counter()
     subprocess.run(
-        [str(binary), "fit", "-c", str(config_path), *overrides,
-         "--model", str(model)],
+        [str(binary), "fit", "-c", str(config_path), *overrides, "--model", str(model)],
         check=True,
         capture_output=True,
     )
@@ -231,8 +236,17 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
 
     t1 = time.perf_counter()
     subprocess.run(
-        [str(binary), "predict", "-c", str(config_path), *overrides,
-         "--model", str(model), "--out", str(preds)],
+        [
+            str(binary),
+            "predict",
+            "-c",
+            str(config_path),
+            *overrides,
+            "--model",
+            str(model),
+            "--out",
+            str(preds),
+        ],
         check=True,
         capture_output=True,
     )
@@ -247,10 +261,15 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
     pred = pred_df["prediction"].to_numpy()
 
     mc = hp.objective == "softmax"
-    return Result(rmse=rmse(pred, y_test), mae=mae(pred, y_test),
-                  r2=r2(pred, y_test),
-                  auc=maybe_auc(pred, y_test), acc=maybe_acc(pred, y_test, mc),
-                  fit_seconds=fit_s, predict_seconds=pred_s)
+    return Result(
+        rmse=rmse(pred, y_test),
+        mae=mae(pred, y_test),
+        r2=r2(pred, y_test),
+        auc=maybe_auc(pred, y_test),
+        acc=maybe_acc(pred, y_test, mc),
+        fit_seconds=fit_s,
+        predict_seconds=pred_s,
+    )
 
 
 def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
@@ -265,22 +284,37 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
         "objective": XGB_OBJECTIVE[hp.objective],
         **({"num_class": hp.n_classes} if hp.objective == "softmax" else {}),
         **({"huber_slope": hp.huber_delta} if hp.objective == "huber" else {}),
-        **({"quantile_alpha": hp.quantile_alpha}
-           if hp.objective == "quantile" else {}),
+        **({"quantile_alpha": hp.quantile_alpha} if hp.objective == "quantile" else {}),
         **reference_params.xgb_core(
-            learning_rate=hp.learning_rate, max_depth=hp.max_depth,
-            min_data_in_leaf=hp.min_data_in_leaf, lambda_l2=hp.lambda_l2,
-            max_bin=hp.max_bin, seed=hp.random_seed),
+            learning_rate=hp.learning_rate,
+            max_depth=hp.max_depth,
+            min_data_in_leaf=hp.min_data_in_leaf,
+            lambda_l2=hp.lambda_l2,
+            max_bin=hp.max_bin,
+            seed=hp.random_seed,
+        ),
         "max_leaves": hp.max_leaves,
         "reg_alpha": hp.lambda_l1,
         "colsample_bytree": hp.feature_fraction,
-        **({"booster": "dart", "rate_drop": hp.dart_drop_rate,
-            "normalize_type": "tree"} if hp.dart_drop_rate > 0 else {}),
-        **({"monotone_constraints": "(" + ",".join(
-                str(c) for c in padded_constraints(hp, len(feature_cols))) + ")"}
-           if hp.monotone_constraints else {}),
-        **({"interaction_constraints": str(hp.interaction_constraints)}
-           if hp.interaction_constraints else {}),
+        **(
+            {"booster": "dart", "rate_drop": hp.dart_drop_rate, "normalize_type": "tree"}
+            if hp.dart_drop_rate > 0
+            else {}
+        ),
+        **(
+            {
+                "monotone_constraints": "("
+                + ",".join(str(c) for c in padded_constraints(hp, len(feature_cols)))
+                + ")"
+            }
+            if hp.monotone_constraints
+            else {}
+        ),
+        **(
+            {"interaction_constraints": str(hp.interaction_constraints)}
+            if hp.interaction_constraints
+            else {}
+        ),
     }
     fit_kwargs = {}
     if valid_df is not None and hp.early_stopping_rounds > 0:
@@ -299,10 +333,15 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     pred_s = time.perf_counter() - t1
     y = test_df[LABEL_COL].to_numpy()
     mc = hp.objective == "softmax"
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
-                  auc=maybe_auc(pred, y),
-                  acc=maybe_acc(pred, y, mc),
-                  fit_seconds=fit_s, predict_seconds=pred_s)
+    return Result(
+        rmse=rmse(pred, y),
+        mae=mae(pred, y),
+        r2=r2(pred, y),
+        auc=maybe_auc(pred, y),
+        acc=maybe_acc(pred, y, mc),
+        fit_seconds=fit_s,
+        predict_seconds=pred_s,
+    )
 
 
 def run_lightgbm(train_df, test_df, hp: HP, valid_df=None) -> Result:
@@ -316,31 +355,38 @@ def run_lightgbm(train_df, test_df, hp: HP, valid_df=None) -> Result:
         **({"num_class": hp.n_classes} if hp.objective == "softmax" else {}),
         **({"alpha": hp.huber_delta} if hp.objective == "huber" else {}),
         **({"alpha": hp.quantile_alpha} if hp.objective == "quantile" else {}),
-        "metric": {"softmax": "multi_logloss",
-                   "logloss": "binary_logloss"}.get(hp.objective, "rmse"),
+        "metric": {"softmax": "multi_logloss", "logloss": "binary_logloss"}.get(
+            hp.objective, "rmse"
+        ),
         **reference_params.lgbm_core(
-            learning_rate=hp.learning_rate, max_depth=hp.max_depth,
-            num_leaves=(hp.max_leaves if hp.max_leaves > 0
-                        else (1 << hp.max_depth) - 1),
-            min_data_in_leaf=hp.min_data_in_leaf, lambda_l2=hp.lambda_l2,
-            max_bin=hp.max_bin, seed=hp.random_seed),
+            learning_rate=hp.learning_rate,
+            max_depth=hp.max_depth,
+            num_leaves=(hp.max_leaves if hp.max_leaves > 0 else (1 << hp.max_depth) - 1),
+            min_data_in_leaf=hp.min_data_in_leaf,
+            lambda_l2=hp.lambda_l2,
+            max_bin=hp.max_bin,
+            seed=hp.random_seed,
+        ),
         "lambda_l1": hp.lambda_l1,
         "feature_fraction": hp.feature_fraction,
-        **({"boosting": "dart", "drop_rate": hp.dart_drop_rate}
-           if hp.dart_drop_rate > 0 else {}),
-        **({"monotone_constraints": padded_constraints(hp, len(feature_cols))}
-           if hp.monotone_constraints else {}),
-        **({"interaction_constraints": hp.interaction_constraints}
-           if hp.interaction_constraints else {}),
+        **({"boosting": "dart", "drop_rate": hp.dart_drop_rate} if hp.dart_drop_rate > 0 else {}),
+        **(
+            {"monotone_constraints": padded_constraints(hp, len(feature_cols))}
+            if hp.monotone_constraints
+            else {}
+        ),
+        **(
+            {"interaction_constraints": hp.interaction_constraints}
+            if hp.interaction_constraints
+            else {}
+        ),
     }
     fit_kwargs = {}
     if valid_df is not None and hp.early_stopping_rounds > 0:
-        dvalid = lgb.Dataset(valid_df[feature_cols], label=valid_df[LABEL_COL],
-                             reference=dtrain)
+        dvalid = lgb.Dataset(valid_df[feature_cols], label=valid_df[LABEL_COL], reference=dtrain)
         fit_kwargs = {
             "valid_sets": [dvalid],
-            "callbacks": [lgb.early_stopping(hp.early_stopping_rounds,
-                                             verbose=False)],
+            "callbacks": [lgb.early_stopping(hp.early_stopping_rounds, verbose=False)],
         }
     t0 = time.perf_counter()
     model = lgb.train(params, dtrain, num_boost_round=hp.n_iters, **fit_kwargs)
@@ -353,10 +399,15 @@ def run_lightgbm(train_df, test_df, hp: HP, valid_df=None) -> Result:
     pred_s = time.perf_counter() - t1
     y = test_df[LABEL_COL].to_numpy()
     mc = hp.objective == "softmax"
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
-                  auc=maybe_auc(pred, y),
-                  acc=maybe_acc(pred, y, mc),
-                  fit_seconds=fit_s, predict_seconds=pred_s)
+    return Result(
+        rmse=rmse(pred, y),
+        mae=mae(pred, y),
+        r2=r2(pred, y),
+        auc=maybe_auc(pred, y),
+        acc=maybe_acc(pred, y, mc),
+        fit_seconds=fit_s,
+        predict_seconds=pred_s,
+    )
 
 
 def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
@@ -365,22 +416,28 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
 
     feature_cols = [c for c in train_df.columns if c != LABEL_COL]
     use_es = valid_df is not None and hp.early_stopping_rounds > 0
-    cls = (CatBoostClassifier if hp.objective in ("logloss", "softmax")
-           else CatBoostRegressor)
+    cls = CatBoostClassifier if hp.objective in ("logloss", "softmax") else CatBoostRegressor
     model = cls(
         iterations=hp.n_iters,
         rsm=hp.feature_fraction,
         loss_function=CATBOOST_LOSS[hp.objective].format(
-            delta=hp.huber_delta, alpha=hp.quantile_alpha),
+            delta=hp.huber_delta, alpha=hp.quantile_alpha
+        ),
         verbose=False,
         **reference_params.catboost_core(
-            learning_rate=hp.learning_rate, max_depth=hp.max_depth,
-            lambda_l2=hp.lambda_l2, max_bin=hp.max_bin, seed=hp.random_seed,
-            device=Device.CPU),
-        **({"monotone_constraints": padded_constraints(hp, len(feature_cols))}
-           if hp.monotone_constraints else {}),
-        **reference_params.catboost_early_stop(hp.early_stopping_rounds,
-                                               has_eval_set=use_es),
+            learning_rate=hp.learning_rate,
+            max_depth=hp.max_depth,
+            lambda_l2=hp.lambda_l2,
+            max_bin=hp.max_bin,
+            seed=hp.random_seed,
+            device=Device.CPU,
+        ),
+        **(
+            {"monotone_constraints": padded_constraints(hp, len(feature_cols))}
+            if hp.monotone_constraints
+            else {}
+        ),
+        **reference_params.catboost_early_stop(hp.early_stopping_rounds, has_eval_set=use_es),
     )
     fit_kwargs = {}
     if use_es:
@@ -397,15 +454,19 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     if hp.objective == "logloss":
         pred = np.asarray(model.predict_proba(test_df[feature_cols]))[:, 1]
     else:
-        pred = (np.asarray(model.predict(test_df[feature_cols]))
-                .reshape(-1).astype(float))
+        pred = np.asarray(model.predict(test_df[feature_cols])).reshape(-1).astype(float)
     pred_s = time.perf_counter() - t1
     y = test_df[LABEL_COL].to_numpy()
     mc = hp.objective == "softmax"
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
-                  auc=maybe_auc(pred, y),
-                  acc=maybe_acc(pred, y, mc),
-                  fit_seconds=fit_s, predict_seconds=pred_s)
+    return Result(
+        rmse=rmse(pred, y),
+        mae=mae(pred, y),
+        r2=r2(pred, y),
+        auc=maybe_auc(pred, y),
+        acc=maybe_acc(pred, y, mc),
+        fit_seconds=fit_s,
+        predict_seconds=pred_s,
+    )
 
 
 def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result]) -> None:
@@ -424,19 +485,21 @@ def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result])
             f"| {auc_s} | {acc_s} | {r.fit_seconds:11.3f} "
             f"| {r.predict_seconds:15.3f} |"
         )
-    note = ("Timing modes (docs/results/benchmark-protocol.md): `bonsai` rows "
-            "time the CLI pipeline end to end (CSV read + fit + model I/O, "
-            "timing_mode=pipeline); reference rows time in-process from "
-            "arrays (timing_mode=in_memory).\n\n")
-    path.write_text(f"# {dataset} comparison\n\n" + note + "\n".join(rows)
-                    + "\n")
+    note = (
+        "Timing modes (docs/results/benchmark-protocol.md): `bonsai` rows "
+        "time the CLI pipeline end to end (CSV read + fit + model I/O, "
+        "timing_mode=pipeline); reference rows time in-process from "
+        "arrays (timing_mode=in_memory).\n\n"
+    )
+    path.write_text(f"# {dataset} comparison\n\n" + note + "\n".join(rows) + "\n")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True, type=pathlib.Path)
-    ap.add_argument("--growers", default=",".join(BONSAI_GROWERS),
-                    help="comma-separated bonsai growers to run")
+    ap.add_argument(
+        "--growers", default=",".join(BONSAI_GROWERS), help="comma-separated bonsai growers to run"
+    )
     args = ap.parse_args()
 
     cfg = load_toml(args.config)
@@ -455,6 +518,7 @@ def _load_frames(cfg: dict):
     if cfg.get("data", {}).get("format") != "libsvm":
         return pd.read_csv(train_path), pd.read_csv(test_path)
     from sklearn.datasets import load_svmlight_file
+
     nf = int(cfg["data"].get("libsvm_n_features", 0)) or None
     Xtr, ytr = load_svmlight_file(str(train_path), n_features=nf)
     Xte, yte = load_svmlight_file(str(test_path), n_features=nf)
@@ -490,16 +554,16 @@ def _early_stopping_split(train_df, hp: HP):
     return train_df, valid_df, bonsai_hp_overrides
 
 
-def _run_all(args, hp: HP, train_df, test_df, valid_df,
-             bonsai_hp_overrides) -> dict[str, Result]:
+def _run_all(args, hp: HP, train_df, test_df, valid_df, bonsai_hp_overrides) -> dict[str, Result]:
     """Every bonsai (grower, sampler) arm plus the reference libraries."""
     results: dict[str, Result] = {}
     for grower in args.growers.split(","):
         for sampler in BONSAI_SAMPLERS:
             label = f"bonsai ({grower}, {sampler})"
             print(f"{label} (n_iters={hp.n_iters})", flush=True)
-            results[label] = run_bonsai(args.config, hp, grower, sampler,
-                                        bonsai_hp_overrides, test_df=test_df)
+            results[label] = run_bonsai(
+                args.config, hp, grower, sampler, bonsai_hp_overrides, test_df=test_df
+            )
     print("xgboost", flush=True)
     results["xgboost"] = run_xgboost(train_df, test_df, hp, valid_df=valid_df)
     print("lightgbm", flush=True)
@@ -516,9 +580,7 @@ def _write_outputs(args, results: dict[str, Result]):
     stem = args.config.stem
     json_path = out_dir / f"{stem}.json"
     md_path = out_dir / f"{stem}.md"
-    json_path.write_text(
-        json.dumps({k: vars(v) for k, v in results.items()}, indent=2)
-    )
+    json_path.write_text(json.dumps({k: vars(v) for k, v in results.items()}, indent=2))
     write_markdown(md_path, stem, results)
     print(md_path.read_text())
     print(f"wrote {json_path}\nwrote {md_path}")

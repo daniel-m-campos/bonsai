@@ -10,9 +10,20 @@ from bonsai.bench import cv, runlog, runners
 def _cell(**over):
     # gen_data lays informative features out in blocks of five and weights
     # whole blocks, so fewer than five leaves y constant and every r2 NaN.
-    base = {"axis": "folds", "rows": 1000, "cols": 10, "bins": 255,
-            "bins_effective": 255, "depth": 4, "iters": 5, "lr": 0.1,
-            "informative": 5, "n_test": 1, "seed": 42, "folds": 4}
+    base = {
+        "axis": "folds",
+        "rows": 1000,
+        "cols": 10,
+        "bins": 255,
+        "bins_effective": 255,
+        "depth": 4,
+        "iters": 5,
+        "lr": 0.1,
+        "informative": 5,
+        "n_test": 1,
+        "seed": 42,
+        "folds": 4,
+    }
     base.update(over)
     return base
 
@@ -61,8 +72,9 @@ def test_shuffled_folds_are_scattered():
 
 
 def test_the_scheme_defaults_to_walk_forward():
-    assert np.array_equal(cv.folds_of(_cell())[0][0], cv.folds_of(
-        _cell(scheme="walk_forward"))[0][0])
+    assert np.array_equal(
+        cv.folds_of(_cell())[0][0], cv.folds_of(_cell(scheme="walk_forward"))[0][0]
+    )
 
 
 def test_shuffled_folds_are_reproducible():
@@ -75,8 +87,12 @@ def test_shuffled_folds_are_reproducible():
 
 
 def _spec(**over):
-    return {runlog.Row.VARIANT: "bonsai_depthwise", runlog.Row.THREADS: 2,
-            runlog.Row.REPEAT: 0, runlog.Row.CELL: _cell(**over)}
+    return {
+        runlog.Row.VARIANT: "bonsai_depthwise",
+        runlog.Row.THREADS: 2,
+        runlog.Row.REPEAT: 0,
+        runlog.Row.CELL: _cell(**over),
+    }
 
 
 def test_a_cell_naming_folds_reaches_the_cv_suite():
@@ -99,7 +115,8 @@ def test_a_cell_without_folds_still_takes_the_single_fit_path():
 def test_the_loop_and_ingest_account_for_the_whole_run():
     out = runners.worker(_spec())
     assert out[cv.LOOP_S] + out[runlog.Row.INGEST_S] == pytest.approx(
-        out[runlog.Row.FIT_S], abs=0.002)
+        out[runlog.Row.FIT_S], abs=0.002
+    )
 
 
 def test_fit_and_score_account_for_the_loop():
@@ -107,8 +124,7 @@ def test_fit_and_score_account_for_the_loop():
     fold mechanism's cost and the predict path's cost must add back up to
     the loop a tuning run waits on."""
     out = runners.worker(_spec())
-    assert out[cv.FIT_LOOP_S] + out[cv.SCORE_LOOP_S] == pytest.approx(
-        out[cv.LOOP_S], abs=0.02)
+    assert out[cv.FIT_LOOP_S] + out[cv.SCORE_LOOP_S] == pytest.approx(out[cv.LOOP_S], abs=0.02)
     # Scoring a thousand rows lands under this cell's rounding, so the
     # floor is non-negative rather than positive.
     assert out[cv.FIT_LOOP_S] > 0 and out[cv.SCORE_LOOP_S] >= 0
@@ -120,6 +136,7 @@ def test_both_strategies_score_the_same_way(strategy, monkeypatch):
     device-resident view still falls back to. If the arms scored
     differently the comparison would be about predict, not about folds."""
     import bonsai
+
     seen = []
     real = bonsai.Model.predict
 
@@ -143,12 +160,13 @@ def test_a_view_and_a_copy_fit_the_same_folds(scheme):
 
 
 def test_the_strategy_defaults_to_the_view():
-    assert (runners.worker(_spec())[cv.R2_FOLDS]
-            == runners.worker(_spec(strategy=cv.Strategy.VIEW))[cv.R2_FOLDS])
+    assert (
+        runners.worker(_spec())[cv.R2_FOLDS]
+        == runners.worker(_spec(strategy=cv.Strategy.VIEW))[cv.R2_FOLDS]
+    )
 
 
-@pytest.mark.parametrize(("variant", "want"), [("lgbm_cpu", "cpu"),
-                                               ("lgbm_cuda", "cuda")])
+@pytest.mark.parametrize(("variant", "want"), [("lgbm_cpu", "cpu"), ("lgbm_cuda", "cuda")])
 def test_the_lightgbm_arm_fits_where_its_variant_says(variant, want, monkeypatch):
     """A device constant hard-coded here would put a CPU number in a
     lgbm_cuda row, and nothing downstream reports the device a fit actually

@@ -51,12 +51,10 @@ SEEDS = (0, 1, 2)
 TRAIN_CAP, TEST_CAP = 10_000, 50_000
 # This suite's historical short names, registered as aliases in the registry.
 VARIANTS = vr.GRINSZTAJN
-DEVICE_VARIANTS = {vr.Device.CPU: VARIANTS,
-                   vr.Device.CUDA: vr.GRINSZTAJN_CUDA}
+DEVICE_VARIANTS = {vr.Device.CPU: VARIANTS, vr.Device.CUDA: vr.GRINSZTAJN_CUDA}
 # The campaign knobs with the leaf count they imply spelled out, so a
 # regime can hold the leaves and move the depth.
-C = dict(params.CAMPAIGN,
-         leaves=params.num_leaves_campaign(params.CAMPAIGN["depth"]))
+C = dict(params.CAMPAIGN, leaves=params.num_leaves_campaign(params.CAMPAIGN["depth"]))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -76,9 +74,10 @@ CAMPAIGN = Regime("campaign", C, DEVICE_VARIANTS)
 # same shape of tree, and lightgbm's max_depth=-1 fits the same trees as
 # this cap. Only the learners a leaf count alone can cap run here.
 LEAF_CAPPED = Regime(
-    "leaf-capped", dict(C, depth=params.leaf_bound_depth(C["leaves"])),
-    {vr.Device.CPU: vr.GRINSZTAJN_LEAF_CAPPED,
-     vr.Device.CUDA: vr.GRINSZTAJN_LEAF_CAPPED_CUDA})
+    "leaf-capped",
+    dict(C, depth=params.leaf_bound_depth(C["leaves"])),
+    {vr.Device.CPU: vr.GRINSZTAJN_LEAF_CAPPED, vr.Device.CUDA: vr.GRINSZTAJN_LEAF_CAPPED_CUDA},
+)
 REGIMES = {r.name: r for r in (CAMPAIGN, LEAF_CAPPED)}
 
 
@@ -105,6 +104,7 @@ def load_task(task):
     symmetric under label flip only up to 1-x, so every arm must agree).
     """
     import pandas as pd
+
     ds = task.get_dataset()
     X, y, _, _ = ds.get_data(target=task.target_name, dataset_format="dataframe")
     for c in X.columns:
@@ -121,6 +121,7 @@ def load_task(task):
 def run(out_path, variants=VARIANTS, regime=CAMPAIGN):
     """Sweep every (suite, task, seed, variant); resume by completed keys."""
     import openml
+
     out = pathlib.Path(out_path)
     done = set()
     if out.exists():
@@ -133,8 +134,7 @@ def run(out_path, variants=VARIANTS, regime=CAMPAIGN):
         suite = openml.study.get_suite(sid)
         for tid in suite.tasks:
             try:
-                X, y, kind, name = load_task(openml.tasks.get_task(
-                    tid, download_splits=False))
+                X, y, kind, name = load_task(openml.tasks.get_task(tid, download_splits=False))
             except Exception as e:
                 print(f"skip task {tid}: {e!r}", flush=True)
                 continue
@@ -143,44 +143,49 @@ def run(out_path, variants=VARIANTS, regime=CAMPAIGN):
                 idx = rng.permutation(len(X))
                 n_tr = min(TRAIN_CAP, int(len(X) * 0.8))
                 tr = idx[:n_tr]
-                te = idx[n_tr:n_tr + TEST_CAP]
+                te = idx[n_tr : n_tr + TEST_CAP]
                 for v in variants:
                     if (sname, name, v, seed) in done:
                         continue
                     t0 = time.perf_counter()
                     try:
-                        pred = fit_predict(v, X[tr], y[tr], X[te], kind,
-                                           regime.knobs)
+                        pred = fit_predict(v, X[tr], y[tr], X[te], kind, regime.knobs)
                         fn = metrics.auc if kind == "auc" else metrics.r2
                         value, status = fn(y[te], pred), "ok"
                     except Exception as e:
                         value, status = None, f"error: {e!r}"[:200]
                     runlog.emit_row(
-                        out, division="quality", suite=sname, knobs=knobs,
+                        out,
+                        division="quality",
+                        suite=sname,
+                        knobs=knobs,
                         host=dict(host, libs=runlog.lib_versions()),
-                        dataset=name, task=kind, variant=v,
-                        seed=seed, kind=kind, metric=kind, value=value,
-                        status=status, n_train=len(tr),
+                        dataset=name,
+                        task=kind,
+                        variant=v,
+                        seed=seed,
+                        kind=kind,
+                        metric=kind,
+                        value=value,
+                        status=status,
+                        n_train=len(tr),
                         n_features=int(X.shape[1]),
-                        fit_s=round(time.perf_counter() - t0, 2))
+                        fit_s=round(time.perf_counter() - t0, 2),
+                    )
                     shown = value if value is None else round(value, 4)
-                    print(f"{sname:8s} {name[:28]:28s} {v:11s} s{seed} "
-                          f"{shown}", flush=True)
+                    print(f"{sname:8s} {name[:28]:28s} {v:11s} s{seed} {shown}", flush=True)
 
 
 def report(out_path):
     """Library standings from a results file: mean rank, wins, per suite."""
     import pandas as pd
-    rows = [json.loads(x)
-            for x in pathlib.Path(out_path).read_text().splitlines()]
+
+    rows = [json.loads(x) for x in pathlib.Path(out_path).read_text().splitlines()]
     ok = [dict(r, value=_value(r)) for r in rows if r["status"] == "ok"]
     df = pd.DataFrame(ok)
-    mean = (df.groupby(["suite", "dataset", "variant"])["value"].mean()
-            .reset_index())
-    mean["lib"] = mean["variant"].map(
-        lambda v: vr.Lib.BONSAI if v.startswith(vr.Lib.BONSAI) else v)
-    lib = (mean.groupby(["suite", "dataset", "lib"])["value"].max()
-           .reset_index())
+    mean = df.groupby(["suite", "dataset", "variant"])["value"].mean().reset_index()
+    mean["lib"] = mean["variant"].map(lambda v: vr.Lib.BONSAI if v.startswith(vr.Lib.BONSAI) else v)
+    lib = mean.groupby(["suite", "dataset", "lib"])["value"].max().reset_index()
     ranks = []
     for _k, g in lib.groupby(["suite", "dataset"]):
         g = g.copy()
@@ -190,13 +195,10 @@ def report(out_path):
     print("== library mean rank (best variant per lib; lower is better) ==")
     print(rk.groupby("lib")["rank"].mean().sort_values().round(3).to_string())
     print("\n== outright wins ==")
-    print(rk[rk["rank"] == 1.0].groupby("lib").size()
-          .sort_values(ascending=False).to_string())
+    print(rk[rk["rank"] == 1.0].groupby("lib").size().sort_values(ascending=False).to_string())
     print("\n== per suite library mean rank ==")
-    print(rk.groupby(["suite", "lib"])["rank"].mean().round(3).unstack()
-          .to_string())
-    print("\ndatasets per suite:\n"
-          + rk.groupby(["suite"])["dataset"].nunique().to_string())
+    print(rk.groupby(["suite", "lib"])["rank"].mean().round(3).unstack().to_string())
+    print("\ndatasets per suite:\n" + rk.groupby(["suite"])["dataset"].nunique().to_string())
 
 
 def main(argv=None):
@@ -215,31 +217,45 @@ def parse_args(argv=None):
     the regime they run at."""
     ap = argparse.ArgumentParser(prog="python -m bonsai.bench.grinsztajn")
     ap.add_argument("out", help="results jsonl; existing rows are resumed")
-    ap.add_argument("--report", action="store_true",
-                    help="print the library standings from `out` instead")
-    ap.add_argument("--device", choices=sorted(DEVICE_VARIANTS),
-                    default=vr.Device.CPU,
-                    help="cpu sweeps every library on the host; cuda "
-                         "sweeps every library on the GPU")
-    ap.add_argument("--regime", choices=sorted(REGIMES),
-                    default=CAMPAIGN.name,
-                    help="campaign sweeps every library at depth 6; "
-                         "leaf-capped sweeps bonsai leafwise and lightgbm "
-                         "at 63 leaves with no binding depth cap")
+    ap.add_argument(
+        "--report", action="store_true", help="print the library standings from `out` instead"
+    )
+    ap.add_argument(
+        "--device",
+        choices=sorted(DEVICE_VARIANTS),
+        default=vr.Device.CPU,
+        help="cpu sweeps every library on the host; cuda sweeps every library on the GPU",
+    )
+    ap.add_argument(
+        "--regime",
+        choices=sorted(REGIMES),
+        default=CAMPAIGN.name,
+        help="campaign sweeps every library at depth 6; "
+        "leaf-capped sweeps bonsai leafwise and lightgbm "
+        "at 63 leaves with no binding depth cap",
+    )
     return ap.parse_args(argv)
 
 
 # Private Functions ================================================================================
 
+
 def _fit_bonsai(v, Xtr, ytr, Xte, kind, k):
     import bonsai
+
     grower = v.name.removeprefix("bonsai_")
     obj = "logloss" if kind == "auc" else "mse"
     m = bonsai.BonsaiRegressor(
-        objective=obj, grower=grower, n_iters=k["iters"],
-        learning_rate=k["lr"], max_depth=k["depth"], max_leaves=k["leaves"],
-        random_seed=k["seed"], n_threads=8,
-        params=params.BONSAI_CAMPAIGN_PARAMS).fit(Xtr, ytr)
+        objective=obj,
+        grower=grower,
+        n_iters=k["iters"],
+        learning_rate=k["lr"],
+        max_depth=k["depth"],
+        max_leaves=k["leaves"],
+        random_seed=k["seed"],
+        n_threads=8,
+        params=params.BONSAI_CAMPAIGN_PARAMS,
+    ).fit(Xtr, ytr)
     return np.asarray(m.predict(Xte))
 
 
@@ -247,16 +263,20 @@ def _fit_xgb(v, Xtr, ytr, Xte, kind, k):
     """xgboost at the regime's knobs; a cuda arm is checked after the fit
     because xgboost 3.3 drops an unserved cuda request to CPU silently."""
     import xgboost as xgb
+
     cls = xgb.XGBClassifier if kind == "auc" else xgb.XGBRegressor
     core = params.xgb_core(
-        learning_rate=k["lr"], max_depth=k["depth"],
-        min_data_in_leaf=k["min_data_in_leaf"], lambda_l2=k["lambda_l2"],
-        max_bin=k["bins"], seed=k["seed"])
+        learning_rate=k["lr"],
+        max_depth=k["depth"],
+        min_data_in_leaf=k["min_data_in_leaf"],
+        lambda_l2=k["lambda_l2"],
+        max_bin=k["bins"],
+        seed=k["seed"],
+    )
     core["random_state"] = core.pop("seed")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        m = cls(n_estimators=k["iters"], n_jobs=8, device=v.device,
-                **core).fit(Xtr, ytr)
+        m = cls(n_estimators=k["iters"], n_jobs=8, device=v.device, **core).fit(Xtr, ytr)
     if v.device == vr.Device.CUDA:
         runners.assert_xgb_trained_on_device(m.get_booster(), caught)
     return _predicted(m, Xte, kind)
@@ -264,33 +284,57 @@ def _fit_xgb(v, Xtr, ytr, Xte, kind, k):
 
 def _fit_lgbm(v, Xtr, ytr, Xte, kind, k):
     import lightgbm as lgb
+
     obj = "binary" if kind == "auc" else "regression"
-    p = {**params.lgbm_core(
-             learning_rate=k["lr"], max_depth=k["depth"],
-             num_leaves=k["leaves"], min_data_in_leaf=k["min_data_in_leaf"],
-             lambda_l2=k["lambda_l2"], max_bin=k["bins"], seed=k["seed"]),
-         "objective": obj, "num_iterations": k["iters"],
-         "deterministic": True, "num_threads": 8, "device_type": v.device}
+    p = {
+        **params.lgbm_core(
+            learning_rate=k["lr"],
+            max_depth=k["depth"],
+            num_leaves=k["leaves"],
+            min_data_in_leaf=k["min_data_in_leaf"],
+            lambda_l2=k["lambda_l2"],
+            max_bin=k["bins"],
+            seed=k["seed"],
+        ),
+        "objective": obj,
+        "num_iterations": k["iters"],
+        "deterministic": True,
+        "num_threads": 8,
+        "device_type": v.device,
+    }
     m = lgb.train(p, lgb.Dataset(Xtr, label=ytr))
     return m.predict(Xte)
 
 
 def _fit_catboost(v, Xtr, ytr, Xte, kind, k):
     import catboost as cb
+
     cls = cb.CatBoostClassifier if kind == "auc" else cb.CatBoostRegressor
-    m = cls(**params.catboost_core(
-                learning_rate=k["lr"], max_depth=k["depth"],
-                lambda_l2=k["lambda_l2"], max_bin=k["bins"],
-                seed=k["seed"], device=v.device),
-            iterations=k["iters"], verbose=False, thread_count=8,
-            allow_writing_files=False,
-            task_type=("GPU" if v.device == vr.Device.CUDA else "CPU"),
-            devices="0").fit(Xtr, ytr)
+    m = cls(
+        **params.catboost_core(
+            learning_rate=k["lr"],
+            max_depth=k["depth"],
+            lambda_l2=k["lambda_l2"],
+            max_bin=k["bins"],
+            seed=k["seed"],
+            device=v.device,
+        ),
+        iterations=k["iters"],
+        verbose=False,
+        thread_count=8,
+        allow_writing_files=False,
+        task_type=("GPU" if v.device == vr.Device.CUDA else "CPU"),
+        devices="0",
+    ).fit(Xtr, ytr)
     return _predicted(m, Xte, kind)
 
 
-_FITS = {vr.Lib.BONSAI: _fit_bonsai, vr.Lib.XGB: _fit_xgb,
-         vr.Lib.LGBM: _fit_lgbm, vr.Lib.CATBOOST: _fit_catboost}
+_FITS = {
+    vr.Lib.BONSAI: _fit_bonsai,
+    vr.Lib.XGB: _fit_xgb,
+    vr.Lib.LGBM: _fit_lgbm,
+    vr.Lib.CATBOOST: _fit_catboost,
+}
 
 
 def _predicted(model, Xte, kind):

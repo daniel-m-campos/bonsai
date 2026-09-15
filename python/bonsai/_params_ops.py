@@ -29,7 +29,8 @@ class SparseRepr:
         shown = ", ".join(
             f"{f.name}={getattr(self, f.name)!r}"
             for f in dataclasses.fields(self)
-            if getattr(self, f.name) is not None)
+            if getattr(self, f.name) is not None
+        )
         return f"{type(self).__name__}({shown})"
 
 
@@ -72,6 +73,7 @@ class ParamsOps(SparseRepr):
         file-base-plus-overrides layering ``config=`` used to express.
         """
         from bonsai import _bonsai
+
         with open(path, encoding="utf-8") as fh:
             return cls.from_dict(_bonsai._params_from_toml(fh.read()))
 
@@ -85,6 +87,7 @@ class ParamsOps(SparseRepr):
         rejects them.
         """
         from bonsai import _bonsai
+
         return cls.from_dict(_bonsai._params_from_toml(model.config_toml))
 
     @classmethod
@@ -110,11 +113,11 @@ class ParamsOps(SparseRepr):
             if not dot or section not in section_types:
                 raise ValueError(
                     f"unknown params key {key!r}: expected 'section.name' with "
-                    f"section one of {sorted(section_types)}")
+                    f"section one of {sorted(section_types)}"
+                )
             legal = {f.name for f in dataclasses.fields(section_types[section])}
             if leaf not in legal:
-                raise ValueError(
-                    f"unknown params key {key!r}: [{section}] has {sorted(legal)}")
+                raise ValueError(f"unknown params key {key!r}: [{section}] has {sorted(legal)}")
             by_section.setdefault(section, {})[leaf] = value
         return cls(**{s: section_types[s](**kv) for s, kv in by_section.items()})
 

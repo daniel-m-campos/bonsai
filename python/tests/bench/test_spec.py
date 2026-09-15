@@ -5,26 +5,52 @@ from __future__ import annotations
 import pytest
 from bonsai.bench import spec as spec_mod
 
-_GPU_ARMS = ["bonsai_cuda_depthwise", "bonsai_cuda_leafwise",
-             "bonsai_cuda_levelwise", "xgb_cuda", "lgbm_cuda", "catboost_gpu"]
-_CPU_ARMS = ["bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
-             "xgb_hist", "lgbm_cpu", "catboost_cpu"]
+_GPU_ARMS = [
+    "bonsai_cuda_depthwise",
+    "bonsai_cuda_leafwise",
+    "bonsai_cuda_levelwise",
+    "xgb_cuda",
+    "lgbm_cuda",
+    "catboost_gpu",
+]
+_CPU_ARMS = [
+    "bonsai_depthwise",
+    "bonsai_leafwise",
+    "bonsai_levelwise",
+    "xgb_hist",
+    "lgbm_cpu",
+    "catboost_cpu",
+]
 
 
 def test_spec_expansion():
-    s = {"name": "cell-test", "suite": "cells",
-         "defaults": {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255,
-                      "informative": 20, "seed": 42},
-         "cells": [{"rows": 16_777_216, "cols": 128},
-                   {"rows": 1_048_576, "cols": 2048},
-                   {"rows": 32_768, "cols": 65_536},
-                   {"rows": 1_000_000, "cols": 100}],
-         "variants": ["bonsai_cuda_depthwise", "xgb_cuda", "bonsai_depthwise"],
-         "threads": [16],
-         "repeats": {"default": 2, "cpu": 1}}
+    s = {
+        "name": "cell-test",
+        "suite": "cells",
+        "defaults": {
+            "depth": 8,
+            "iters": 100,
+            "lr": 0.1,
+            "bins": 255,
+            "informative": 20,
+            "seed": 42,
+        },
+        "cells": [
+            {"rows": 16_777_216, "cols": 128},
+            {"rows": 1_048_576, "cols": 2048},
+            {"rows": 32_768, "cols": 65_536},
+            {"rows": 1_000_000, "cols": 100},
+        ],
+        "variants": ["bonsai_cuda_depthwise", "xgb_cuda", "bonsai_depthwise"],
+        "threads": [16],
+        "repeats": {"default": 2, "cpu": 1},
+    }
     cells = spec_mod.cells_of(s)
     assert [(c["rows"], c["cols"]) for c in cells[:3]] == [
-        (16_777_216, 128), (1_048_576, 2048), (32_768, 65_536)]
+        (16_777_216, 128),
+        (1_048_576, 2048),
+        (32_768, 65_536),
+    ]
     assert cells[3]["axis"] == "cell" and cells[3]["n_test"] == 200_000
     jobs = spec_mod.expand(s)
     assert len(jobs) == 4 * 3
@@ -35,8 +61,7 @@ def test_spec_expansion():
         spec_mod.cells_of({"cells": [{"cols": 1000}]})
     # a typo'd knob in the defaults block would ride into every cell silently
     with pytest.raises(ValueError, match="unknown key"):
-        spec_mod.cells_of({"defaults": {"deph": 8},
-                           "cells": [{"rows": 100, "cols": 10}]})
+        spec_mod.cells_of({"defaults": {"deph": 8}, "cells": [{"rows": 100, "cols": 10}]})
 
 
 # The redesigned standings axes (decision 103): scenario name -> the cell it
@@ -52,10 +77,21 @@ STANDINGS_AXES = {
 
 def test_bundled_specs():
     names = spec_mod.bundled_specs()
-    assert names == ["cpu-tall", "cpu-wide", "cv-folds", "gpu-cv-folds",
-                     "gpu-early-stop", "gpu-extreme", "gpu-shap", "gpu-tall",
-                     "gpu-wide", "scaling-bins", "scaling-cols", "scaling-rows",
-                     "scaling-threads"]
+    assert names == [
+        "cpu-tall",
+        "cpu-wide",
+        "cv-folds",
+        "gpu-cv-folds",
+        "gpu-early-stop",
+        "gpu-extreme",
+        "gpu-shap",
+        "gpu-tall",
+        "gpu-wide",
+        "scaling-bins",
+        "scaling-cols",
+        "scaling-rows",
+        "scaling-threads",
+    ]
     s = spec_mod.load_spec("gpu-tall")  # bare name, no repo path
     assert s["suite"] == "gpu-tall" and len(spec_mod.expand(s)) == 6
     wide = spec_mod.load_spec("gpu-wide.json")  # suffix tolerated
@@ -104,12 +140,14 @@ def test_gpu_shap_expansion():
     arms, each carrying contribs=True so only this suite pays the phase."""
     s = spec_mod.load_spec("gpu-shap")
     assert s["suite"] == "gpu-shap"
-    assert s["variants"] == ["bonsai_cuda_depthwise", "xgb_cuda", "lgbm_cuda",
-                             "catboost_gpu"]
+    assert s["variants"] == ["bonsai_cuda_depthwise", "xgb_cuda", "lgbm_cuda", "catboost_gpu"]
     cells = spec_mod.cells_of(s)
     assert [(c["rows"], c["cols"], c["depth"]) for c in cells] == [
-        (1_048_576, 128, 6), (4_194_304, 128, 6), (1_048_576, 512, 6),
-        (1_048_576, 128, 8)]
+        (1_048_576, 128, 6),
+        (4_194_304, 128, 6),
+        (1_048_576, 512, 6),
+        (1_048_576, 128, 8),
+    ]
     assert all(c["contribs"] is True for c in cells)
     assert all(c["iters"] == 500 for c in cells)
     jobs = spec_mod.expand(s)

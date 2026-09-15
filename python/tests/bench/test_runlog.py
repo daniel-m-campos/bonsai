@@ -12,14 +12,31 @@ from bonsai.bench import runlog
 def test_runlog_roundtrip():
     with tempfile.NamedTemporaryFile("r", suffix=".jsonl") as f:
         knobs = {"b": 2, "a": 1}
-        row = runlog.emit_row(f.name, division="perf", suite="scaling",
-                              knobs=knobs, timing_mode="in_memory",
-                              variant="bonsai_dw", value=1.0, metric="r2",
-                              status="ok")
+        row = runlog.emit_row(
+            f.name,
+            division="perf",
+            suite="scaling",
+            knobs=knobs,
+            timing_mode="in_memory",
+            variant="bonsai_dw",
+            value=1.0,
+            metric="r2",
+            status="ok",
+        )
         back = json.loads(open(f.name).read().splitlines()[-1])
         assert back == json.loads(json.dumps(row))
-        for key in ("schema", "ts", "git_sha", "division", "suite", "cmd",
-                    "timing_mode", "host", "knobs", "knobs_hash"):
+        for key in (
+            "schema",
+            "ts",
+            "git_sha",
+            "division",
+            "suite",
+            "cmd",
+            "timing_mode",
+            "host",
+            "knobs",
+            "knobs_hash",
+        ):
             assert key in back, key
         # hash is canonical: key order must not matter
         assert runlog.knobs_hash({"a": 1, "b": 2}) == back["knobs_hash"]
@@ -43,8 +60,7 @@ def test_a_blank_stated_sha_falls_back_rather_than_recording_empty(monkeypatch):
     assert runlog.git_sha().strip() == runlog.git_sha()
 
 
-def test_outside_a_checkout_with_nothing_stated_the_sha_is_unknown(
-        monkeypatch, tmp_path):
+def test_outside_a_checkout_with_nothing_stated_the_sha_is_unknown(monkeypatch, tmp_path):
     """The failure this guards: no statement plus no checkout means the rows
     cannot be attributed, and update_standings refuses them."""
     monkeypatch.delenv("BONSAI_BENCH_GIT_SHA", raising=False)
@@ -67,16 +83,18 @@ def test_detect_host_driver_key():
     assert "omp_wait_policy" in host
 
 
-@pytest.mark.parametrize("line,expected", [
-    ("NVIDIA L40S, 46068", ("NVIDIA L40S", 45.0)),
-    ("Orin (nvgpu), [N/A]", ("Orin (nvgpu)", None)),
-])
+@pytest.mark.parametrize(
+    "line,expected",
+    [
+        ("NVIDIA L40S, 46068", ("NVIDIA L40S", 45.0)),
+        ("Orin (nvgpu), [N/A]", ("Orin (nvgpu)", None)),
+    ],
+)
 def test_gpu_line_parses_discrete_and_integrated(line, expected):
     assert runlog._gpu_name_and_vram_gb(line) == expected
 
 
-@pytest.mark.parametrize("text,expected", [("1360000 100000", 13.6),
-                                           ("max 100000", None)])
+@pytest.mark.parametrize("text,expected", [("1360000 100000", 13.6), ("max 100000", None)])
 def test_cpu_quota_reads_cgroup_v2(tmp_path, monkeypatch, text, expected):
     path = tmp_path / "cpu.max"
     path.write_text(text + "\n")
@@ -122,8 +140,7 @@ def test_usable_ram_takes_the_cgroup_limit_over_the_host(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("text", ["max", str(2**63 - 4096)])
-def test_usable_ram_falls_back_to_the_host_when_uncapped(tmp_path, monkeypatch,
-                                                         text):
+def test_usable_ram_falls_back_to_the_host_when_uncapped(tmp_path, monkeypatch, text):
     """`max` on v2 and the near-2**63 sentinel on v1 both mean no limit."""
     v2, v1 = tmp_path / "memory.max", tmp_path / "limit_in_bytes"
     (v2 if text == "max" else v1).write_text(text + "\n")
@@ -144,9 +161,7 @@ def test_usable_ram_reads_the_cgroup_v1_limit(tmp_path, monkeypatch):
 
 def test_cpuset_cores_is_none_when_the_mask_is_the_whole_machine(monkeypatch):
     monkeypatch.setattr(runlog.os, "cpu_count", lambda: 8)
-    monkeypatch.setattr(runlog.os, "sched_getaffinity", lambda pid: set(range(8)),
-                        raising=False)
+    monkeypatch.setattr(runlog.os, "sched_getaffinity", lambda pid: set(range(8)), raising=False)
     assert runlog._cpuset_cores() is None
-    monkeypatch.setattr(runlog.os, "sched_getaffinity", lambda pid: {0, 1},
-                        raising=False)
+    monkeypatch.setattr(runlog.os, "sched_getaffinity", lambda pid: {0, 1}, raising=False)
     assert runlog._cpuset_cores() == 2.0

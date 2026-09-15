@@ -104,8 +104,10 @@ IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8"
 # The create ladder, tried in order: the Workstation Edition is the same
 # silicon (runbook), rented only once no Server-Edition instance exists
 # anywhere. The rows tag themselves from nvidia-smi, never from this list.
-GPUS = ("NVIDIA RTX PRO 6000 Blackwell Server Edition",
-        "NVIDIA RTX PRO 6000 Blackwell Workstation Edition")
+GPUS = (
+    "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+)
 
 # Never rented, whatever it reports in stock: excluded by policy, not supply.
 BANNED_DATACENTERS = ("EUR-IS-2",)
@@ -144,9 +146,18 @@ AB_AXES = {PLANE_GPU: "gpu-tall", PLANE_CPU: "cpu-tall"}
 
 # Every axis is the stem of its dated results file AND the name of the
 # branch the pod script runs to produce it.
-AXES = ("gpu-tall", "gpu-wide", "gpu-extreme", "cpu-tall", "cpu-wide",
-        "gpu-early-stop", "gpu-shap", "quality-grinsztajn",
-        "quality-grinsztajn-gpu", "quality-grinsztajn-leaf-capped-gpu")
+AXES = (
+    "gpu-tall",
+    "gpu-wide",
+    "gpu-extreme",
+    "cpu-tall",
+    "cpu-wide",
+    "gpu-early-stop",
+    "gpu-shap",
+    "quality-grinsztajn",
+    "quality-grinsztajn-gpu",
+    "quality-grinsztajn-leaf-capped-gpu",
+)
 
 # Measured on this machine, not the pod: the code division reads the tree
 # rather than running it, so a rental would only rent a checkout. Named here
@@ -180,8 +191,16 @@ POLL_MAX_MISSES = 20
 CREATE_DEADLINE_S = 45 * 60
 CREATE_BACKOFF_S = 90
 
-SSH_OPTS = ["-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=15"]
+SSH_OPTS = [
+    "-o",
+    "IdentitiesOnly=yes",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "ConnectTimeout=15",
+]
 
 
 def main() -> int:
@@ -196,39 +215,60 @@ def main() -> int:
     sub = ap.add_subparsers(dest="phase", required=True)
     m = sub.add_parser("measure", help="rent a pod, run the suites, pull results")
     m.add_argument("--axes", default=",".join(AXES))
-    m.add_argument("--prev-version", default="",
-                   help="wheel for the A/B old arm (the anchor arm is "
-                        f"always {ANCHOR_VERSION})")
-    m.add_argument("--out-dir", default=None,
-                   help="where the jsonl files land (default: a dated dir)")
-    m.add_argument("--keep-pod", action="store_true",
-                   help="skip teardown (debugging; delete it yourself)")
-    m.add_argument("--only-stale", action="store_true",
-                   help="drop the requested axes whose plane digest has not "
-                   "moved since their last refresh (check_standings --stale)")
-    m.add_argument("--cpu-plane-host", choices=CPU_PLANE_HOSTS,
-                   default=PLANE_GPU,
-                   help="where the cpu axes are measured: on the GPU pod's "
-                        "own CPU (default, the host of record) or on a "
-                        "separately rented CPU pod; the cpu A/B rents a "
-                        "CPU pod either way")
-    m.add_argument("--cpu-vcpu", type=int, default=CPU_VCPU,
-                   help="vCPUs to buy for the CPU pod; must be at least "
-                        "one per thread the specs claim")
-    m.add_argument("--gpu-type", default="",
-                   help="rent exactly this GPU card instead of walking the "
-                        "Server-then-Workstation Edition ladder")
-    m.add_argument("--dry-run", action="store_true",
-                   help="print the rental plan, the sizing arithmetic, and "
-                        "the datacenters the GPU is in stock in, then exit "
-                        "without renting anything")
+    m.add_argument(
+        "--prev-version",
+        default="",
+        help=f"wheel for the A/B old arm (the anchor arm is always {ANCHOR_VERSION})",
+    )
+    m.add_argument(
+        "--out-dir", default=None, help="where the jsonl files land (default: a dated dir)"
+    )
+    m.add_argument(
+        "--keep-pod", action="store_true", help="skip teardown (debugging; delete it yourself)"
+    )
+    m.add_argument(
+        "--only-stale",
+        action="store_true",
+        help="drop the requested axes whose plane digest has not "
+        "moved since their last refresh (check_standings --stale)",
+    )
+    m.add_argument(
+        "--cpu-plane-host",
+        choices=CPU_PLANE_HOSTS,
+        default=PLANE_GPU,
+        help="where the cpu axes are measured: on the GPU pod's "
+        "own CPU (default, the host of record) or on a "
+        "separately rented CPU pod; the cpu A/B rents a "
+        "CPU pod either way",
+    )
+    m.add_argument(
+        "--cpu-vcpu",
+        type=int,
+        default=CPU_VCPU,
+        help="vCPUs to buy for the CPU pod; must be at least one per thread the specs claim",
+    )
+    m.add_argument(
+        "--gpu-type",
+        default="",
+        help="rent exactly this GPU card instead of walking the "
+        "Server-then-Workstation Edition ladder",
+    )
+    m.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the rental plan, the sizing arithmetic, and "
+        "the datacenters the GPU is in stock in, then exit "
+        "without renting anything",
+    )
     s = sub.add_parser("supersede", help="build the supersession PR from results")
     s.add_argument("--results-dir", required=True)
     s.add_argument("--axes", default=",".join(AXES))
-    s.add_argument("--no-pr", action="store_true",
-                   help="stop after commit (inspect before pushing)")
-    s.add_argument("--no-parity", action="store_true",
-                   help="accept a results dir with no parity evidence")
+    s.add_argument(
+        "--no-pr", action="store_true", help="stop after commit (inspect before pushing)"
+    )
+    s.add_argument(
+        "--no-parity", action="store_true", help="accept a results dir with no parity evidence"
+    )
     args = ap.parse_args()
     if args.phase == "measure":
         return measure(args)
@@ -236,6 +276,7 @@ def main() -> int:
 
 
 # Measure ==========================================================================================
+
 
 def measure(args: argparse.Namespace) -> int:
     """Run one pod session per host: create, launch, poll, pull, tear down.
@@ -263,28 +304,32 @@ def measure(args: argparse.Namespace) -> int:
         current = [a for a in axes if a not in stale]
         axes = [a for a in axes if a in stale]
         if current:
-            print(f"--only-stale: {', '.join(current)} unchanged since their "
-                  "last refresh, skipping")
+            print(
+                f"--only-stale: {', '.join(current)} unchanged since their last refresh, skipping"
+            )
         if not axes:
             print("every requested axis is current; nothing to measure")
             return 0
     sessions = _sessions(axes, args.cpu_plane_host)
-    cpu_session = next((sax for plane, sax in sessions if plane == PLANE_CPU),
-                       None)
+    cpu_session = next((sax for plane, sax in sessions if plane == PLANE_CPU), None)
     if cpu_session is not None:
         # One vCPU per thread is the whole sizing rule for a cpu pod: it
         # enforces the purchase as a cpuset, so a thread that spins at a
         # barrier burns only the core it already owns.
-        needed = max(spec_threads(axis)
-                     for axis in cpu_session or [AB_AXES[PLANE_CPU]])
+        needed = max(spec_threads(axis) for axis in cpu_session or [AB_AXES[PLANE_CPU]])
         what = ", ".join(cpu_session) or "the cpu A/B"
-        print(f"cpu plane: {what} at {needed}t need >= {needed} vCPU (one "
-              f"per thread, because a cpu pod caps by cpuset); renting "
-              f"{args.cpu_vcpu} x {CPU_FLAVOR}")
+        print(
+            f"cpu plane: {what} at {needed}t need >= {needed} vCPU (one "
+            f"per thread, because a cpu pod caps by cpuset); renting "
+            f"{args.cpu_vcpu} x {CPU_FLAVOR}"
+        )
         if args.cpu_vcpu < needed:
-            print(f"ERROR: --cpu-vcpu {args.cpu_vcpu} is below the {needed} "
-                  "the sizing rule requires; the fit would run more threads "
-                  "than the cpuset has cpus", file=sys.stderr)
+            print(
+                f"ERROR: --cpu-vcpu {args.cpu_vcpu} is below the {needed} "
+                "the sizing rule requires; the fit would run more threads "
+                "than the cpuset has cpus",
+                file=sys.stderr,
+            )
             return 1
     key = os.environ.get("RUNPOD_API_KEY")
     gpus = (args.gpu_type,) if args.gpu_type else GPUS
@@ -293,44 +338,58 @@ def measure(args: argparse.Namespace) -> int:
         print("--dry-run: nothing rented")
         return 0
     if not key:
-        print("ERROR: export RUNPOD_API_KEY first (runbook section 0)",
-              file=sys.stderr)
+        print("ERROR: export RUNPOD_API_KEY first (runbook section 0)", file=sys.stderr)
         return 1
-    out_dir = pathlib.Path(args.out_dir or
-                           f"standings-{time.strftime('%Y%m%d-%H%M')}")
+    out_dir = pathlib.Path(args.out_dir or f"standings-{time.strftime('%Y%m%d-%H%M')}")
     out_dir.mkdir(parents=True, exist_ok=True)
-    sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
-                         text=True, cwd=REPO).stdout.strip()
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=REPO
+    ).stdout.strip()
     pubkey = (pathlib.Path.home() / ".ssh" / "id_ed25519.pub").read_text().strip()
     for plane, session_axes in sessions:
-        _run_session(key, args, plane=plane, axes=session_axes,
-                     out_dir=out_dir, sha=sha, pubkey=pubkey, gpus=gpus)
+        _run_session(
+            key,
+            args,
+            plane=plane,
+            axes=session_axes,
+            out_dir=out_dir,
+            sha=sha,
+            pubkey=pubkey,
+            gpus=gpus,
+        )
     quota_fail = out_dir / QUOTA_FAIL
     if quota_fail.exists():
-        print("ERROR: a pod's gate failed an axis; its rows were renamed "
-              "QUOTAFAIL-* and must not be superseded:\n"
-              + quota_fail.read_text().rstrip(), file=sys.stderr)
+        print(
+            "ERROR: a pod's gate failed an axis; its rows were renamed "
+            "QUOTAFAIL-* and must not be superseded:\n" + quota_fail.read_text().rstrip(),
+            file=sys.stderr,
+        )
     # DONE only means the pod script ran to its last line; an axis its RAM
     # guard skipped ends there with no rows and no failure count, so the
     # delivery is verified file by file rather than trusted from the marker.
-    missing = [a for a in axes
-               if not _own_files(out_dir, a)
-               and not any(out_dir.glob(f"QUOTAFAIL-{a}-*.jsonl"))]
+    missing = [
+        a
+        for a in axes
+        if not _own_files(out_dir, a) and not any(out_dir.glob(f"QUOTAFAIL-{a}-*.jsonl"))
+    ]
     if missing:
-        print("ERROR: the pod reported done but delivered no rows for "
-              f"{', '.join(missing)}; a pod-side SKIP is not a measurement. "
-              "Re-run these axes on a host that can take them.",
-              file=sys.stderr)
+        print(
+            "ERROR: the pod reported done but delivered no rows for "
+            f"{', '.join(missing)}; a pod-side SKIP is not a measurement. "
+            "Re-run these axes on a host that can take them.",
+            file=sys.stderr,
+        )
     if quota_fail.exists() or missing:
         return 1
-    print(f"results in {out_dir}/; next:\n"
-          f"  python3 scripts/standings_refresh.py supersede "
-          f"--results-dir {out_dir}")
+    print(
+        f"results in {out_dir}/; next:\n"
+        f"  python3 scripts/standings_refresh.py supersede "
+        f"--results-dir {out_dir}"
+    )
     return 0
 
 
-def _sessions(axes: list[str],
-              cpu_plane_host: str) -> list[tuple[str, list[str]]]:
+def _sessions(axes: list[str], cpu_plane_host: str) -> list[tuple[str, list[str]]]:
     """The pod sessions a measurement rents, as (plane, axes) pairs.
 
     The GPU session carries every axis by default (the host of record for
@@ -342,12 +401,13 @@ def _sessions(axes: list[str],
     cpu_axes = [a for a in axes if a.startswith(CPU_PREFIX)]
     if cpu_plane_host == PLANE_GPU:
         if cpu_axes:
-            print(f"cpu plane: {', '.join(cpu_axes)} on the GPU pod's own "
-                  f"CPU at {max(spec_threads(a) for a in cpu_axes)}t "
-                  "(runbook section 11)")
+            print(
+                f"cpu plane: {', '.join(cpu_axes)} on the GPU pod's own "
+                f"CPU at {max(spec_threads(a) for a in cpu_axes)}t "
+                "(runbook section 11)"
+            )
         return [(PLANE_GPU, axes), (PLANE_CPU, [])]
-    sessions = [(PLANE_GPU, [a for a in axes if a not in cpu_axes]),
-                (PLANE_CPU, cpu_axes)]
+    sessions = [(PLANE_GPU, [a for a in axes if a not in cpu_axes]), (PLANE_CPU, cpu_axes)]
     return [(plane, sax) for plane, sax in sessions if sax]
 
 
@@ -383,21 +443,23 @@ def stocked_datacenters(gpu_type: str, key: str) -> list[str]:
     try:
         # product=POD is mandatory with include=AVAILABILITY, and Cloudflare
         # rejects urllib's default User-Agent with a bare 403 (error 1010).
-        out = _api(f"{CATALOG}?include=AVAILABILITY&cloud=SECURE&product=POD",
-                   key, method="GET")
+        out = _api(f"{CATALOG}?include=AVAILABILITY&cloud=SECURE&product=POD", key, method="GET")
     except OSError as e:
-        print(f"WARNING: availability lookup failed ({e}); the create goes "
-              "unpinned", file=sys.stderr)
+        print(
+            f"WARNING: availability lookup failed ({e}); the create goes unpinned", file=sys.stderr
+        )
         return []
     gpu = next((g for g in out.get("gpus", []) if g.get("id") == gpu_type), {})
-    ranked = sorted((STOCK_ORDER.index(dc["availability"]), dc["id"])
-                    for dc in gpu.get("dataCenters", [])
-                    if dc.get("availability") in STOCK_ORDER
-                    and dc.get("id") not in BANNED_DATACENTERS)
+    ranked = sorted(
+        (STOCK_ORDER.index(dc["availability"]), dc["id"])
+        for dc in gpu.get("dataCenters", [])
+        if dc.get("availability") in STOCK_ORDER and dc.get("id") not in BANNED_DATACENTERS
+    )
     return [dc for _, dc in ranked]
 
 
 # Supersede ========================================================================================
+
 
 def supersede(args: argparse.Namespace) -> int:
     """Build the supersession PR from a local results directory.
@@ -416,18 +478,21 @@ def supersede(args: argparse.Namespace) -> int:
     """
     src = pathlib.Path(args.results_dir)
     axes = _requested_axes(args.axes)
-    parity = _cleared_parity(src / "parity.jsonl", axes,
-                             no_parity=args.no_parity)
+    parity = _cleared_parity(src / "parity.jsonl", axes, no_parity=args.no_parity)
     if parity is None:
         return 1
     files = _stage_axis_files(src, axes)
     if files is None:
         return 1
     _restamp_and_render(
-        axes, files,
+        axes,
+        files,
         _copy_evidence(src / "parity.jsonl", files.get(PARITY_AXIS), "parity"),
-        {axis: _copy_evidence(src / AB_FILES[plane], files.get(axis), f"ab-{plane}")
-         for plane, axis in AB_AXES.items()})
+        {
+            axis: _copy_evidence(src / AB_FILES[plane], files.get(axis), f"ab-{plane}")
+            for plane, axis in AB_AXES.items()
+        },
+    )
     verdict = _ab_verdicts(src)
     print(verdict or "A/B skipped (no ab-*.jsonl)")
 
@@ -463,28 +528,32 @@ def registry_drift() -> str:
     registered = set(registry)
     if known == registered:
         return ""
-    lines = ["ERROR: the driver and benchmarks/standings.json disagree "
-             "about which axes exist"]
+    lines = ["ERROR: the driver and benchmarks/standings.json disagree about which axes exist"]
     if missing := sorted(registered - known):
-        lines.append(f"  in the registry, measured by nothing: "
-                     f"{', '.join(missing)}")
+        lines.append(f"  in the registry, measured by nothing: {', '.join(missing)}")
     if extra := sorted(known - registered):
-        lines.append(f"  measured here, in no registry entry: "
-                     f"{', '.join(extra)}")
-    lines.append("  add the branch to standings_refresh_pod.sh and the name "
-                 "to AXES, or to LOCAL_AXES if it is measured off-pod")
+        lines.append(f"  measured here, in no registry entry: {', '.join(extra)}")
+    lines.append(
+        "  add the branch to standings_refresh_pod.sh and the name "
+        "to AXES, or to LOCAL_AXES if it is measured off-pod"
+    )
     return "\n".join(lines)
 
 
 def stale_axes() -> set[str]:
     """The axes `check_standings.py --stale` says a refresh must measure."""
-    out = subprocess.run([sys.executable, "scripts/check_standings.py",
-                          "--stale"], capture_output=True, text=True,
-                         check=True, cwd=REPO)
+    out = subprocess.run(
+        [sys.executable, "scripts/check_standings.py", "--stale"],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=REPO,
+    )
     return {line.strip() for line in out.stdout.splitlines() if line.strip()}
 
 
 # Private Helpers ==================================================================================
+
 
 def _refresh_title(axes: list[str]) -> str:
     """The commit and PR title; the axis list appears only while it fits.
@@ -499,8 +568,9 @@ def _refresh_title(axes: list[str]) -> str:
     return f"bench(standings): refresh {len(axes)} axes"
 
 
-def _dry_run_datacenters(key: str | None, sessions: list[tuple[str, list[str]]],
-                         gpus: tuple[str, ...]):
+def _dry_run_datacenters(
+    key: str | None, sessions: list[tuple[str, list[str]]], gpus: tuple[str, ...]
+):
     """Print the datacenters each GPU create would try, renting nothing.
 
     This is the only way to exercise the stock reading without buying a
@@ -513,8 +583,10 @@ def _dry_run_datacenters(key: str | None, sessions: list[tuple[str, list[str]]],
         return
     for gpu in gpus:
         stocked = stocked_datacenters(gpu, key)
-        print(f"{gpu}: in stock, best first: "
-              f"{', '.join(stocked) or 'none; the create would go unpinned'}")
+        print(
+            f"{gpu}: in stock, best first: "
+            f"{', '.join(stocked) or 'none; the create would go unpinned'}"
+        )
 
 
 def _row_host(path: pathlib.Path) -> str:
@@ -526,8 +598,7 @@ def _row_host(path: pathlib.Path) -> str:
     return ""
 
 
-def _copy_evidence(path: pathlib.Path, axis_file: str | None,
-                   prefix: str) -> str | None:
+def _copy_evidence(path: pathlib.Path, axis_file: str | None, prefix: str) -> str | None:
     """Copy ``path`` to RESULTS as ``<prefix>-<stamp>.jsonl``, dated from
     the axis file it was measured beside; None when either is absent."""
     if not axis_file or not path.exists():
@@ -543,31 +614,37 @@ def _requested_axes(spec: str) -> list[str]:
     return [a.strip() for a in spec.split(",") if a.strip()]
 
 
-def _cleared_parity(path: pathlib.Path, axes: list[str], *,
-                    no_parity: bool) -> str | None:
+def _cleared_parity(path: pathlib.Path, axes: list[str], *, no_parity: bool) -> str | None:
     """The parity table these results carry, or None when the gate refuses."""
     # The pod takes parity rows only when the session measures the axis they
     # anchor, so for any other session absence is the expected state rather
     # than a lost file. A parity.jsonl that is there anyway is still read.
     anchored = PARITY_AXIS in axes
     if not anchored:
-        print("Parity not expected: these axes do not include "
-              f"{PARITY_AXIS}, which the parity rows anchor.")
+        print(
+            "Parity not expected: these axes do not include "
+            f"{PARITY_AXIS}, which the parity rows anchor."
+        )
     table, ok = _parity(path, allow_absent=no_parity or not anchored)
     print(table)
     if ok:
         return table
     if not path.exists():
-        print("ERROR: no parity.jsonl in this results dir; absence "
-              "means the check never ran (a lost scp, a pod that died "
-              "before the parity phase), which is exactly the failure "
-              "mode the gate exists to catch. Pass --no-parity to "
-              "proceed deliberately without parity evidence.",
-              file=sys.stderr)
+        print(
+            "ERROR: no parity.jsonl in this results dir; absence "
+            "means the check never ran (a lost scp, a pod that died "
+            "before the parity phase), which is exactly the failure "
+            "mode the gate exists to catch. Pass --no-parity to "
+            "proceed deliberately without parity evidence.",
+            file=sys.stderr,
+        )
     else:
-        print("ERROR: fused/two-step parity failed; the ingest/train "
-              "split in these rows is not trustworthy. Fix the "
-              "runner's device hint and re-measure.", file=sys.stderr)
+        print(
+            "ERROR: fused/two-step parity failed; the ingest/train "
+            "split in these rows is not trustworthy. Fix the "
+            "runner's device hint and re-measure.",
+            file=sys.stderr,
+        )
     return None
 
 
@@ -587,18 +664,20 @@ def _stage_axis_files(src: pathlib.Path, axes: list[str]) -> dict | None:
 def _own_files(src: pathlib.Path, axis: str) -> list[pathlib.Path]:
     """The axis's files, oldest first: a longer axis name that also prefixes
     a file owns it, so quality-grinsztajn never claims the -gpu results."""
-    longer = [f"{other}-" for other in (*AXES, *LOCAL_AXES)
-              if other != axis and other.startswith(f"{axis}-")]
-    return sorted(path for path in src.glob(f"{axis}-*.jsonl")
-                  if not path.name.startswith(tuple(longer)))
+    longer = [
+        f"{other}-"
+        for other in (*AXES, *LOCAL_AXES)
+        if other != axis and other.startswith(f"{axis}-")
+    ]
+    return sorted(
+        path for path in src.glob(f"{axis}-*.jsonl") if not path.name.startswith(tuple(longer))
+    )
 
 
-def _restamp_and_render(axes: list[str], files: dict,
-                        companion: str | None, ab: dict) -> None:
+def _restamp_and_render(axes: list[str], files: dict, companion: str | None, ab: dict) -> None:
     """Move every axis's stamp onto its new file, then regenerate the pages."""
     for axis in axes:
-        cmd = [sys.executable, "scripts/update_standings.py",
-               "--axis", axis, "--file", files[axis]]
+        cmd = [sys.executable, "scripts/update_standings.py", "--axis", axis, "--file", files[axis]]
         if axis == PARITY_AXIS and companion:
             cmd += ["--companion", companion]
         if ab.get(axis):
@@ -607,8 +686,7 @@ def _restamp_and_render(axes: list[str], files: dict,
     # Stage supersessions BEFORE rendering: the committed-files gate reads
     # git ls-files, and a month-rollover refresh deletes the old dated files.
     subprocess.run(["git", "add", "-A", "benchmarks/"], check=True, cwd=REPO)
-    subprocess.run([sys.executable, "scripts/render_results.py"],
-                   check=True, cwd=REPO)
+    subprocess.run([sys.executable, "scripts/render_results.py"], check=True, cwd=REPO)
 
 
 def _cpu_hosts_note(axes: list[str], files: dict) -> str:
@@ -622,52 +700,75 @@ def _cpu_hosts_note(axes: list[str], files: dict) -> str:
     if not cpu_axes:
         return ""
     cpu_hosts = sorted({_row_host(RESULTS / files[a]) for a in cpu_axes})
-    return (f"\n\nCPU axes ({', '.join(cpu_axes)}) were measured on "
-            f"{', '.join(h for h in cpu_hosts if h)} (issue #355). "
-            "Every row carries its own host block, so the registry "
-            "records which machine and which ceiling stands behind "
-            "each axis.")
+    return (
+        f"\n\nCPU axes ({', '.join(cpu_axes)}) were measured on "
+        f"{', '.join(h for h in cpu_hosts if h)} (issue #355). "
+        "Every row carries its own host block, so the registry "
+        "records which machine and which ceiling stands behind "
+        "each axis."
+    )
 
 
 def _commit_refresh(axes: list[str], hosts_note: str) -> str:
     """Branch, stage the regenerated pages, commit; returns the branch name."""
     branch = f"standings-refresh-{time.strftime('%Y%m%d')}"
     subprocess.run(["git", "checkout", "-b", branch], check=True, cwd=REPO)
-    subprocess.run(["git", "add", "-A", "benchmarks/", "docs/results/",
-                    "README.md"], check=True, cwd=REPO)
-    subprocess.run(["git", "commit", "-m",
-                    f"{_refresh_title(axes)}\n\n"
-                    f"Axes: {','.join(axes)}. Same-pod refresh via "
-                    "scripts/standings_refresh.py "
-                    "(decision 96); superseded files deleted, registry "
-                    "updated, ledger and README regenerated." + hosts_note],
-                   check=True, cwd=REPO)
+    subprocess.run(
+        ["git", "add", "-A", "benchmarks/", "docs/results/", "README.md"], check=True, cwd=REPO
+    )
+    subprocess.run(
+        [
+            "git",
+            "commit",
+            "-m",
+            f"{_refresh_title(axes)}\n\n"
+            f"Axes: {','.join(axes)}. Same-pod refresh via "
+            "scripts/standings_refresh.py "
+            "(decision 96); superseded files deleted, registry "
+            "updated, ledger and README regenerated." + hosts_note,
+        ],
+        check=True,
+        cwd=REPO,
+    )
     return branch
 
 
-def _open_refresh_pr(axes: list[str], branch: str, parity: str, verdict: str,
-                     hosts_note: str) -> None:
+def _open_refresh_pr(
+    axes: list[str], branch: str, parity: str, verdict: str, hosts_note: str
+) -> None:
     """Push the branch and open the supersession PR with both gate tables."""
     subprocess.run(["git", "push", "-u", "origin", branch], check=True, cwd=REPO)
-    body = (f"Standings refresh of {','.join(axes)} via "
-            f"`scripts/standings_refresh.py` "
-            f"(decision 96).{hosts_note}\n\nIngest/train parity (bonsai's "
-            f"fused call vs the two-step Dataset form, same pod, interleaved, "
-            f"+-{PARITY_BAND_PCT}% band):\n\n{parity}\n\n"
-            f"A/B verdict (previous release wheel and the {ANCHOR_VERSION} "
-            f"anchor vs HEAD, same pod, interleaved, min of reps, "
-            f"+-{AB_BAND_PCT}% band vs old, +-{ANCHOR_BAND_PCT}% vs the "
-            f"anchor):\n\n{verdict or 'A/B skipped.'}\n\nA **moved** "
-            f"verdict requires a `Standings:`-tagged decision entry before "
-            f"merge; the docs-check gate enforces it.")
-    subprocess.run(["gh", "pr", "create", "--base", "main", "--title",
-                    _refresh_title(axes), "--body", body], check=True,
-                   cwd=REPO)
+    body = (
+        f"Standings refresh of {','.join(axes)} via "
+        f"`scripts/standings_refresh.py` "
+        f"(decision 96).{hosts_note}\n\nIngest/train parity (bonsai's "
+        f"fused call vs the two-step Dataset form, same pod, interleaved, "
+        f"+-{PARITY_BAND_PCT}% band):\n\n{parity}\n\n"
+        f"A/B verdict (previous release wheel and the {ANCHOR_VERSION} "
+        f"anchor vs HEAD, same pod, interleaved, min of reps, "
+        f"+-{AB_BAND_PCT}% band vs old, +-{ANCHOR_BAND_PCT}% vs the "
+        f"anchor):\n\n{verdict or 'A/B skipped.'}\n\nA **moved** "
+        f"verdict requires a `Standings:`-tagged decision entry before "
+        f"merge; the docs-check gate enforces it."
+    )
+    subprocess.run(
+        ["gh", "pr", "create", "--base", "main", "--title", _refresh_title(axes), "--body", body],
+        check=True,
+        cwd=REPO,
+    )
 
 
-def _run_session(key: str, args: argparse.Namespace, *, plane: str,
-                 axes: list[str], out_dir: pathlib.Path, sha: str,
-                 pubkey: str, gpus: tuple[str, ...]):
+def _run_session(
+    key: str,
+    args: argparse.Namespace,
+    *,
+    plane: str,
+    axes: list[str],
+    out_dir: pathlib.Path,
+    sha: str,
+    pubkey: str,
+    gpus: tuple[str, ...],
+):
     """One pod, one plane: create, launch the on-pod script, poll, tear down.
 
     Both planes write into the same results directory. Their file names do
@@ -676,31 +777,54 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
     measures the axis they anchor, so they cannot arrive from a host that
     measured no anchor.
     """
-    pod_id = _create_pod(key, pubkey, plane=plane, vcpu=args.cpu_vcpu,
-                         gpus=gpus)
-    print(f"{plane} pod {pod_id} created for "
-          f"{', '.join(axes) or 'the cpu A/B'}; waiting for ssh")
+    pod_id = _create_pod(key, pubkey, plane=plane, vcpu=args.cpu_vcpu, gpus=gpus)
+    print(f"{plane} pod {pod_id} created for {', '.join(axes) or 'the cpu A/B'}; waiting for ssh")
     # No HOST_TAG on either plane: the driver knows what it asked for, the
     # pod knows what it got, and naming a row after the request is how a
     # 12-thread run ended up committed under a 16-thread tag.
     try:
         ip, port = _wait_ssh(key, pod_id)
-        ssh = ["ssh", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
-               *SSH_OPTS, "-p", str(port), f"root@{ip}"]
-        _wait_until(lambda: subprocess.run([*ssh, "true"],
-                                           capture_output=True).returncode == 0,
-                    timeout_s=180, what="sshd")
-        subprocess.run(["scp", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
-                        *SSH_OPTS, "-P", str(port), str(POD_SCRIPT),
-                        f"root@{ip}:/root/"], check=True)
+        ssh = [
+            "ssh",
+            "-i",
+            str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
+            *SSH_OPTS,
+            "-p",
+            str(port),
+            f"root@{ip}",
+        ]
+        _wait_until(
+            lambda: subprocess.run([*ssh, "true"], capture_output=True).returncode == 0,
+            timeout_s=180,
+            what="sshd",
+        )
+        subprocess.run(
+            [
+                "scp",
+                "-i",
+                str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
+                *SSH_OPTS,
+                "-P",
+                str(port),
+                str(POD_SCRIPT),
+                f"root@{ip}:/root/",
+            ],
+            check=True,
+        )
         # Detached: an ssh drop must not kill a multi-hour sweep.
-        subprocess.run([*ssh, f"nohup env AXES='{','.join(axes)}' "
-                        f"GIT_SHA='{sha}' "
-                        f"PREV_VERSION='{args.prev_version}' "
-                        f"ANCHOR_VERSION='{ANCHOR_VERSION}' "
-                        f"PLANE='{plane}' "
-                        "bash /root/standings_refresh_pod.sh "
-                        "> /root/refresh.log 2>&1 & echo launched"], check=True)
+        subprocess.run(
+            [
+                *ssh,
+                f"nohup env AXES='{','.join(axes)}' "
+                f"GIT_SHA='{sha}' "
+                f"PREV_VERSION='{args.prev_version}' "
+                f"ANCHOR_VERSION='{ANCHOR_VERSION}' "
+                f"PLANE='{plane}' "
+                "bash /root/standings_refresh_pod.sh "
+                "> /root/refresh.log 2>&1 & echo launched",
+            ],
+            check=True,
+        )
         _poll_pod_run(ssh, out_dir, ip, port, axes)
     finally:
         if args.keep_pod:
@@ -710,15 +834,18 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
             _sweep(key)
 
 
-def _api(url: str, key: str, payload: dict | None = None,
-         method: str = "POST") -> dict:
+def _api(url: str, key: str, payload: dict | None = None, method: str = "POST") -> dict:
     """One authenticated RunPod API call; the key never reaches stdout."""
     req = urllib.request.Request(
-        url, method=method,
+        url,
+        method=method,
         data=json.dumps(payload).encode() if payload is not None else None,
-        headers={"Authorization": f"Bearer {key}",
-                 "User-Agent": "bonsai-standings-refresh",
-                 "content-type": "application/json"})
+        headers={
+            "Authorization": f"Bearer {key}",
+            "User-Agent": "bonsai-standings-refresh",
+            "content-type": "application/json",
+        },
+    )
     with urllib.request.urlopen(req, timeout=30) as resp:
         body = resp.read().decode()
     return json.loads(body) if body.strip() else {}
@@ -739,14 +866,12 @@ def _pod_named(key: str, name: str) -> str:
     the same as no pod, and the caller then tries the next candidate.
     """
     try:
-        return next((p["id"] for p in _pods(key)
-                     if p.get("name") == name and p.get("id")), "")
+        return next((p["id"] for p in _pods(key) if p.get("name") == name and p.get("id")), "")
     except OSError:
         return ""
 
 
-def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
-                gpus: tuple[str, ...]) -> str:
+def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int, gpus: tuple[str, ...]) -> str:
     """Create a standings pod for one plane, with the mandated PUBLIC_KEY env.
 
     A GPU pod is bought by device, and its CPU share is whatever the host
@@ -760,11 +885,15 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
     a cpu flavor is not a device with a per-region stock reading.
     """
     name = f"bonsai-standings-{plane}-{time.strftime('%Y%m%d-%H%M')}"
-    body = {"name": name, "image": IMAGE, "cloud": "SECURE",
-            "ports": ["22/tcp"], "env": {"PUBLIC_KEY": pubkey}}
+    body = {
+        "name": name,
+        "image": IMAGE,
+        "cloud": "SECURE",
+        "ports": ["22/tcp"],
+        "env": {"PUBLIC_KEY": pubkey},
+    }
     if plane == PLANE_CPU:
-        body |= {"cpu": {"id": CPU_FLAVOR, "vcpuCount": vcpu},
-                 "disk": CPU_DISK_GB}
+        body |= {"cpu": {"id": CPU_FLAVOR, "vcpuCount": vcpu}, "disk": CPU_DISK_GB}
         bodies = [body]
     else:
         # One datacenter per attempt: a multi-entry dataCenterIds list can
@@ -773,10 +902,8 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
         # pinning.
         bodies = []
         for gpu in gpus:
-            card = body | {"gpu": {"id": gpu, "count": 1},
-                           "disk": GPU_DISK_GB}
-            bodies += [card | {"dataCenterIds": [dc]}
-                       for dc in stocked_datacenters(gpu, key)]
+            card = body | {"gpu": {"id": gpu, "count": 1}, "disk": GPU_DISK_GB}
+            bodies += [card | {"dataCenterIds": [dc]} for dc in stocked_datacenters(gpu, key)]
             bodies.append(card)
     deadline = time.time() + CREATE_DEADLINE_S
     attempt = 0
@@ -797,20 +924,20 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
                 # placing one bills for it until something deletes it,
                 # so the error path adopts a pod already carrying this
                 # session's name rather than asking for a second.
-                print(f"create attempt {attempt} ({hardware}, {where}): {e}",
-                      file=sys.stderr)
+                print(f"create attempt {attempt} ({hardware}, {where}): {e}", file=sys.stderr)
                 placed = _pod_named(key, name)
                 if placed:
-                    print(f"  {placed} carries {name} despite the "
-                          "error; adopting it")
+                    print(f"  {placed} carries {name} despite the error; adopting it")
                     return placed
         if time.time() > deadline:
             raise SystemExit(
                 f"no usable {plane} pod after {attempt} passes over "
                 f"{len(bodies)} candidates in "
-                f"{CREATE_DEADLINE_S // 60} minutes")
-        print(f"  every candidate refused; retrying in "
-              f"{CREATE_BACKOFF_S}s (stock churns)", flush=True)
+                f"{CREATE_DEADLINE_S // 60} minutes"
+            )
+        print(
+            f"  every candidate refused; retrying in {CREATE_BACKOFF_S}s (stock churns)", flush=True
+        )
         time.sleep(CREATE_BACKOFF_S)
 
 
@@ -823,9 +950,10 @@ def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
     mapping is polled first, then sshd itself, which is the only signal
     that means the next step will work.
     """
+
     def mapping():
         out = _api(f"{REST}/pods/{pod_id}", key, method="GET")
-        for entry in ((out.get("runtime") or {}).get("ports") or []):
+        for entry in (out.get("runtime") or {}).get("ports") or []:
             if entry.get("private") == 22 and entry.get("ip"):
                 return entry["ip"], int(entry["public"])
         return None
@@ -835,8 +963,17 @@ def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
     # placement takes longer, so this budget is generous on purpose.
     ip, port = _wait_until(mapping, timeout_s=900, what="pod port mapping")
 
-    probe = ["ssh", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
-             *SSH_OPTS, "-p", str(port), f"root@{ip}", "true"]
+    probe = [
+        "ssh",
+        "-i",
+        str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
+        *SSH_OPTS,
+        "-p",
+        str(port),
+        f"root@{ip}",
+        "true",
+    ]
+
     def sshd():
         return subprocess.run(probe, capture_output=True).returncode == 0
 
@@ -844,8 +981,7 @@ def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
     return ip, port
 
 
-def _poll_pod_run(ssh: list[str], out_dir: pathlib.Path, ip: str, port: int,
-                  axes: list[str]):
+def _poll_pod_run(ssh: list[str], out_dir: pathlib.Path, ip: str, port: int, axes: list[str]):
     """Poll the detached run; pull the session directory incrementally.
 
     Pulling every poll (not just at the end) means a pod that dies late
@@ -867,22 +1003,29 @@ def _poll_pod_run(ssh: list[str], out_dir: pathlib.Path, ip: str, port: int,
         sweep and a nine-axis release refresh are hours apart, and a cap
         sized for the second is no cap at all for the first.
     """
-    scp_base = ["scp", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
-                *SSH_OPTS, "-P", str(port)]
+    scp_base = [
+        "scp",
+        "-i",
+        str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
+        *SSH_OPTS,
+        "-P",
+        str(port),
+    ]
     deadline = time.time() + POLL_BASE_S + POLL_PER_AXIS_S * max(1, len(axes))
     misses = 0
     while True:
         time.sleep(120)
-        subprocess.run([*scp_base, f"root@{ip}:/root/standings/*",
-                        str(out_dir) + "/"], capture_output=True)
-        tail = subprocess.run([*ssh, "tail -2 /root/refresh.log"],
-                              capture_output=True, text=True)
+        subprocess.run(
+            [*scp_base, f"root@{ip}:/root/standings/*", str(out_dir) + "/"], capture_output=True
+        )
+        tail = subprocess.run([*ssh, "tail -2 /root/refresh.log"], capture_output=True, text=True)
         left = (deadline - time.time()) / 60
         last = tail.stdout.strip().splitlines()[-1:] or [""]
         print(f"  pod ({left:.0f}m left): {last[0][:100]}", flush=True)
         if "STANDINGS_REFRESH_DONE" in tail.stdout:
-            subprocess.run([*scp_base, f"root@{ip}:/root/standings/*",
-                            str(out_dir) + "/"], check=True)
+            subprocess.run(
+                [*scp_base, f"root@{ip}:/root/standings/*", str(out_dir) + "/"], check=True
+            )
             return
         misses = misses + 1 if tail.returncode != 0 else 0
         if tail.returncode != 0:
@@ -890,12 +1033,14 @@ def _poll_pod_run(ssh: list[str], out_dir: pathlib.Path, ip: str, port: int,
         if misses >= POLL_MAX_MISSES:
             raise SystemExit(
                 f"pod unreachable for {misses} consecutive polls; tearing it "
-                "down. Whatever it had measured is in the results directory.")
+                "down. Whatever it had measured is in the results directory."
+            )
         if time.time() > deadline:
             raise SystemExit(
                 f"no STANDINGS_REFRESH_DONE within the deadline for "
                 f"{len(axes)} axes; tearing the pod down. Whatever it had "
-                "measured is in the results directory.")
+                "measured is in the results directory."
+            )
 
 
 def _delete_pod(key: str, pod_id: str):
@@ -914,8 +1059,7 @@ def _sweep(key: str):
     except OSError as e:
         print(f"WARNING: sweep list failed: {e}", file=sys.stderr)
         return
-    strays = [p["id"] for p in items
-              if str(p.get("name", "")).startswith("bonsai-standings")]
+    strays = [p["id"] for p in items if str(p.get("name", "")).startswith("bonsai-standings")]
     for pid in strays:
         _delete_pod(key, pid)
     if strays:
@@ -967,8 +1111,7 @@ def _parity(path: pathlib.Path, *, allow_absent: bool = False) -> tuple[str, boo
     if not live:
         return "Parity check skipped on this host (no visible CUDA device).", True
     cell = f"{live[0]['rows']}x{live[0]['cols']} {live[0]['grower']}"
-    lines = [f"| metric ({cell}) | fused | two-step | delta |",
-             "|---|--:|--:|--:|"]
+    lines = [f"| metric ({cell}) | fused | two-step | delta |", "|---|--:|--:|--:|"]
     ok = True
     for metric, unit in (("fit_s", "s"), ("peak_rss_gb", "GB")):
         row, moved = _parity_metric_row(live, metric, unit)
@@ -976,46 +1119,53 @@ def _parity(path: pathlib.Path, *, allow_absent: bool = False) -> tuple[str, boo
         ok = ok and not moved
     if split := _two_step_split(live):
         lines += ["", split]
-    lines += ["", f"Verdict: {'PASS' if ok else 'FAIL'} "
-                  f"(band +-{PARITY_BAND_PCT}%)."]
+    lines += ["", f"Verdict: {'PASS' if ok else 'FAIL'} (band +-{PARITY_BAND_PCT}%)."]
     return "\n".join(lines), ok
 
 
 def _absent_parity(allow_absent: bool) -> tuple[str, bool]:
     """What a missing parity.jsonl reads as, deliberately accepted or not."""
     if allow_absent:
-        return ("Parity check absent (no parity.jsonl in this results "
-                "dir).", True)
-    return ("Parity check FAILED: no parity.jsonl in this results "
-            "dir. Absence is not evidence the check does not apply, "
-            "it means the check never ran.", False)
+        return ("Parity check absent (no parity.jsonl in this results dir).", True)
+    return (
+        "Parity check FAILED: no parity.jsonl in this results "
+        "dir. Absence is not evidence the check does not apply, "
+        "it means the check never ran.",
+        False,
+    )
 
 
-def _parity_metric_row(live: list[dict], metric: str,
-                unit: str) -> tuple[str, bool]:
+def _parity_metric_row(live: list[dict], metric: str, unit: str) -> tuple[str, bool]:
     """One metric's fused-vs-two-step row, and whether it left the band."""
-    arms = {arm: [r[metric] for r in live
-                  if r["arm"] == arm and r.get(metric) is not None]
-            for arm in ("fused", "two_step")}
+    arms = {
+        arm: [r[metric] for r in live if r["arm"] == arm and r.get(metric) is not None]
+        for arm in ("fused", "two_step")
+    }
     if not arms["fused"] or not arms["two_step"]:
         return f"| {metric} | n/a | n/a | n/a |", False
     f = statistics.median(arms["fused"])
     t = statistics.median(arms["two_step"])
     d = 100 * (t - f) / f
     moved = abs(d) > PARITY_BAND_PCT
-    return (f"| {metric} | {f:.2f}{unit} | {t:.2f}{unit} | "
-            f"{d:+.1f}%{' **FAIL**' if moved else ''} |"), moved
+    return (
+        f"| {metric} | {f:.2f}{unit} | {t:.2f}{unit} | {d:+.1f}%{' **FAIL**' if moved else ''} |"
+    ), moved
 
 
 def _two_step_split(live: list[dict]) -> str:
     """The ingest/train medians the perf page publishes, or "" if unreported."""
-    split = [(r["ingest_s"], r["train_s"]) for r in live
-             if r["arm"] == "two_step" and r.get("ingest_s") is not None]
+    split = [
+        (r["ingest_s"], r["train_s"])
+        for r in live
+        if r["arm"] == "two_step" and r.get("ingest_s") is not None
+    ]
     if not split:
         return ""
-    return (f"Two-step split: ingest "
-            f"{statistics.median(i for i, _ in split):.2f}s, train "
-            f"{statistics.median(t for _, t in split):.2f}s.")
+    return (
+        f"Two-step split: ingest "
+        f"{statistics.median(i for i, _ in split):.2f}s, train "
+        f"{statistics.median(t for _, t in split):.2f}s."
+    )
 
 
 def _ab_verdicts(src: pathlib.Path) -> str:
@@ -1024,7 +1174,9 @@ def _ab_verdicts(src: pathlib.Path) -> str:
         f"{plane} plane ({name}; "
         f"{check_standings.ab_arm_line(check_standings.ab_rows(src / name))}):"
         f"\n\n{_verdict(src / name)}"
-        for plane, name in AB_FILES.items() if (src / name).exists())
+        for plane, name in AB_FILES.items()
+        if (src / name).exists()
+    )
 
 
 def _verdict(ab_path: pathlib.Path) -> str:
