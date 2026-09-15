@@ -179,7 +179,7 @@ template <typename F> void for_each_index_on(int workers, size_t n, F &&f)
         // compilation passes drop even with OpenMP enabled host-side.
         [[maybe_unused]] auto const chunk = static_cast<int64_t>(
             std::max<size_t>(1, n / (static_cast<size_t>(nt) * 4)));
-#pragma omp parallel for schedule(dynamic, chunk) num_threads(nt)
+#pragma omp parallel for schedule(dynamic, chunk) num_threads(nt) proc_bind(close)
         for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
         {
             f(static_cast<size_t>(i));
