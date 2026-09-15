@@ -152,6 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-llvm
+      - uses: astral-sh/setup-uv@v5
       - run: make format-check
 
   tidy:
