@@ -143,20 +143,43 @@ inline PendingSplit partition_rows(Dataset const &ds, SplitInput parent,
     return p;
 }
 
+inline SplitInput &larger_child(PendingSplit &p)
+{
+    return &smaller_child(p) == &p.left ? p.right : p.left;
+}
+
+inline void adopt_parent_histograms(PendingSplit &p)
+{
+    larger_child(p).hists = std::move(p.parent_hists);
+}
+
+inline void settle_split(PendingSplit &p)
+{
+    for (SplitInput *child : {&p.left, &p.right})
+    {
+        child->sums      = child->totals();
+        child->row_count = child->rows.size();
+    }
+}
+
+inline void finish_split_totals(PendingSplit &p, feature_id_t feature)
+{
+    adopt_parent_histograms(p);
+    larger_child(p).hists[feature] -= smaller_child(p).hists[feature];
+    settle_split(p);
+}
+
 inline void finish_split(Dataset const &ds, PendingSplit &p, bool fused = false)
 {
-    SplitInput &small = smaller_child(p);
-    SplitInput &large = &small == &p.left ? p.right : p.left;
-    large.hists       = std::move(p.parent_hists);
+    adopt_parent_histograms(p);
     if (!fused)
     {
+        SplitInput &small = smaller_child(p);
+        SplitInput &large = larger_child(p);
         parallel::for_each_index(ds.n_features(),
                                  [&](size_t f) { large.hists[f] -= small.hists[f]; });
     }
-    small.sums      = small.totals();
-    large.sums      = large.totals();
-    small.row_count = small.rows.size();
-    large.row_count = large.rows.size();
+    settle_split(p);
 }
 
 template <HistogramEngine EngineT>
@@ -264,6 +287,25 @@ struct LevelPlan
     std::vector<DeferredSplit> splits;
     std::vector<SlotLeaf>      leaves;
 };
+
+inline void subtract_level(std::span<DeferredSplit> splits, size_t n_features)
+{
+    for (DeferredSplit &d : splits)
+    {
+        adopt_parent_histograms(d.p);
+    }
+    parallel::for_each_index(splits.size() * n_features,
+                             [&, n_features](size_t j)
+                             {
+                                 PendingSplit &p = splits[j / n_features].p;
+                                 size_t const  f = j % n_features;
+                                 larger_child(p).hists[f] -= smaller_child(p).hists[f];
+                             });
+    for (DeferredSplit &d : splits)
+    {
+        settle_split(d.p);
+    }
+}
 
 inline constexpr size_t partition_block_rows = 65536;
 
@@ -399,7 +441,7 @@ template <HistogramEngine EngineT>
 inline std::pair<SplitInput, SplitInput>
 split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
            SplitOutput const &s, node_id_t left_id, node_id_t right_id,
-           feature_view selected, EngineT &engine)
+           feature_view selected, bool may_split, EngineT &engine)
 {
     GrowProfiler::Lap lap;
     PendingSplit      p;
@@ -424,7 +466,22 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
     }
     lap(GrowProfiler::instance().partition_s);
     SplitInput &small = smaller_child(p);
-    bool        fused = false;
+    if constexpr (requires {
+                      engine.populate_lone_totals(ds, grad, hess, small, selected,
+                                                  p.parent_hists, feature_id_t{});
+                  })
+    {
+        if (!may_split && !selected.empty())
+        {
+            engine.populate_lone_totals(ds, grad, hess, small, selected, p.parent_hists,
+                                        SplitInput::totals_feature(selected));
+            adopt_parent_histograms(p);
+            settle_split(p);
+            lap(GrowProfiler::instance().populate_s);
+            return {std::move(p.left), std::move(p.right)};
+        }
+    }
+    bool fused = false;
     if constexpr (requires {
                       engine.populate_lone(ds, grad, hess, small, selected,
                                            p.parent_hists);

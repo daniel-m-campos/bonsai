@@ -122,6 +122,12 @@ The levelwise (oblivious) grower rejects interaction constraints at construction
 
 - enforced by: [`ObliviousGrower: rejects constraints it cannot honour at construction`](../tests/unit/test_oblivious_grower.cpp)
 
+### lone-totals-fill-matches-lone-fill
+
+The leaf plane's form: the lone fill blocks a child's rows by the full selection's width, so the one-feature fill takes the same blocks and the same merge order, and the sibling it subtracts from ends up as the full fused fill would leave it for that feature.
+
+- enforced by: [`CpuHistogramEngine: the lone totals fill reproduces the lone fill's sums`](../tests/unit/test_populate.cpp)
+
 ### perfect-tree-numbering-one-scheme
 
 The flattened node table and ObliviousTree::leaf_for agree on one numbering. The table gives internal node i the children 2i+1 and 2i+2 and appends the leaves after the internals in leaf_table order; leaf_for builds its index by shifting a bit per level, left as 0. Those two must name the same leaf for every root-to-leaf path, or the device epilogue and the host walk read different values out of the same tree. Four sites share the scheme, which is past the count where a normal change reliably updates all of them.
@@ -145,6 +151,12 @@ The row list a round trains on belongs to the fit it was materialized for, keyed
 On equal child row counts the fresh histogram slot goes to the LEFT child. The larger sibling derives by subtracting the smaller from the parent, so host and device must pick the same side or a subtraction reads the wrong sibling's histogram and the tree silently changes. The device makes the same `<=` comparison twice, in publish_small_child (which child's rows the partition kernel fills) and in leaf_children (which child holds the fresh slot), and those two must agree with each other as well.
 
 - enforced by: [`partition: an equal-count split gives the fresh slot to the left`](../tests/unit/test_partition.cpp)
+
+### totals-fill-matches-full-fill
+
+A node's sums are read from one histogram, the lowest selected feature's, and a fill of that feature alone produces the same cells as the full fill, bit for bit: the same rows in the same chunks with the same partial order, only fewer features per row. The host growers rely on it for children that become leaves, filling that one feature instead of every selected one, so the leaf values are unchanged while the deepest level's fill shrinks by a factor near the feature count.
+
+- enforced by: [`CpuHistogramEngine: the totals fill reproduces the full fill's sums`](../tests/unit/test_populate.cpp)
 
 ### train-predict-bin-boundary-parity
 
