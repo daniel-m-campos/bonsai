@@ -67,3 +67,30 @@ def test_production_files_reach_scripts_and_skip_the_rest(tmp_path):
 
     assert [str(f.relative_to(root)) for f in design_lint._production_files(root)] == [
         "include/a.hpp", "python/bonsai/c.py", "scripts/d.py", "src/b.cpp"]
+
+
+CALL_ONE_LINE = ("def build(rows):\n"
+                 "    total = rows.sum()\n"
+                 "    panel = Panel(rows, total, weight=rows.weight, count=rows.count)\n"
+                 "    panel.close()\n"
+                 "    if panel.empty:\n"
+                 "        return None\n"
+                 "    return panel\n")
+CALL_WRAPPED = CALL_ONE_LINE.replace(
+    "Panel(rows, total, weight=rows.weight, count=rows.count)",
+    "Panel(\n        rows,\n        total,\n        weight=rows.weight,\n"
+    "        count=rows.count,\n    )")
+
+
+def test_clone_windows_read_a_python_call_the_same_however_it_wraps(tmp_path):
+    """The same function with its call on one line and one argument per line
+    is one clone, counted once, so a formatter cannot move the number."""
+    root = _tree(tmp_path, {
+        "python/bonsai/a.py": CALL_ONE_LINE,
+        "python/bonsai/b.py": CALL_WRAPPED,
+    })
+    files = design_lint._production_files(root)
+
+    reading = design_lint._clone_windows(files, root, blind_to_identifiers=False)
+    assert reading.value == 2
+    assert reading.top_sites == [("python/bonsai/b.py", 2)]
