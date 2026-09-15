@@ -157,6 +157,20 @@ struct GrowProfiler : Profiler<GrowProfiler>
     // Conservation buckets: everything grow spends outside the phase laps
     // above, so the laps and these three sum to grow's wall clock.
     double setup_s = 0, commit_s = 0, assemble_s = 0;
+    std::array<double, 16> level_s{};
+    int                    level = 0;
+    std::string            extra() const
+    {
+        std::string s;
+        for (size_t i = 0; i < level_s.size(); ++i)
+        {
+            if (level_s[i] > 0)
+            {
+                s += std::format(" l{}={:.2f}s", i, level_s[i]);
+            }
+        }
+        return s;
+    }
 
     static constexpr std::array fields = {
         std::pair{"find", &GrowProfiler::find_s},
