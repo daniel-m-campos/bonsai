@@ -16,6 +16,9 @@
 #include <fstream>
 #include <sched.h>
 #include <string>
+#if defined(__x86_64__) || defined(__i386__)
+#include <cpuid.h>
+#endif
 #endif
 
 #ifdef BONSAI_USE_OPENMP
@@ -166,28 +169,112 @@ inline int topology_id(int cpu, char const *leaf)
     return id;
 }
 
+// The APIC id widths of the SMT and core levels (cpuid leaf 0xB), zero
+// widths when the leaf is absent.
+struct ApicLevels
+{
+    unsigned smt_bits  = 0;
+    unsigned core_bits = 0;
+    bool     present   = false;
+};
+
+#if defined(__x86_64__) || defined(__i386__)
+inline ApicLevels apic_levels()
+{
+    ApicLevels out;
+    unsigned   a = 0;
+    unsigned   b = 0;
+    unsigned   c = 0;
+    unsigned   d = 0;
+    if (__get_cpuid_max(0, nullptr) < 0xB)
+    {
+        return out;
+    }
+    for (unsigned sub = 0; sub < 4; ++sub)
+    {
+        __cpuid_count(0xB, sub, a, b, c, d);
+        unsigned const type = (c >> 8) & 0xFF;
+        if (type == 1)
+        {
+            out.smt_bits = a & 0x1F;
+            out.present  = true;
+        }
+        else if (type == 2)
+        {
+            out.core_bits = a & 0x1F;
+            out.present   = true;
+        }
+    }
+    return out;
+}
+
+// The x2APIC id of the CPU the calling thread runs on.
+inline unsigned apic_id()
+{
+    unsigned a = 0;
+    unsigned b = 0;
+    unsigned c = 0;
+    unsigned d = 0;
+    __cpuid_count(0xB, 0, a, b, c, d);
+    return d;
+}
+#endif
+
+// The place of every CPU in the mask. The runtime reads its topology from
+// the CPU itself and a virtual machine's /sys can name each vCPU a core of
+// its own while cpuid pairs them as siblings, so on x86 the calling thread
+// visits each CPU for its APIC id and /sys is the fallback.
+inline std::vector<CpuPlace> mask_places()
+{
+    std::vector<CpuPlace> places;
+    cpu_set_t             set;
+    CPU_ZERO(&set);
+    if (sched_getaffinity(0, sizeof set, &set) != 0)
+    {
+        return places;
+    }
+#if defined(__x86_64__) || defined(__i386__)
+    ApicLevels const levels = apic_levels();
+    if (levels.present && levels.core_bits > 0)
+    {
+        for (int c = 0; c < CPU_SETSIZE; ++c)
+        {
+            if (!CPU_ISSET(c, &set))
+            {
+                continue;
+            }
+            cpu_set_t one;
+            CPU_ZERO(&one);
+            CPU_SET(c, &one);
+            if (sched_setaffinity(0, sizeof one, &one) != 0)
+            {
+                continue;
+            }
+            unsigned const id = apic_id();
+            places.push_back({.cpu     = c,
+                              .package = static_cast<int>(id >> levels.core_bits),
+                              .core    = static_cast<int>(id >> levels.smt_bits)});
+        }
+        sched_setaffinity(0, sizeof set, &set);
+        return places;
+    }
+#endif
+    for (int c = 0; c < CPU_SETSIZE; ++c)
+    {
+        if (CPU_ISSET(c, &set))
+        {
+            places.push_back({.cpu     = c,
+                              .package = topology_id(c, "physical_package_id"),
+                              .core    = topology_id(c, "core_id")});
+        }
+    }
+    return places;
+}
+
 // The process mask in team order, read once before any thread is bound.
 inline std::vector<int> const &team_cpus()
 {
-    static std::vector<int> const cpus = []
-    {
-        std::vector<CpuPlace> places;
-        cpu_set_t             set;
-        CPU_ZERO(&set);
-        if (sched_getaffinity(0, sizeof set, &set) == 0)
-        {
-            for (int c = 0; c < CPU_SETSIZE; ++c)
-            {
-                if (CPU_ISSET(c, &set))
-                {
-                    places.push_back({.cpu     = c,
-                                      .package = topology_id(c, "physical_package_id"),
-                                      .core    = topology_id(c, "core_id")});
-                }
-            }
-        }
-        return place_order(std::move(places));
-    }();
+    static std::vector<int> const cpus = place_order(mask_places());
     return cpus;
 }
 
