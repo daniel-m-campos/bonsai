@@ -87,20 +87,22 @@ test-tsan: build-tsan $(TOY_SENTINEL)  ## Run the suite under ThreadSanitizer (L
 clean:  ## Remove build/, build-cuda/, and build-asan/.
 	@rm -rf build build-cuda build-asan
 
-# Ruff, pinned the way LLVM is: linter drift breaks CI, not the code.
-RUFF_VERSION := 0.15.21
-PYTHON_SOURCES := python scripts docs/hooks
+# Ruff, pinned the way LLVM is: linter drift breaks CI, not the code. No
+# paths: ruff walks the tree itself, honouring .gitignore, and from 0.16 that
+# includes the Python fences in Markdown, so the docs' examples are held to
+# the same layout as the package.
+RUFF_VERSION := 0.16.7
 
-format:  ## clang-format the C++ tree and ruff format the Python tree, in place.
+format:  ## clang-format the C++ tree and ruff format every Python source and Markdown fence, in place.
 	@$(LLVM_BIN)/clang-format -i $(SOURCES)
-	@uvx ruff@$(RUFF_VERSION) format $(PYTHON_SOURCES)
+	@uvx ruff@$(RUFF_VERSION) format
 
 format-check:  ## Check both formatters, clang-format --dry-run --Werror and ruff format --check (CI gate).
 	@$(LLVM_BIN)/clang-format --dry-run --Werror $(SOURCES)
-	@uvx ruff@$(RUFF_VERSION) format --check $(PYTHON_SOURCES)
+	@uvx ruff@$(RUFF_VERSION) format --check
 
-lint-python:  ## Run ruff check over the Python tree (pinned via uvx).
-	@uvx ruff@$(RUFF_VERSION) check $(PYTHON_SOURCES)
+lint-python:  ## Run ruff check over the tree (pinned via uvx).
+	@uvx ruff@$(RUFF_VERSION) check
 
 # run-clang-tidy exits non-zero when findings exist; a non-zero exit with
 # no findings means the tool itself failed and must not pass silently.
