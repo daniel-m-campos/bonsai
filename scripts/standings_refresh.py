@@ -89,6 +89,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from typing import Any
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 RESULTS = REPO / "benchmarks" / "results"
@@ -885,7 +886,7 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int, gpus: tuple[str
     a cpu flavor is not a device with a per-region stock reading.
     """
     name = f"bonsai-standings-{plane}-{time.strftime('%Y%m%d-%H%M')}"
-    body = {
+    body: dict[str, Any] = {
         "name": name,
         "image": IMAGE,
         "cloud": "SECURE",

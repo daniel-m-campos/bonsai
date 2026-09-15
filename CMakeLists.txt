@@ -339,6 +339,7 @@ if(BONSAI_PYTHON)
     # from the module beside it; a dev tree gets the same pair in
     # build/python/bonsai from `make python`.
     nanobind_add_stub(bonsai_stub
+        INCLUDE_PRIVATE
         MODULE bonsai._bonsai
         OUTPUT ${CMAKE_BINARY_DIR}/python/bonsai/_bonsai.pyi
         MARKER_FILE ${CMAKE_BINARY_DIR}/python/bonsai/py.typed

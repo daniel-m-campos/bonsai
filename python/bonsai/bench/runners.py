@@ -31,6 +31,7 @@ import os
 import pathlib
 import time
 import warnings
+from typing import Any
 
 import numpy as np
 
@@ -253,7 +254,7 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     with _phase(timed, runlog.Row.FIT_S):
         with _phase(timed, runlog.Row.INGEST_S):
             dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=c["bins_effective"])
-            fit_kwargs = {}
+            fit_kwargs: dict[str, Any] = {}
             if Xev is not None:
                 dval = xgb.QuantileDMatrix(Xev, label=yev, ref=dtrain, max_bin=c["bins_effective"])
                 fit_kwargs = {"evals": [(dval, "val")], "verbose_eval": False}
@@ -373,7 +374,7 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
             # (max_bin) are frozen then, and a later train() cannot change
             # them.
             dtrain = lgb.Dataset(X, label=y, params=params).construct()
-            fit_kwargs = {}
+            fit_kwargs: dict[str, Any] = {}
             if Xev is not None:
                 fit_kwargs = {
                     "valid_sets": [
@@ -394,7 +395,7 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
         with _phase(timed, runlog.Row.CONTRIBS_S):
             phi = model.predict(Xte, pred_contrib=True)
         margin = model.predict(Xte, raw_score=True)
-        timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, margin)
+        timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(np.asarray(phi), np.asarray(margin))
     return _score(
         task,
         timed,
@@ -461,7 +462,10 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
         with _phase(timed, runlog.Row.TRAIN_S):
             model.fit(pool, eval_set=eval_pool)
     with _phase(timed, runlog.Row.PREDICT_S):
-        pred_te = model.predict_proba(Xte)[:, 1] if task == "binary" else model.predict(Xte)
+        if isinstance(model, CatBoostClassifier):
+            pred_te = model.predict_proba(Xte)[:, 1]
+        else:
+            pred_te = model.predict(Xte)
     if c.get("contribs"):
         # CatBoost's SHAP is CPU-only even on a task_type="GPU" arm, same
         # caveat as lightgbm's. RawFormulaVal is the pre-link score

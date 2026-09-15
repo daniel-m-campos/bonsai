@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping
-from typing import ClassVar
+from typing import Any, ClassVar, TypeVar
+
+_P = TypeVar("_P", bound="ParamsOps")
 
 
 class SparseRepr:
@@ -24,6 +26,8 @@ class SparseRepr:
     and inherit this one, because unset-means-default makes the default
     repr all noise.
     """
+
+    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
     def __repr__(self) -> str:
         shown = ", ".join(
@@ -44,7 +48,7 @@ class ParamsOps(SparseRepr):
     """
 
     # Supplied by the generated subclass: section name -> section dataclass.
-    _SECTION_TYPES: ClassVar[dict[str, type]]
+    _SECTION_TYPES: ClassVar[dict[str, type[SparseRepr]]]
 
     def to_dict(self) -> dict[str, object]:
         """The set overrides as ``{dotted.key: value}`` with Python types.
@@ -63,7 +67,7 @@ class ParamsOps(SparseRepr):
         return out
 
     @classmethod
-    def from_toml(cls, path: str) -> ParamsOps:
+    def from_toml(cls: type[_P], path: str) -> _P:
         """Build a ``Params`` from the keys a TOML config file explicitly sets.
 
         The C++ config layer does the parsing (no TOML dependency, any
@@ -78,7 +82,7 @@ class ParamsOps(SparseRepr):
             return cls.from_dict(_bonsai._params_from_toml(fh.read()))
 
     @classmethod
-    def from_model(cls, model) -> ParamsOps:
+    def from_model(cls: type[_P], model) -> _P:
         """The config a trained ``Model`` resolved, as a fully-set ``Params``.
 
         Every key is set (a model's config is fully determined), so this is
@@ -91,7 +95,7 @@ class ParamsOps(SparseRepr):
         return cls.from_dict(_bonsai._params_from_toml(model.config_toml))
 
     @classmethod
-    def from_dict(cls, mapping: Mapping[str, object]) -> ParamsOps:
+    def from_dict(cls: type[_P], mapping: Mapping[str, object]) -> _P:
         """Build a ``Params`` from ``{dotted.key: value}``.
 
         Parameters
@@ -121,7 +125,7 @@ class ParamsOps(SparseRepr):
             by_section.setdefault(section, {})[leaf] = value
         return cls(**{s: section_types[s](**kv) for s, kv in by_section.items()})
 
-    def __or__(self, other: object) -> ParamsOps:
+    def __or__(self: _P, other: object) -> _P:
         if isinstance(other, ParamsOps):
             updates = other.to_dict()
         elif isinstance(other, Mapping):

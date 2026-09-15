@@ -128,6 +128,7 @@ def to_device():
             == 0
         )
         owned.append(ptr)
+        assert ptr.value is not None
         return ptr.value
 
     yield _copy

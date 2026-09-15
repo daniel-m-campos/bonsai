@@ -104,6 +104,12 @@ format-check:  ## Check both formatters, clang-format --dry-run --Werror and ruf
 lint-python:  ## Run ruff check over the tree (pinned via uvx).
 	@uvx ruff@$(RUFF_VERSION) check
 
+# ty, pinned likewise; it reads the built package, so the target builds first.
+TY_VERSION := 0.0.81
+
+typecheck: python  ## Run ty over the tree (pinned via uvx).
+	@uvx ty@$(TY_VERSION) check
+
 # run-clang-tidy exits non-zero when findings exist; a non-zero exit with
 # no findings means the tool itself failed and must not pass silently.
 lint: build/build.ninja  ## Run clang-tidy over src/, header-filtered to bonsai.
@@ -184,7 +190,7 @@ CI_PYTHON := $(if $(wildcard $(PYTHON)),$(PYTHON),$(shell command -v python3))
 
 ci:  ## Run every CI gate this host can run (FAST=1 skips clang-tidy).
 	@fail=0; log=$$(mktemp); \
-	gates="format-check lint-python docs-check test params-check python-test$(if $(FAST),, lint)"; \
+	gates="format-check lint-python docs-check test params-check python-test typecheck$(if $(FAST),, lint)"; \
 	[ "$$(uname -s)" = Linux ] && gates="$$gates test-asan test-tsan"; \
 	command -v nvcc >/dev/null 2>&1 && gates="$$gates build-cuda"; \
 	for g in $$gates; do \
@@ -219,4 +225,4 @@ install-hooks:  ## Point core.hooksPath at the versioned hooks (commit-msg forma
 	@git config core.hooksPath scripts/git-hooks
 	@echo "hooks installed: core.hooksPath = scripts/git-hooks"
 
-.PHONY: configure build build-cuda build-asan clean format format-check lint lint-python all params-json params-check test test-cuda test-asan fit-benchmark bench-scaling python python-cuda python-test docs-check install-hooks help
+.PHONY: configure build build-cuda build-asan clean format format-check lint lint-python all params-json params-check site typecheck test test-cuda test-asan fit-benchmark bench-scaling python python-cuda python-test docs-check install-hooks help

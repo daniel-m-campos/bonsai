@@ -62,6 +62,7 @@ def _load_extension(package_dir: str):
     if not ext:
         raise SystemExit(f"no built _bonsai extension under {package_dir}")
     spec = importlib.util.spec_from_file_location("_bonsai", ext[0])
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -109,7 +110,7 @@ def render(schema) -> str:
     for section, cls in names:
         out.append(f"    {section}: {cls} | None = None")
     out.append("")
-    out.append("    _SECTION_TYPES: ClassVar[dict[str, type]] = {")
+    out.append("    _SECTION_TYPES: ClassVar[dict[str, type[SparseRepr]]] = {")
     for section, cls in names:
         out.append(f'        "{section}": {cls},')
     out.append("    }")

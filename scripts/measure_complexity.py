@@ -242,6 +242,8 @@ def runtime_deps() -> dict:
     FetchContent pins (header-only), so shipped artifacts link only the
     toolchain runtime (OpenMP, static cudart on CUDA builds). Catch2 sits
     inside the BONSAI_TESTS block and is excluded as test-only."""
+    if sys.version_info < (3, 11):
+        raise SystemExit("runtime_deps reads pyproject.toml, which needs Python 3.11+ (tomllib)")
     import tomllib
 
     py = tomllib.loads((REPO / "pyproject.toml").read_text())

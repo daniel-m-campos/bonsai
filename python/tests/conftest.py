@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+from typing import TypedDict
 
 import bonsai
 import numpy as np
@@ -15,7 +16,19 @@ CH_TOML = REPO / "configs/california_housing.toml"
 BUILD_DIR = pathlib.Path(bonsai.__file__).resolve().parents[2]
 CLI = BUILD_DIR / "src/bonsai"
 
-CH_PARAMS = dict(
+
+class EstimatorKwargs(TypedDict, total=False):
+    """The estimator constructor keywords the suite sets by name."""
+
+    n_iters: int
+    learning_rate: float
+    max_depth: int
+    early_stopping_rounds: int
+    grower: str
+    params: dict[str, float]
+
+
+CH_PARAMS: EstimatorKwargs = dict(
     n_iters=200,
     learning_rate=0.05,
     max_depth=6,

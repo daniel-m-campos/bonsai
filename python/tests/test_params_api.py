@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import tempfile
+from typing import Any
 
 import bonsai
 import numpy as np
@@ -58,6 +59,8 @@ def test_params_render_types_the_parser_reads():
         }
     )
     resolved = Params.from_model(bonsai.train(p, bonsai.Dataset(X, y)))
+    assert resolved.tree is not None and resolved.booster is not None
+    assert resolved.metrics is not None and resolved.data is not None
     assert resolved.tree.max_depth == 8
     assert resolved.booster.learning_rate == pytest.approx(0.1)
     assert resolved.metrics.fit == ["rmse", "mae"]
@@ -76,13 +79,15 @@ def test_params_or_merges_right_side_wins():
     swept = base | {"tree.max_depth": 10}
     assert swept.to_dict() == {"tree.max_depth": 10, "booster.n_iters": 100}
     # the base is untouched, and Params | Params merges the same way
-    assert base.tree.max_depth == 8
-    assert (base | Params(tree=Tree(max_depth=12))).tree.max_depth == 12
+    assert base.tree is not None and base.tree.max_depth == 8
+    merged = base | Params(tree=Tree(max_depth=12))
+    assert merged.tree is not None and merged.tree.max_depth == 12
 
 
 def test_params_is_frozen():
+    frozen: Any = Params()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        Params().tree = Tree()
+        frozen.tree = Tree()
 
 
 def test_params_repr_shows_only_set_fields():
@@ -97,7 +102,8 @@ def test_params_from_toml_carries_only_stated_keys():
         path = f.name
     p = Params.from_toml(path)
     assert p.to_dict() == {"tree.max_depth": 4, "tree.lambda_l2": 0.5, "booster.n_iters": 9}
-    assert (p | {"booster.n_iters": 3}).booster.n_iters == 3
+    swept = p | {"booster.n_iters": 3}
+    assert swept.booster is not None and swept.booster.n_iters == 3
 
     with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
         f.write("[tree]\nmax_dept = 4\n")
@@ -110,6 +116,7 @@ def test_params_from_model_is_the_resolved_config():
     X, y = _reg_data(n=500)
     m = bonsai.train({"tree.max_depth": 3}, bonsai.Dataset(X, y))
     p = Params.from_model(m)
+    assert p.tree is not None and p.booster is not None
     assert p.tree.max_depth == 3
     assert p.booster.n_iters == 100  # resolved default: every key is set
 
@@ -137,8 +144,9 @@ def test_train_rejects_the_retired_pairs_form():
     """The (key, value) pairs list is the internal wire format; the binding
     names the two accepted forms instead of guessing."""
     X, y = _reg_data(n=500)
+    pairs: Any = [("booster.n_iters", "5")]
     with pytest.raises(TypeError, match="dict\\(pairs\\)"):
-        bonsai.train([("booster.n_iters", "5")], bonsai.Dataset(X, y))
+        bonsai.train(pairs, bonsai.Dataset(X, y))
 
 
 def test_train_accepts_none_params():

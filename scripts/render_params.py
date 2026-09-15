@@ -151,7 +151,9 @@ def extract() -> int:
 
 def extraction(toml_text: str) -> dict[str, dict]:
     """The committed JSON's content for one `bonsai params` dump."""
-    import tomllib  # 3.11+; only the extract paths (make params-json, params-check) need it
+    if sys.version_info < (3, 11):
+        raise SystemExit("the extract paths (make params-json, params-check) need Python 3.11+")
+    import tomllib
 
     data = tomllib.loads(toml_text)
     out: dict[str, dict] = {}

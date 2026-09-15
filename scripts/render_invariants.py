@@ -67,8 +67,11 @@ def scan_tests() -> list[dict]:
                     continue
                 claim: list[str] = []
                 j = i + 1
-                while j < len(lines) and COMMENT.match(lines[j]):
-                    body = COMMENT.match(lines[j]).group(1).strip()
+                while j < len(lines):
+                    comment = COMMENT.match(lines[j])
+                    if not comment:
+                        break
+                    body = comment.group(1).strip()
                     if body:
                         claim.append(body)
                     j += 1

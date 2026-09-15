@@ -274,11 +274,12 @@ def quality_drift(cpu_rows: list[dict], gpu_rows: list[dict]) -> list[Drift]:
     for r in gpu_rows:
         partner = QUALITY_PARTNERS.get(r["variant"])
         base = cpu.get((partner, *(r[k] for k in QUALITY_KEY)))
-        if base is None:
+        value = quality_value(r)
+        if partner is None or base is None or value is None:
             continue
         gaps[r["variant"]].append(
             (
-                quality_value(r) - base,
+                value - base,
                 spread[(partner, r["suite"], r["dataset"])],
                 f"{r['dataset']} s{r['seed']}",
             )
@@ -305,7 +306,10 @@ def host_seed_spread(cpu_rows: list[dict]) -> dict[tuple[str, int, str], float]:
     """Max minus min of the metric over seeds, per (variant, suite, dataset)."""
     values: dict[tuple[str, int, str], list[float]] = {}
     for r in cpu_rows:
-        values.setdefault((r["variant"], r["suite"], r["dataset"]), []).append(quality_value(r))
+        value = quality_value(r)
+        if value is None:
+            continue
+        values.setdefault((r["variant"], r["suite"], r["dataset"]), []).append(value)
     return {k: max(v) - min(v) for k, v in values.items()}
 
 

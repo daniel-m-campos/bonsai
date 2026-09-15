@@ -19,7 +19,7 @@ import tempfile
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, ClassVar, TypeVar, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -52,6 +52,21 @@ class _BonsaiEstimator:
     the objective, how targets are encoded for the native booster, how
     predictions are decoded back, and its own ``score``.
     """
+
+    _estimator_type: ClassVar[str]
+    n_iters: int
+    learning_rate: float
+    max_depth: int
+    max_leaves: int
+    grower: str
+    sampler: str
+    early_stopping_rounds: int
+    n_threads: int
+    random_seed: int
+    max_bin: int | None
+    subsample: float | None
+    device: str | None
+    params: dict | ParamsOps | None
 
     def __repr__(self) -> str:
         """sklearn-style: class name plus the non-default parameters."""
@@ -154,9 +169,11 @@ class _BonsaiEstimator:
             if kind == "regressor"
             else {"classifier_tags": ClassifierTags()}
         )
-        return Tags(
+        tags: Any = Tags
+        target_tags: Any = TargetTags
+        return tags(
             estimator_type=kind,
-            target_tags=TargetTags(required=True),
+            target_tags=target_tags(required=True),
             input_tags=InputTags(),
             **per_type,
         )
@@ -267,7 +284,7 @@ class _BonsaiEstimator:
             the original class labels (from ``classes_``), not the encoded
             ``0..K-1`` ids the native booster works in.
         """
-        raw = np.asarray(self._model.predict(self._predict_input(X), num_iteration))
+        raw = np.asarray(self._fitted().predict(self._predict_input(X), num_iteration))
         return self._decode_predictions(raw)
 
     def staged_predict(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
@@ -284,7 +301,7 @@ class _BonsaiEstimator:
             Shape ``(n_iters, n_rows)``: predictions after each boosting
             iteration.
         """
-        return np.asarray(self._model.staged_predict(self._predict_input(X)))
+        return np.asarray(self._fitted().staged_predict(self._predict_input(X)))
 
     def predict_leaf(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
         """Predict per-tree leaf indices, for feature engineering / embedding.
@@ -302,7 +319,7 @@ class _BonsaiEstimator:
             ``n_iters * n_classes`` columns and column ``t`` is round
             ``t // n_classes``, class ``t % n_classes``.
         """
-        return np.asarray(self._model.predict_leaf(self._predict_input(X)))
+        return np.asarray(self._fitted().predict_leaf(self._predict_input(X)))
 
     def dump(self) -> str:
         """Dump the model as text.
@@ -313,7 +330,7 @@ class _BonsaiEstimator:
             Every tree as indented text.
         """
         self._check_fitted()
-        return self._model.dump()
+        return self._fitted().dump()
 
     def pred_contribs(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
         """Compute TreeSHAP contributions.
@@ -329,7 +346,7 @@ class _BonsaiEstimator:
             Shape ``(n_rows, n_features + 1)``; the last column is the bias.
             Rows sum to the raw (pre-link) prediction exactly.
         """
-        return np.asarray(self._model.pred_contribs(self._predict_input(X)))
+        return np.asarray(self._fitted().pred_contribs(self._predict_input(X)))
 
     def importance(self, type: str = "gain") -> np.ndarray:
         """Compute raw per-feature importance.
@@ -345,7 +362,7 @@ class _BonsaiEstimator:
             One value per feature, unnormalized.
         """
         self._check_fitted()
-        return np.asarray(self._model.feature_importance(type))
+        return np.asarray(self._fitted().feature_importance(type))
 
     @property
     def feature_importances_(self) -> np.ndarray:
@@ -363,10 +380,10 @@ class _BonsaiEstimator:
             Destination file path.
         """
         self._check_fitted()
-        self._model.save(path)
+        self._fitted().save(path)
 
     @classmethod
-    def from_file(cls, path: str) -> _BonsaiEstimator:
+    def from_file(cls: type[_E], path: str) -> _E:
         """Load a fitted model from a saved ``.msgpack`` file.
 
         The loaded model carries its feature count and its column names, so
@@ -385,14 +402,14 @@ class _BonsaiEstimator:
         out = cls()
         out._model = load(path)
         names = _model_feature_names(out._model)
-        out.n_features_in_ = len(out._model.feature_names)
+        out.n_features_in_ = len(out._fitted().feature_names)
         out._set_feature_names(names)
         return out
 
     @property
     def n_iters_(self) -> int:
         self._check_fitted()
-        return self._model.n_iters
+        return self._fitted().n_iters
 
     def evals_result(self) -> dict:
         """Read back the per-round eval-set loss history.
@@ -413,8 +430,8 @@ class _BonsaiEstimator:
             history.
         """
         self._check_fitted()
-        name = self._model.objective_name
-        hist = [float(v) for v in self._model.eval_history]
+        name = self._fitted().objective_name
+        hist = [float(v) for v in self._fitted().eval_history]
         start = next((i for i, v in enumerate(hist) if not np.isnan(v)), len(hist))
         hist = hist[start:]
         if not hist:
@@ -595,7 +612,7 @@ class _BonsaiEstimator:
         ``evals_result()`` would come back empty), so fail loudly at fit
         time, mirroring the native early-stopping + DART rejection."""
         for key, value in overrides.items():
-            if key == "booster.dart_drop_rate" and float(value) > 0.0:
+            if key == "booster.dart_drop_rate" and float(cast("float", value)) > 0.0:
                 raise ValueError(
                     "eval_set is unsupported with dart_drop_rate > 0: eval "
                     "history relies on incremental valid-loss bookkeeping "
@@ -605,8 +622,13 @@ class _BonsaiEstimator:
     def _check_fitted(self):
         """One guard for every fitted-state precondition (the exception type
         is part of the API)."""
+        self._fitted()
+
+    def _fitted(self) -> Model:
+        """The native model, once ``fit`` or ``from_file`` has set it."""
         if self._model is None:
             raise RuntimeError("fit() or from_file() first")
+        return self._model
 
     def _predict_input(self, X: npt.ArrayLike | Dataset) -> np.ndarray | Dataset:
         """What the predict family hands the native model, once the model
@@ -617,11 +639,11 @@ class _BonsaiEstimator:
         self._check_predict_names(X)
         return X if isinstance(X, Dataset) else _as_f32(X, 2, "X")
 
-    def _early_stopping_history(self, what: str) -> np.ndarray:
+    def _early_stopping_history(self, what: str) -> list[float]:
         """The eval history, when fit ran with early stopping; ``what`` names
         the property asking, for the error."""
         self._check_fitted()
-        hist = self._model.eval_history
+        hist = self._fitted().eval_history
         if not self.early_stopping_rounds or not len(hist):
             raise AttributeError(f"{what} needs fit(eval_set=...) with early_stopping_rounds set")
         return hist
@@ -728,7 +750,7 @@ class _BonsaiEstimator:
             The coerced feature matrix the fit ran on.
         """
         self.n_features_in_ = Xa.shape[1]
-        self._set_feature_names(_model_feature_names(self._model))
+        self._set_feature_names(_model_feature_names(self._fitted()))
 
     def _set_feature_names(self, names: list[str] | None):
         """Set ``feature_names_in_``, or remove it when there are no names."""
@@ -801,6 +823,8 @@ class BonsaiRegressor(_BonsaiEstimator):
     """
 
     _estimator_type = "regressor"
+    objective: str
+    quantile_alpha: float | None
 
     def __init__(
         self,
@@ -944,6 +968,8 @@ class BonsaiClassifier(_BonsaiEstimator):
     """
 
     _estimator_type = "classifier"
+    n_classes_: int
+    classes_: np.ndarray
 
     def __init__(
         self,
@@ -982,9 +1008,9 @@ class BonsaiClassifier(_BonsaiEstimator):
         """
         X = self._predict_input(X)
         if self.n_classes_ == 2:
-            p = np.asarray(self._model.predict(X), dtype=np.float64)
+            p = np.asarray(self._fitted().predict(X), dtype=np.float64)
             return np.column_stack([1.0 - p, p])
-        return np.asarray(self._model.predict_proba(X), dtype=np.float64)
+        return np.asarray(self._fitted().predict_proba(X), dtype=np.float64)
 
     def score(
         self,
@@ -1043,11 +1069,11 @@ class BonsaiClassifier(_BonsaiEstimator):
             If the saved model's objective is not ``logloss`` or ``softmax``.
         """
         out = super().from_file(path)
-        objective = out._model.objective_name
+        objective = out._fitted().objective_name
         if objective == "logloss":
             out.n_classes_ = 2
         elif objective == "softmax":
-            out.n_classes_ = int(out._model.n_classes)
+            out.n_classes_ = int(out._fitted().n_classes)
         else:
             raise ValueError(
                 f"{path!r} was trained with objective {objective!r}; "

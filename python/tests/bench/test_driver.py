@@ -10,7 +10,7 @@ import pytest
 from bonsai.bench import runlog
 
 
-def test_driver_resume_and_emit():
+def test_driver_resume_and_emit(monkeypatch):
     import pathlib
 
     from bonsai.bench import driver
@@ -72,17 +72,21 @@ def test_driver_resume_and_emit():
         out = pathlib.Path(td) / "out.jsonl"
         # Stub the child: the emit path is what is under test.
         real_run_one = driver.run_one
-        driver.run_one = lambda spec, timeout, **kw: {
-            "status": "ok",
-            "message": None,
-            "fit_s": 1.0,
-            "predict_s": 0.1,
-            "r2_train": 0.9,
-            "r2_test": 0.9,
-            "peak_rss_gb": 0.1,
-            "libs": {"xgboost": "9.9.9"},
-            "profile": None,
-        }
+        monkeypatch.setattr(
+            driver,
+            "run_one",
+            lambda spec, timeout, **kw: {
+                "status": "ok",
+                "message": None,
+                "fit_s": 1.0,
+                "predict_s": 0.1,
+                "r2_train": 0.9,
+                "r2_test": 0.9,
+                "peak_rss_gb": 0.1,
+                "libs": {"xgboost": "9.9.9"},
+                "profile": None,
+            },
+        )
         try:
             driver.run_jobs(
                 [
@@ -108,7 +112,7 @@ def test_driver_resume_and_emit():
         assert skip["repeat"] == 0  # no CUDA on this host
 
 
-def test_mem_sampler():
+def test_mem_sampler(monkeypatch):
     import time as _time
 
     from bonsai.bench import driver
@@ -141,7 +145,7 @@ def test_mem_sampler():
             return FakeProc("999, 512\n4321, 1024\n999, 256\n")
         return FakeProc("7168\n")
 
-    driver.subprocess.run = fake_run
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
     try:
         pid_mb, total_mb = driver._smi_query(999)
     finally:
@@ -257,7 +261,7 @@ def test_error_classification():
     assert driver.error_message("  [bt] (8) only frames\n") == "no output"
 
 
-def test_driver_gates_and_effective_bins():
+def test_driver_gates_and_effective_bins(monkeypatch):
     import pathlib
 
     from bonsai.bench import driver
@@ -290,18 +294,22 @@ def test_driver_gates_and_effective_bins():
     }
     seen = []
     real = driver.run_one
-    driver.run_one = lambda spec, timeout, **kw: (
-        seen.append(spec)
-        or {
-            "status": "ok",
-            "message": None,
-            "fit_s": 1.0,
-            "predict_s": 0.1,
-            "r2_train": 0.9,
-            "r2_test": 0.9,
-            "peak_rss_gb": 0.1,
-            "profile": None,
-        }
+    monkeypatch.setattr(
+        driver,
+        "run_one",
+        lambda spec, timeout, **kw: (
+            seen.append(spec)
+            or {
+                "status": "ok",
+                "message": None,
+                "fit_s": 1.0,
+                "predict_s": 0.1,
+                "r2_train": 0.9,
+                "r2_test": 0.9,
+                "peak_rss_gb": 0.1,
+                "profile": None,
+            }
+        ),
     )
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -349,13 +357,17 @@ def test_skip_reason_names_each_gate_in_order():
         "cols > 16384 (GPU variant policy)",
     )
     assert driver.skip_reason(job(gpu, cols=20_000), host, {"gpu_max_cols": None}) is None
-    status, msg = driver.skip_reason(job(gpu, rows=2**30, cols=64), host, {})
+    vram_gate = driver.skip_reason(job(gpu, rows=2**30, cols=64), host, {})
+    assert vram_gate is not None
+    status, msg = vram_gate
     assert status == "skipped" and msg.endswith("GB > 0.85x24.0GB VRAM")
     assert driver.skip_reason(job(bins=70_000), host, {}) == (
         "unsupported",
         "bonsai bin_id_t is uint16 (max_bin <= 65535)",
     )
-    status, msg = driver.skip_reason(job(rows=2**30, cols=64), host, {})
+    ram_gate = driver.skip_reason(job(rows=2**30, cols=64), host, {})
+    assert ram_gate is not None
+    status, msg = ram_gate
     assert status == "skipped" and msg.endswith("GB > 0.8x64.0GB RAM")
     assert driver.skip_reason(job(rows=2**30, cols=64), host, {"mem_gate": "off"}) is None
     assert driver.skip_reason(job(threads=16, axis="threads"), host, {}) == (
@@ -376,7 +388,7 @@ def test_run_one_turns_a_failing_and_a_wedged_worker_into_status_rows():
     assert wedged == {"status": "timeout", "message": "exceeded 0.01s"}
 
 
-def test_resume_is_host_scoped():
+def test_resume_is_host_scoped(monkeypatch):
     import pathlib
 
     from bonsai.bench import driver
@@ -408,16 +420,20 @@ def test_resume_is_host_scoped():
     }
     job = {"cell": cell, "variant": "xgb_hist", "threads": 4, "repeats": 1}
     real = driver.run_one
-    driver.run_one = lambda spec, timeout, **kw: {
-        "status": "ok",
-        "message": None,
-        "fit_s": 1.0,
-        "predict_s": 0.1,
-        "r2_train": 0.9,
-        "r2_test": 0.9,
-        "peak_rss_gb": 0.1,
-        "profile": None,
-    }
+    monkeypatch.setattr(
+        driver,
+        "run_one",
+        lambda spec, timeout, **kw: {
+            "status": "ok",
+            "message": None,
+            "fit_s": 1.0,
+            "predict_s": 0.1,
+            "r2_train": 0.9,
+            "r2_test": 0.9,
+            "peak_rss_gb": 0.1,
+            "profile": None,
+        },
+    )
     try:
         with tempfile.TemporaryDirectory() as td:
             out = pathlib.Path(td) / "o.jsonl"
