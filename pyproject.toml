@@ -90,13 +90,11 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 "scripts/render_*.py" = ["E501"]
 
 [tool.ty.environment]
-# The package's compiled half is read through the stub `make python` writes
-# beside it; the 3.9 floor is the one the wheels ship; scripts/ is on the
-# path because the tests put it there before importing a script module.
+# The compiled half is read through the stub the build writes; the tests
+# import script modules straight from scripts/.
 python-version = "3.9"
 extra-paths = ["build/python", "scripts"]
 
 [tool.ty.src]
-# A script carrying PEP 723 metadata declares its own environment, which
-# ty does not install; those run under `uv run`, not the venv.
+# A PEP 723 script declares its own environment, which ty does not install.
 exclude-scripts = true
