@@ -14,6 +14,12 @@ Predicting through a Dataset carrying the model's own cuts is bit-identical to p
 
 - enforced by: [`Binned prediction: depthwise booster matches the raw walk bit for bit`](../tests/unit/test_predict_binned.cpp)
 
+### caller-mask-restored-after-fit
+
+A CallerPlace narrows the calling thread to the team's first CPU for its scope and hands the thread's own mask back when it closes, so a fit leaves the thread it ran on, and every thread created after it, exactly as placed as before. With the runtime's placement variables set the scope changes nothing.
+
+- enforced by: [`the caller's place lasts its scope and the mask comes back`](../tests/unit/test_parallel.cpp)
+
 ### cuda-training-bit-reproducible
 
 A device fit is bit-reproducible on one device and one build. Histogram cells are int64 fixed point, so every accumulation is an exact integer sum whatever order the atomics land in, and everything downstream of the fill already ran in a fixed order. Three fits of one dataset serialize to identical bytes on every device plane, with the device objective and with the host objective forced. Not claimed: cross-device, cross-toolkit, or host-vs-device equality, which stay tolerance-bound.
@@ -152,6 +158,12 @@ On equal child row counts the fresh histogram slot goes to the LEFT child. The l
 
 - enforced by: [`partition: an equal-count split gives the fresh slot to the left`](../tests/unit/test_partition.cpp)
 
+### team-packs-one-package-first
+
+A team fills one CPU per core, cores in id order, one package before the next: SMT siblings of a core never both host a worker, and a team no wider than a package shares its cache and memory node. Read from the process mask and /sys on Linux; the ordering is pinned from values here.
+
+- enforced by: [`team order packs one package first, one CPU per core`](../tests/unit/test_parallel.cpp)
+
 ### totals-fill-matches-full-fill
 
 A node's sums are read from one histogram, the lowest selected feature's, and a fill of that feature alone produces the same cells as the full fill, bit for bit: the same rows in the same chunks with the same partial order, only fewer features per row. The host growers rely on it for children that become leaves, filling that one feature instead of every selected one, so the leaf values are unchanged while the deepest level's fill shrinks by a factor near the feature count.
@@ -163,6 +175,12 @@ A node's sums are read from one histogram, the lowest selected feature's, and a 
 A row sitting exactly on a cut routes the same at train time and at predict time. The grower routes on `bin <= split_bin` while the predict walk routes on the stored raw `threshold`, and the two agree only because the binner is right-inclusive (bin b holds v in (cuts[b-1], cuts[b]]) and the FLT_MAX top-band closer keeps every finite value above the last cut out of the NaN sentinel. Cut values are the witness: they are the only inputs where a one-ulp disagreement between the two rules changes the leaf.
 
 - enforced by: [`Binned prediction: a value on a cut routes the same both ways`](../tests/unit/test_predict_binned.cpp)
+
+### untouched-resize-writes-nothing
+
+A resize of an untouched vector allocates and constructs nothing: every zero-argument construction is skipped, so the first write to each page is the producer's and homes the page on the writer's memory node, which is what lets a bound team read the row mirror from its own node. A construction from a value runs as usual.
+
+- enforced by: [`untouched vector resizes without constructing`](../tests/unit/test_untouched.cpp)
 
 ### view-narrows-rows-not-plane
 

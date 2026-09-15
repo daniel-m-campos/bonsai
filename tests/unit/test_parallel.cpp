@@ -2,6 +2,8 @@
 
 #include "bonsai/parallel.hpp"
 
+#include <vector>
+
 using namespace bonsai; // NOLINT
 
 TEST_CASE("auto thread count is capped", "[parallel]")
@@ -47,3 +49,60 @@ TEST_CASE("explicit thread count passes through uncapped", "[parallel]")
 #endif
     parallel::set_n_threads(0);
 }
+
+// INVARIANT: team-packs-one-package-first
+// A team fills one CPU per core, cores in id order, one package before the
+// next: SMT siblings of a core never both host a worker, and a team no
+// wider than a package shares its cache and memory node. Read from the
+// process mask and /sys on Linux; the ordering is pinned from values here.
+TEST_CASE("team order packs one package first, one CPU per core",
+          "[parallel][invariant]")
+{
+    using parallel::internal::CpuPlace;
+    std::vector<CpuPlace> const places = {
+        {.cpu = 0, .package = 0, .core = 0}, {.cpu = 1, .package = 1, .core = 0},
+        {.cpu = 2, .package = 0, .core = 1}, {.cpu = 3, .package = 1, .core = 1},
+        {.cpu = 4, .package = 0, .core = 0}, {.cpu = 5, .package = 1, .core = 0},
+        {.cpu = 6, .package = 0, .core = 1}, {.cpu = 7, .package = 1, .core = 1},
+    };
+    CHECK(parallel::internal::place_order(places) == std::vector<int>{0, 2, 1, 3});
+    CHECK(parallel::internal::place_order({}).empty());
+}
+
+#ifdef __linux__
+#include <sched.h>
+
+// INVARIANT: caller-mask-restored-after-fit
+// A CallerPlace narrows the calling thread to the team's first CPU for its
+// scope and hands the thread's own mask back when it closes, so a fit
+// leaves the thread it ran on, and every thread created after it, exactly
+// as placed as before. With the runtime's placement variables set the
+// scope changes nothing.
+TEST_CASE("the caller's place lasts its scope and the mask comes back",
+          "[parallel][invariant]")
+{
+    cpu_set_t before;
+    CPU_ZERO(&before);
+    REQUIRE(sched_getaffinity(0, sizeof before, &before) == 0);
+    bool const placed_by_runtime = parallel::internal::runtime_places_threads();
+    parallel::set_n_threads(1);
+    {
+        parallel::CallerPlace const placed;
+        cpu_set_t                   inside;
+        CPU_ZERO(&inside);
+        REQUIRE(sched_getaffinity(0, sizeof inside, &inside) == 0);
+        if (!placed_by_runtime && !parallel::internal::team_cpus().empty())
+        {
+            CHECK(CPU_COUNT(&inside) == 1);
+            CHECK(CPU_ISSET(parallel::internal::team_cpus()[0], &inside));
+            CHECK(parallel::internal::placed_callers().load() == 1);
+        }
+    }
+    cpu_set_t after;
+    CPU_ZERO(&after);
+    REQUIRE(sched_getaffinity(0, sizeof after, &after) == 0);
+    CHECK(CPU_EQUAL(&before, &after));
+    CHECK(parallel::internal::placed_callers().load() == 0);
+    parallel::set_n_threads(0);
+}
+#endif
