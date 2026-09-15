@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from typing_extensions import Self
 
 
+@dataclasses.dataclass(frozen=True, repr=False)
 class SparseRepr:
     """Repr showing only set fields: ``Tree(max_depth=8)``, not eleven Nones.
 
@@ -26,8 +27,6 @@ class SparseRepr:
     and inherit this one, because unset-means-default makes the default
     repr all noise.
     """
-
-    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
     def __repr__(self) -> str:
         shown = ", ".join(
