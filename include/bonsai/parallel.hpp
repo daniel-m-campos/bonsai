@@ -217,6 +217,18 @@ inline std::atomic<int> &placed_callers()
     return n;
 }
 
+#ifdef BONSAI_USE_OPENMP
+// The runtime's thread count, read once and before any CallerPlace narrows
+// the calling thread: the runtime sizes itself from the mask it first sees,
+// so a fit with an explicit count opening the scope ahead of the first
+// region would otherwise leave every later auto count at one.
+inline int hardware_threads()
+{
+    static int const n = omp_get_max_threads();
+    return n;
+}
+#endif
+
 // A worker binds to the tid-th team CPU once and keeps it, only while a
 // CallerPlace is open: without one the team runs wherever the scheduler
 // puts it, as it did before placement existed.
@@ -272,7 +284,7 @@ inline int n_threads()
         return requested;
     }
     int const quota  = internal::cached_quota_cpus();
-    int const capped = std::min(omp_get_max_threads(), auto_thread_cap);
+    int const capped = std::min(internal::hardware_threads(), auto_thread_cap);
     return quota > 0 ? std::min(capped, quota) : capped;
 #else
     return 1;
@@ -291,6 +303,9 @@ class CallerPlace
   public:
     CallerPlace()
     {
+#ifdef BONSAI_USE_OPENMP
+        internal::hardware_threads();
+#endif
 #ifdef __linux__
         std::vector<int> const &cpus = internal::team_cpus();
         if (internal::runtime_places_threads() ||
