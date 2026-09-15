@@ -48,8 +48,9 @@ class LeafStep : public TreeStep<EngineT>
 
     ChildPair split_children(Candidate &c, node_id_t left_id, node_id_t right_id)
     {
-        auto [left, right] = split_node(ds_, grad_, hess_, std::move(c.node), c.split,
-                                        left_id, right_id, selected_, engine_);
+        auto [left, right] =
+            split_node(ds_, grad_, hess_, std::move(c.node), c.split, left_id, right_id,
+                       selected_, c.depth + 1 < config_.max_depth, engine_);
         return {.nodes = {std::move(left), std::move(right)},
                 .depth = static_cast<uint8_t>(c.depth + 1)};
     }

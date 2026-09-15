@@ -98,9 +98,20 @@ struct SelectionPlan
     std::vector<MirrorSlice> slices;
 };
 
+struct TotalsPlan
+{
+    feature_id_t  feature;
+    SelectionPlan plan;
+    TotalsPlan(Dataset const &ds, feature_id_t f) : feature(f), plan(ds, selected()) {}
+    std::span<feature_id_t const> selected() const
+    {
+        return {&feature, 1};
+    }
+};
 struct PlanCache
 {
     std::optional<SelectionPlan> plan;
+    std::optional<TotalsPlan>    totals;
     Dataset const               *ds        = nullptr;
     feature_id_t const          *sel       = nullptr;
     size_t                       n         = 0;
@@ -134,6 +145,15 @@ inline SelectionPlan const &selection_plan(Dataset const                &ds,
     assert(cache.ds == &ds && cache.sel == selected.data() &&
            cache.n == selected.size());
     return *cache.plan;
+}
+inline TotalsPlan const &totals_plan(Dataset const &ds, feature_id_t feature)
+{
+    PlanCache &cache = plan_cache();
+    if (!cache.totals || cache.totals->feature != feature)
+    {
+        cache.totals.emplace(ds, feature);
+    }
+    return *cache.totals;
 }
 
 } // namespace bonsai::fill_detail

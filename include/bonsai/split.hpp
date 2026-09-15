@@ -81,6 +81,13 @@ struct SplitInput
     {
         return totals().sum_grad;
     }
+    // The feature totals() reads for a node carved from `selected`: carve
+    // leaves unselected features empty, so it is the lowest selected id
+    // (invariants: totals-fill-matches-full-fill).
+    static feature_id_t totals_feature(std::span<feature_id_t const> selected)
+    {
+        return *std::ranges::min_element(selected);
+    }
     double total_hess() const
     {
         return totals().sum_hess;

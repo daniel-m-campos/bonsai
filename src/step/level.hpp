@@ -65,7 +65,7 @@ class LevelStep : public TreeStep<EngineT>
         host_partition(ds_, plan);
     }
 
-    void build_children(LevelPlan &plan, bool /*last*/ = false)
+    void build_children(LevelPlan &plan, bool last = false)
     {
         Phase<&GrowProfiler::populate_s>                phase;
         std::vector<std::reference_wrapper<SplitInput>> smalls;
@@ -74,11 +74,24 @@ class LevelStep : public TreeStep<EngineT>
         {
             smalls.emplace_back(smaller_child(d.p));
         }
-        populate_nodes(ds_, grad_, hess_, smalls, selected_, engine_);
-        for (auto &d : plan.splits)
+        if (last && !selected_.empty())
         {
-            finish_split(ds_, d.p);
+            if constexpr (requires {
+                              engine_.populate_totals(ds_, grad_, hess_, smalls,
+                                                      feature_id_t{});
+                          })
+            {
+                feature_id_t const feature = SplitInput::totals_feature(selected_);
+                engine_.populate_totals(ds_, grad_, hess_, smalls, feature);
+                for (auto &d : plan.splits)
+                {
+                    finish_split_totals(d.p, feature);
+                }
+                return;
+            }
         }
+        populate_nodes(ds_, grad_, hess_, smalls, selected_, engine_);
+        subtract_level(plan.splits, ds_.n_features());
     }
 
     void end_tree(std::vector<SplitInput> const &current, DenseBuild &build,
