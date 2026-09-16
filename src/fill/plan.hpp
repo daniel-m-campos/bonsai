@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -100,14 +101,18 @@ struct SelectionPlan
 
 struct PlanCache
 {
-    std::optional<SelectionPlan> plan;
-    std::optional<SelectionPlan> totals;
-    feature_id_t                 totals_feature = 0;
-    Dataset const               *ds             = nullptr;
-    feature_id_t const          *sel            = nullptr;
-    size_t                       n              = 0;
-    float const                 *hess           = nullptr;
-    bool                         unit_hess      = false;
+    std::optional<SelectionPlan>                         plan;
+    std::optional<SelectionPlan>                         totals;
+    feature_id_t                                         totals_feature = 0;
+    std::optional<std::reference_wrapper<Dataset const>> ds;
+    std::span<feature_id_t const>                        selected;
+    floats_view                                          hess;
+    bool                                                 unit_hess = false;
+
+    bool holds(Dataset const &other) const
+    {
+        return ds && &ds->get() == &other;
+    }
 };
 
 inline PlanCache &plan_cache()
@@ -119,7 +124,7 @@ inline PlanCache &plan_cache()
 inline floats_view fill_hess(floats_view hess)
 {
     PlanCache const &cache = plan_cache();
-    return cache.unit_hess && cache.hess == hess.data() ? floats_view{} : hess;
+    return cache.unit_hess && cache.hess.data() == hess.data() ? floats_view{} : hess;
 }
 
 inline SelectionPlan const &selection_plan(Dataset const                &ds,
@@ -129,12 +134,11 @@ inline SelectionPlan const &selection_plan(Dataset const                &ds,
     if (!cache.plan)
     {
         cache.plan.emplace(ds, selected);
-        cache.ds  = &ds;
-        cache.sel = selected.data();
-        cache.n   = selected.size();
+        cache.ds       = std::cref(ds);
+        cache.selected = selected;
     }
-    assert(cache.ds == &ds && cache.sel == selected.data() &&
-           cache.n == selected.size());
+    assert(cache.holds(ds) && cache.selected.data() == selected.data() &&
+           cache.selected.size() == selected.size());
     return *cache.plan;
 }
 inline SelectionPlan const &totals_plan(Dataset const &ds, feature_id_t feature)
@@ -146,7 +150,7 @@ inline SelectionPlan const &totals_plan(Dataset const &ds, feature_id_t feature)
         cache.totals.emplace(ds,
                              std::span<feature_id_t const>{&cache.totals_feature, 1});
     }
-    assert(cache.ds == nullptr || cache.ds == &ds);
+    assert(!cache.ds || cache.holds(ds));
     return *cache.totals;
 }
 

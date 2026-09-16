@@ -158,7 +158,7 @@ void CpuHistogramEngine::begin_tree(Dataset const & /*ds*/, floats_view /*grad*/
     bool const unit =
         !hess.empty() && std::ranges::all_of(hess, [](float h) { return h == 1.0F; });
     fd::plan_cache()           = {};
-    fd::plan_cache().hess      = hess.data();
+    fd::plan_cache().hess      = hess;
     fd::plan_cache().unit_hess = unit;
 }
 
