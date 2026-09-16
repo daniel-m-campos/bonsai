@@ -505,6 +505,23 @@ TEST_CASE("CpuHistogramEngine: the lone totals fill reproduces the lone fill's s
     parallel::set_n_threads(0);
 }
 
+TEST_CASE("CpuHistogramEngine: totals_feature names the histogram totals() reads",
+          "[populate][invariant]")
+{
+    auto fx                = make_fixture(4096, 6);
+    fx.selected            = {4, 2, 5};
+    SplitInput const node  = populate_node(fx, test::iota_rows(fx.ds.plane_n_rows()));
+    feature_id_t     first = 0;
+    while (node.hists[first].size() == 0)
+    {
+        ++first;
+    }
+    REQUIRE(SplitInput::totals_feature(fx.selected) == first);
+    HistCell const t = node.hists[first].totals();
+    REQUIRE(node.totals().sum_grad == t.sum_grad);
+    REQUIRE(node.totals().sum_hess == t.sum_hess);
+}
+
 TEST_CASE("populate is reproducible at a fixed thread count", "[populate]")
 {
     parallel::set_n_threads(3);

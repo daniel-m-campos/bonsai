@@ -16,7 +16,7 @@ Predicting through a Dataset carrying the model's own cuts is bit-identical to p
 
 ### caller-mask-restored-after-fit
 
-A CallerPlace narrows the calling thread to the team's first CPU for its scope and hands the thread's own mask back when it closes, so a fit leaves the thread it ran on, and every thread created after it, exactly as placed as before. With the runtime's placement variables set the scope changes nothing.
+A FitPlace narrows the calling thread to the team's first CPU for its scope and hands the thread's own mask back when it closes, so a fit leaves the thread it ran on, and every thread created after it, exactly as placed as before. With the runtime's placement variables set the scope changes nothing. Linux only: elsewhere the scope is a no-op and there is nothing to restore.
 
 - enforced by: [`the caller's place lasts its scope and the mask comes back`](../tests/unit/test_parallel.cpp)
 

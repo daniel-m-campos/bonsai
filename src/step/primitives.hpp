@@ -166,7 +166,12 @@ inline void finish_split_totals(PendingSplit &p, feature_id_t feature)
 {
     adopt_parent_histograms(p);
     larger_child(p).hists[feature] -= smaller_child(p).hists[feature];
-    settle_split(p);
+    for (SplitInput *child : {&p.left, &p.right})
+    {
+        HistCell const t = child->hists[feature].totals();
+        child->sums      = {.sum_grad = t.sum_grad, .sum_hess = t.sum_hess};
+        child->row_count = child->rows.size();
+    }
 }
 
 inline void finish_split(Dataset const &ds, PendingSplit &p, bool fused = false)
