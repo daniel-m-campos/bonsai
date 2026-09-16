@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bonsai/detail/untouched.hpp"
+#include "bonsai/detail/raw_allocator.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -78,10 +78,10 @@ class RowMirror
   private:
     // Untouched until the mint's workers write it (invariants:
     // untouched-resize-writes-nothing).
-    mutable detail::untouched_vector<uint8_t> bins_;
-    mutable std::once_flag                    once_;
-    size_t                                    n_rows_     = 0;
-    size_t                                    n_features_ = 0;
+    mutable std::vector<uint8_t, detail::RawAllocator<uint8_t>> bins_;
+    mutable std::once_flag                                      once_;
+    size_t                                                      n_rows_     = 0;
+    size_t                                                      n_features_ = 0;
 };
 
 } // namespace bonsai

@@ -1,24 +1,17 @@
 #pragma once
 
+#include "bonsai/detail/place.hpp"
 #include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <print>
 #include <string_view>
-#include <tuple>
 #include <utility>
-#include <vector>
 
 #ifdef __linux__
-#include <fstream>
 #include <sched.h>
-#include <string>
-#if defined(__x86_64__) || defined(__i386__)
-#include <cpuid.h>
-#endif
 #endif
 
 #ifdef BONSAI_USE_OPENMP
@@ -64,17 +57,6 @@ inline int quota_cpus(std::string_view pair)
     }
     return static_cast<int>(std::max<int64_t>(1, quota / period));
 }
-
-#ifdef __linux__
-// First line of a file, empty when it does not open.
-inline std::string first_line(char const *path)
-{
-    std::ifstream in{path};
-    std::string   line;
-    std::getline(in, line);
-    return line;
-}
-#endif
 
 // Whole CPUs the CPU bandwidth quota allows, 0 when there is none. Reads
 // the unified cgroup v2 mount then the v1 pair, both at the paths a
@@ -128,217 +110,17 @@ inline void warn_if_over_quota(int requested)
                  "set OMP_WAIT_POLICY=passive to avoid it.",
                  requested, quota, quota);
 }
-// One CPU the process may run on, with the package and core it sits in.
-struct CpuPlace
-{
-    int cpu;
-    int package;
-    int core;
-};
-
-// The order a team fills CPUs in: one CPU per core, one package before the
-// next (invariants: team-packs-one-package-first).
-inline std::vector<int> place_order(std::vector<CpuPlace> places)
-{
-    std::ranges::sort(places,
-                      [](CpuPlace const &a, CpuPlace const &b)
-                      {
-                          return std::tie(a.package, a.core, a.cpu) <
-                                 std::tie(b.package, b.core, b.cpu);
-                      });
-    std::vector<int> order;
-    for (size_t i = 0; i < places.size(); ++i)
-    {
-        if (i == 0 || places[i].package != places[i - 1].package ||
-            places[i].core != places[i - 1].core)
-        {
-            order.push_back(places[i].cpu);
-        }
-    }
-    return order;
-}
-
-#ifdef __linux__
-inline int topology_id(int cpu, char const *leaf)
-{
-    std::string const path =
-        "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/topology/" + leaf;
-    int               id   = cpu;
-    std::string const line = first_line(path.c_str());
-    std::from_chars(line.data(), line.data() + line.size(), id);
-    return id;
-}
-
-// The APIC id widths of the SMT and core levels (cpuid leaf 0xB), zero
-// widths when the leaf is absent.
-struct ApicLevels
-{
-    unsigned smt_bits  = 0;
-    unsigned core_bits = 0;
-    bool     present   = false;
-};
-
-#if defined(__x86_64__) || defined(__i386__)
-inline ApicLevels apic_levels()
-{
-    ApicLevels out;
-    unsigned   a = 0;
-    unsigned   b = 0;
-    unsigned   c = 0;
-    unsigned   d = 0;
-    if (__get_cpuid_max(0, nullptr) < 0xB)
-    {
-        return out;
-    }
-    for (unsigned sub = 0; sub < 4; ++sub)
-    {
-        __cpuid_count(0xB, sub, a, b, c, d);
-        unsigned const type = (c >> 8) & 0xFF;
-        if (type == 1)
-        {
-            out.smt_bits = a & 0x1F;
-            out.present  = true;
-        }
-        else if (type == 2)
-        {
-            out.core_bits = a & 0x1F;
-            out.present   = true;
-        }
-    }
-    return out;
-}
-
-// The x2APIC id of the CPU the calling thread runs on.
-inline unsigned apic_id()
-{
-    unsigned a = 0;
-    unsigned b = 0;
-    unsigned c = 0;
-    unsigned d = 0;
-    __cpuid_count(0xB, 0, a, b, c, d);
-    return d;
-}
-#endif
-
-// The place of every CPU in the mask. The runtime reads its topology from
-// the CPU itself and a virtual machine's /sys can name each vCPU a core of
-// its own while cpuid pairs them as siblings, so on x86 the calling thread
-// visits each CPU for its APIC id and /sys is the fallback.
-inline std::vector<CpuPlace> mask_places()
-{
-    std::vector<CpuPlace> places;
-    cpu_set_t             set;
-    CPU_ZERO(&set);
-    if (sched_getaffinity(0, sizeof set, &set) != 0)
-    {
-        return places;
-    }
-#if defined(__x86_64__) || defined(__i386__)
-    ApicLevels const levels = apic_levels();
-    if (levels.present && levels.core_bits > 0)
-    {
-        for (int c = 0; c < CPU_SETSIZE; ++c)
-        {
-            if (!CPU_ISSET(c, &set))
-            {
-                continue;
-            }
-            cpu_set_t one;
-            CPU_ZERO(&one);
-            CPU_SET(c, &one);
-            if (sched_setaffinity(0, sizeof one, &one) != 0)
-            {
-                continue;
-            }
-            unsigned const id = apic_id();
-            places.push_back({.cpu     = c,
-                              .package = static_cast<int>(id >> levels.core_bits),
-                              .core    = static_cast<int>(id >> levels.smt_bits)});
-        }
-        sched_setaffinity(0, sizeof set, &set);
-        return places;
-    }
-#endif
-    for (int c = 0; c < CPU_SETSIZE; ++c)
-    {
-        if (CPU_ISSET(c, &set))
-        {
-            places.push_back({.cpu     = c,
-                              .package = topology_id(c, "physical_package_id"),
-                              .core    = topology_id(c, "core_id")});
-        }
-    }
-    return places;
-}
-
-// The process mask in team order, read once before any thread is bound.
-inline std::vector<int> const &team_cpus()
-{
-    static std::vector<int> const cpus = place_order(mask_places());
-    return cpus;
-}
-
-// Any of the runtime's placement variables, OMP_PROC_BIND=false included,
-// leaves placement to the runtime.
-inline bool runtime_places_threads()
-{
-    static bool const set = std::getenv("OMP_PROC_BIND") != nullptr ||
-                            std::getenv("OMP_PLACES") != nullptr ||
-                            std::getenv("KMP_AFFINITY") != nullptr ||
-                            std::getenv("GOMP_CPU_AFFINITY") != nullptr;
-    return set;
-}
-
-inline void run_on(int cpu)
-{
-    cpu_set_t one;
-    CPU_ZERO(&one);
-    CPU_SET(cpu, &one);
-    sched_setaffinity(0, sizeof one, &one);
-}
-#endif
-
-inline std::atomic<int> &placed_callers()
-{
-    static std::atomic<int> n{0};
-    return n;
-}
-
 #ifdef BONSAI_USE_OPENMP
-// The runtime's thread count, read once and before any CallerPlace narrows
-// the calling thread: the runtime sizes itself from the mask it first sees,
+// The runtime's thread count, read once and before any FitPlace narrows the
+// calling thread: the runtime sizes itself from the mask it first sees,
 // so a fit with an explicit count opening the scope ahead of the first
 // region would otherwise leave every later auto count at one.
-inline int hardware_threads()
+inline int runtime_threads()
 {
     static int const n = omp_get_max_threads();
     return n;
 }
 #endif
-
-// A worker binds to the tid-th team CPU once and keeps it, only while a
-// CallerPlace is open: without one the team runs wherever the scheduler
-// puts it, as it did before placement existed.
-inline void bind_worker(int tid, int team)
-{
-#ifdef __linux__
-    static thread_local bool bound = false;
-    if (bound || tid == 0 || placed_callers().load(std::memory_order_relaxed) == 0)
-    {
-        return;
-    }
-    std::vector<int> const &cpus = team_cpus();
-    if (runtime_places_threads() || cpus.size() < static_cast<size_t>(team))
-    {
-        return;
-    }
-    bound = true;
-    run_on(cpus[static_cast<size_t>(tid)]);
-#else
-    (void) tid;
-    (void) team;
-#endif
-}
 } // namespace internal
 
 // The configuration point, called before a fit and never inside a parallel
@@ -371,66 +153,74 @@ inline int n_threads()
         return requested;
     }
     int const quota  = internal::cached_quota_cpus();
-    int const capped = std::min(internal::hardware_threads(), auto_thread_cap);
+    int const capped = std::min(internal::runtime_threads(), auto_thread_cap);
     return quota > 0 ? std::min(capped, quota) : capped;
 #else
     return 1;
 #endif
 }
 
-// The placement scope, opened by a fit's entry point for the length of the
-// call: the calling thread takes the team's first CPU, so everything it
-// allocates between regions homes on the team's node, and its workers bind
-// to the CPUs after it. The mask comes back when the scope closes, so no
-// thread created outside a fit inherits a one-CPU mask. Skipped when the
-// runtime's placement variables are set or the mask is narrower than the
-// team (invariants: caller-mask-restored-after-fit).
-class CallerPlace
+// The placement scope a fit's entry point opens for the length of the call:
+// the calling thread takes the team's first CPU, so what it allocates
+// between regions homes on the team's node, and its workers take the CPUs
+// after it. The mask comes back when the scope closes, so no thread created
+// outside a fit inherits a one-CPU mask. Skipped when the runtime's
+// placement variables are set, when the mask is narrower than the team, or
+// while another fit in the process holds a place
+// (invariants: caller-mask-restored-after-fit).
+class FitPlace
 {
   public:
-    CallerPlace()
+    FitPlace()
     {
 #ifdef BONSAI_USE_OPENMP
-        internal::hardware_threads();
+        internal::runtime_threads();
 #endif
 #ifdef __linux__
-        std::vector<int> const &cpus = internal::team_cpus();
-        if (internal::runtime_places_threads() ||
-            cpus.size() < static_cast<size_t>(n_threads()))
+        if (sched_getaffinity(0, sizeof saved_, &saved_) != 0)
         {
             return;
         }
-        restore_ = sched_getaffinity(0, sizeof saved_, &saved_) == 0;
-        if (restore_)
+        internal::CpuPlaces const &mask = internal::cpu_places();
+        if (internal::runtime_places_threads() ||
+            mask.team.size() < static_cast<size_t>(n_threads()))
         {
-            internal::run_on(cpus[0]);
-            internal::placed_callers().fetch_add(1, std::memory_order_relaxed);
+            return;
         }
+        if (internal::placed_fits().fetch_add(1, std::memory_order_relaxed) != 0)
+        {
+            internal::placed_fits().fetch_sub(1, std::memory_order_relaxed);
+            return;
+        }
+        placed_                         = true;
+        internal::fit_place_open_flag() = true;
+        internal::run_on(mask.team[0]);
 #endif
     }
-    ~CallerPlace()
+    ~FitPlace()
     {
 #ifdef __linux__
-        if (restore_)
+        if (placed_)
         {
-            internal::placed_callers().fetch_sub(1, std::memory_order_relaxed);
+            internal::fit_place_open_flag() = false;
+            internal::placed_fits().fetch_sub(1, std::memory_order_relaxed);
             sched_setaffinity(0, sizeof saved_, &saved_);
         }
 #endif
     }
-    CallerPlace(CallerPlace const &)            = delete;
-    CallerPlace &operator=(CallerPlace const &) = delete;
+    FitPlace(FitPlace const &)            = delete;
+    FitPlace &operator=(FitPlace const &) = delete;
 
   private:
 #ifdef __linux__
-    bool      restore_ = false;
+    bool      placed_ = false;
     cpu_set_t saved_{};
 #endif
 };
 
 // Runs f(i) for i in [0, n) on a team of `workers`, each worker at its
-// place while a CallerPlace is open. Iterations must be independent. Each index is
-// processed by exactly one thread, so per-index OUTPUTS are bit-identical at any
+// place while the caller's FitPlace is open. Iterations must be independent. Each index
+// is processed by exactly one thread, so per-index OUTPUTS are bit-identical at any
 // thread count; sites whose work DECOMPOSITION consults n_threads() (the fill plan)
 // key the model bits to the configured count, the fixed-N contract (invariants:
 // host-determinism). Dynamic scheduling keeps asymmetric cores (e.g. P/E) busy; the
@@ -447,9 +237,10 @@ template <typename F> void for_each_index_on(int workers, size_t n, F &&f)
         // compilation passes drop even with OpenMP enabled host-side.
         [[maybe_unused]] auto const chunk = static_cast<int64_t>(
             std::max<size_t>(1, n / (static_cast<size_t>(nt) * 4)));
+        bool const placed = internal::fit_place_open();
 #pragma omp parallel num_threads(nt)
         {
-            internal::bind_worker(omp_get_thread_num(), nt);
+            internal::take_place(omp_get_thread_num(), placed);
 #pragma omp for schedule(dynamic, chunk)
             for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
             {

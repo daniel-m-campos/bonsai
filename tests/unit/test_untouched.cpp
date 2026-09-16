@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "bonsai/detail/untouched.hpp"
+#include "bonsai/detail/raw_allocator.hpp"
+
+#include <vector>
 
 using namespace bonsai; // NOLINT
 
@@ -26,7 +28,7 @@ struct Counted
 TEST_CASE("untouched vector resizes without constructing", "[parallel][invariant]")
 {
     Counted::constructed = 0;
-    detail::untouched_vector<Counted> v;
+    std::vector<Counted, detail::RawAllocator<Counted>> v;
     v.resize(64);
     CHECK(v.size() == 64);
     CHECK(Counted::constructed == 0);

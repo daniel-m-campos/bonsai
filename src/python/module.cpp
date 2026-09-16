@@ -590,7 +590,7 @@ class Dataset
         bonsai::floats_view const w = warg ? warg->view() : bonsai::floats_view{};
         nb::gil_scoped_release    release;
         bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
-        bonsai::parallel::CallerPlace const placed;
+        bonsai::parallel::FitPlace const placed;
         bin_cfg_ = cfg.bin_mapper;
         *loaded_ = ingest_training(xarg, yarg.view(), w, cfg, on_device,
                                    reference != nullptr
@@ -1614,7 +1614,7 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
     nb::object const named_monotone = take_named_monotone(items);
     bonsai::Config   cfg            = config_from_params(render_params(items));
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
-    bonsai::parallel::CallerPlace const placed;
+    bonsai::parallel::FitPlace const placed;
 
     auto const [xarg, yarg, warg] = resolve_inputs(
         X, y, sample_weight, cfg.parallel.device_id, "sample_weight", "");
@@ -1697,7 +1697,7 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
             std::to_string(*resident) + " or rebuild the Dataset on that device.");
     }
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
-    bonsai::parallel::CallerPlace const placed;
+    bonsai::parallel::FitPlace const placed;
 
     std::optional<bonsai::io::LoadedBooster> init;
     if (init_model)
