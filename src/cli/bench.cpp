@@ -2,6 +2,7 @@
 #include "bonsai/cli/handlers.hpp"
 #include "bonsai/cli/pipeline.hpp"
 #include "bonsai/parallel.hpp"
+#include <memory>
 
 #include <chrono>
 #include <cstdio>
@@ -43,12 +44,12 @@ int run_bench(BenchOpts const &opts)
     auto       loaded = load_train_from_csv(cfg, cfg.data.train);
     auto const t_load = seconds_since(t0);
 
-    auto const t1      = clk::now();
-    auto       booster = [&]
+    auto const                         t1 = clk::now();
+    std::unique_ptr<ITrainableBooster> booster;
     {
         parallel::FitPlace const placed;
-        return train_in_memory(cfg, loaded.train);
-    }();
+        booster = train_in_memory(cfg, loaded.train);
+    }
     auto const t_fit = seconds_since(t1);
 
     auto const t2        = clk::now();
