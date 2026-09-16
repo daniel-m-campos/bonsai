@@ -686,14 +686,16 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
 
     while (!heap.empty() && has_budget())
     {
-        gd::PoppedSplit ps   = gd::pop_split(heap, gain_less, build, ds);
-        gd::ChildPair   pair = step.split_children(ps.c, ps.left_id, ps.right_id);
+        gd::PoppedSplit ps        = gd::pop_split(heap, gain_less, build, ds);
+        bool const      may_split = ps.c.depth + 1 < config().max_depth;
+        gd::ChildPair   pair =
+            step.split_children(ps.c, ps.left_id, ps.right_id, may_split);
         if (!gd::commit_pop(step, ds, config(), interaction_groups_, ps, pair, build,
                             live_leaves, out))
         {
             continue;
         }
-        step.find_children(pair, pair.depth < config().max_depth);
+        step.find_children(pair, may_split);
         gd::queue_children(pair, gain_less, heap, pending);
     }
 

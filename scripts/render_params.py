@@ -119,7 +119,7 @@ EFFECTS = {
     "data.ignore_columns": "Zero-based column indices to drop before training. Excludes ids or leaks without editing the file.",
     "data.libsvm_n_features": "libsvm only: force the feature count. 0 infers from the max index; set it when a split's max index is lower.",
     # parallel
-    "parallel.n_threads": "CPU threads for training. 0 auto-detects hardware threads, capped at 16 and at the CPU quota of a quota-limited container. An explicit count over that quota is honored, so the model stays reproducible, and warns once. Set OMP_WAIT_POLICY=passive where the pool is oversubscribed.",
+    "parallel.n_threads": "CPU threads for training. 0 auto-detects hardware threads, capped at 16 and at the CPU quota of a quota-limited container. An explicit count over that quota is honored, so the model stays reproducible, and warns once. Set OMP_WAIT_POLICY=passive where the pool is oversubscribed. Worker threads bind to one core each, one package first, unless OMP_PROC_BIND or OMP_PLACES is set; OMP_PROC_BIND=false leaves placement to the scheduler, for several fits sharing one container.",
     "parallel.device_id": "CUDA device for cuda_ growers. Placement only: ignored by CPU growers and deliberately not stored in the model.",
 }
 

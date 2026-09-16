@@ -2,8 +2,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstring>
+#include <functional>
 #include <random>
 #include <utility>
 #include <vector>
@@ -394,6 +396,130 @@ TEST_CASE("a full-cardinality row list that is not the identity still gathers",
         }
     }
     parallel::set_n_threads(0);
+}
+
+// INVARIANT: totals-fill-matches-full-fill
+// A node's sums are read from one histogram, the lowest selected feature's,
+// and a fill of that feature alone produces the same cells as the full fill,
+// bit for bit: the same rows in the same chunks with the same partial order,
+// only fewer features per row. The host growers rely on it for children that
+// become leaves, filling that one feature instead of every selected one, so
+// the leaf values are unchanged while the deepest level's fill shrinks by a
+// factor near the feature count.
+TEST_CASE("CpuHistogramEngine: the totals fill reproduces the full fill's sums",
+          "[populate][invariant]")
+{
+    auto fx                    = make_fixture(40960, 5);
+    fx.selected                = {1, 3, 4};
+    feature_id_t const feature = SplitInput::totals_feature(fx.selected);
+    REQUIRE(feature == 1);
+
+    std::vector<row_id_t> sparse;
+    for (row_id_t r = 0; r < fx.ds.plane_n_rows(); r += 5)
+    {
+        sparse.push_back(r);
+    }
+    parallel::set_n_threads(4);
+    for (auto const &rows : {sparse, test::iota_rows(fx.ds.plane_n_rows())})
+    {
+        SplitInput const full = populate_node(fx, rows);
+        SplitInput       node;
+        node.rows           = rows;
+        node.shape.identity = rows_are_identity(node.rows, fx.ds.plane_n_rows());
+        CpuHistogramEngine engine;
+        engine.begin_tree(fx.ds, fx.grad, fx.hess);
+        std::array one = {std::ref(node)};
+        engine.populate_totals(fx.ds, fx.grad, fx.hess, one, feature);
+
+        auto const want = full.hists[feature].all_cells();
+        auto const got  = node.hists[feature].all_cells();
+        REQUIRE(got.size() == want.size());
+        for (size_t b = 0; b < got.size(); ++b)
+        {
+            REQUIRE(got[b].sum_grad == want[b].sum_grad);
+            REQUIRE(got[b].sum_hess == want[b].sum_hess);
+        }
+        REQUIRE(node.totals().sum_grad == full.totals().sum_grad);
+        REQUIRE(node.totals().sum_hess == full.totals().sum_hess);
+        CHECK(node.hists[3].size() == 0);
+        CHECK(node.hists[4].size() == 0);
+    }
+    parallel::set_n_threads(0);
+}
+
+// INVARIANT: lone-totals-fill-matches-lone-fill
+// The leaf plane's form: the lone fill blocks a child's rows by the full
+// selection's width, so the one-feature fill takes the same blocks and the
+// same merge order, and the sibling it subtracts from ends up as the full
+// fused fill would leave it for that feature.
+TEST_CASE("CpuHistogramEngine: the lone totals fill reproduces the lone fill's sums",
+          "[populate][invariant]")
+{
+    auto fx                    = make_fixture(40960, 5);
+    fx.selected                = {1, 3, 4};
+    feature_id_t const feature = SplitInput::totals_feature(fx.selected);
+
+    std::vector<row_id_t> sparse;
+    for (row_id_t r = 0; r < fx.ds.plane_n_rows(); r += 5)
+    {
+        sparse.push_back(r);
+    }
+    parallel::set_n_threads(4);
+    SplitInput const full = populate_node(fx, sparse, 1);
+
+    SplitInput node;
+    node.id   = 1;
+    node.rows = sparse;
+    CpuHistogramEngine engine;
+    engine.begin_tree(fx.ds, fx.grad, fx.hess);
+    SplitInput parent;
+    parent.rows           = test::iota_rows(fx.ds.plane_n_rows());
+    parent.shape.identity = true;
+    engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
+    engine.populate_lone_totals(fx.ds, fx.grad, fx.hess, node, fx.selected,
+                                parent.hists, feature);
+
+    auto const want = full.hists[feature].all_cells();
+    auto const got  = node.hists[feature].all_cells();
+    REQUIRE(got.size() == want.size());
+    for (size_t b = 0; b < got.size(); ++b)
+    {
+        REQUIRE(got[b].sum_grad == want[b].sum_grad);
+        REQUIRE(got[b].sum_hess == want[b].sum_hess);
+    }
+    REQUIRE(node.totals().sum_grad == full.totals().sum_grad);
+    CHECK(node.hists[3].size() == 0);
+
+    SplitInput whole;
+    whole.rows           = parent.rows;
+    whole.shape.identity = true;
+    engine.populate(fx.ds, fx.grad, fx.hess, whole, fx.selected);
+    Histogram &rest = whole.hists[feature];
+    rest -= full.hists[feature];
+    auto const sib = parent.hists[feature].all_cells();
+    auto const ref = rest.all_cells();
+    for (size_t b = 0; b < sib.size(); ++b)
+    {
+        REQUIRE(sib[b].sum_grad == ref[b].sum_grad);
+    }
+    parallel::set_n_threads(0);
+}
+
+TEST_CASE("CpuHistogramEngine: totals_feature names the histogram totals() reads",
+          "[populate][invariant]")
+{
+    auto fx                = make_fixture(4096, 6);
+    fx.selected            = {4, 2, 5};
+    SplitInput const node  = populate_node(fx, test::iota_rows(fx.ds.plane_n_rows()));
+    feature_id_t     first = 0;
+    while (node.hists[first].size() == 0)
+    {
+        ++first;
+    }
+    REQUIRE(SplitInput::totals_feature(fx.selected) == first);
+    HistCell const t = node.hists[first].totals();
+    REQUIRE(node.totals().sum_grad == t.sum_grad);
+    REQUIRE(node.totals().sum_hess == t.sum_hess);
 }
 
 TEST_CASE("populate is reproducible at a fixed thread count", "[populate]")

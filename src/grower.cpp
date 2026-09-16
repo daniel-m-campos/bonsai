@@ -29,53 +29,11 @@ namespace
 // fill, sparser ones to the row-chunk fill; measured, not tunable.
 constexpr size_t k_col_fill_den = 4;
 
-} // namespace
-
-void CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_view hess,
-                                  SplitInput                   &split_input,
-                                  std::span<feature_id_t const> selected)
+void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
+                    split_input_refs nodes, std::span<feature_id_t const> selected,
+                    fd::SelectionPlan const &sp)
 {
-    std::array one = {std::ref(split_input)};
-    populate_many(ds, grad, hess, one, selected);
-} // namespace fd
-
-bool CpuHistogramEngine::populate_lone(Dataset const &ds, floats_view grad,
-                                       floats_view hess, SplitInput &split_input,
-                                       std::span<feature_id_t const> selected,
-                                       NodeHistograms               &sibling)
-{
-    hess = fd::fill_hess(hess);
-    if (split_input.id == 0 || selected.empty() || split_input.rows.empty())
-    {
-        populate(ds, grad, hess, split_input, selected);
-        return false;
-    }
-    fd::SelectionPlan const &sp = fd::selection_plan(ds, selected);
-    split_input.hists.carve_storage(sp.layout, ds.n_features());
-    if (ds.bins_are_u8() &&
-        split_input.rows.size() * k_col_fill_den < ds.plane_n_rows())
-    {
-        fd::FillPlan const plan = fd::plan_lone_fill(
-            split_input.rows.size(), sp, static_cast<size_t>(parallel::n_threads()));
-        fd::fill_lone(ds, split_input, selected, sp, sp.layout, sibling, plan.ranges,
-                      plan.blocks, fd::ordered_gh(split_input.rows, grad, hess));
-    }
-    else
-    {
-        fd::fill_columns_lone(ds, grad, hess, split_input, selected, sp.layout,
-                              sibling);
-    }
-    assert(split_input.hists.all_runs_carved(sp.layout, selected));
-    return true;
-}
-
-void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
-                                       floats_view hess, split_input_refs nodes,
-                                       std::span<feature_id_t const> selected)
-{
-    hess                           = fd::fill_hess(hess);
-    fd::SelectionPlan const &sp    = fd::selection_plan(ds, selected);
-    bool const               alone = nodes.size() == 1;
+    bool const alone = nodes.size() == 1;
     parallel::for_each_index(
         nodes.size(), [&](size_t i)
         { nodes[i].get().hists.carve(sp.layout, selected, ds.n_features(), alone); });
@@ -108,6 +66,90 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     {
         fd::fill_sparse(ds, grad, hess, sparse_nodes, selected, sp);
     }
+}
+
+void fill_lone_routed(Dataset const &ds, floats_view grad, floats_view hess,
+                      SplitInput &split_input, std::span<feature_id_t const> selected,
+                      fd::SelectionPlan const &sp, fd::SelectionPlan const &blocks_from,
+                      NodeHistograms &sibling)
+{
+    split_input.hists.carve_storage(sp.layout, ds.n_features());
+    if (ds.bins_are_u8() &&
+        split_input.rows.size() * k_col_fill_den < ds.plane_n_rows())
+    {
+        fd::FillPlan const plan =
+            fd::plan_lone_fill(split_input.rows.size(), blocks_from,
+                               static_cast<size_t>(parallel::n_threads()));
+        fd::fill_lone(ds, split_input, selected, sp, sp.layout, sibling, plan.ranges,
+                      plan.blocks, fd::ordered_gh(split_input.rows, grad, hess));
+    }
+    else
+    {
+        fd::fill_columns_lone(ds, grad, hess, split_input, selected, sp.layout,
+                              sibling);
+    }
+    assert(split_input.hists.all_runs_carved(sp.layout, selected));
+}
+
+} // namespace
+
+void CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_view hess,
+                                  SplitInput                   &split_input,
+                                  std::span<feature_id_t const> selected)
+{
+    std::array one = {std::ref(split_input)};
+    populate_many(ds, grad, hess, one, selected);
+} // namespace fd
+
+bool CpuHistogramEngine::populate_lone(Dataset const &ds, floats_view grad,
+                                       floats_view hess, SplitInput &split_input,
+                                       std::span<feature_id_t const> selected,
+                                       NodeHistograms               &sibling)
+{
+    hess = fd::fill_hess(hess);
+    if (split_input.id == 0 || selected.empty() || split_input.rows.empty())
+    {
+        populate(ds, grad, hess, split_input, selected);
+        return false;
+    }
+    fd::SelectionPlan const &sp = fd::selection_plan(ds, selected);
+    fill_lone_routed(ds, grad, hess, split_input, selected, sp, sp, sibling);
+    return true;
+}
+
+void CpuHistogramEngine::populate_lone_totals(Dataset const &ds, floats_view grad,
+                                              floats_view hess, SplitInput &split_input,
+                                              std::span<feature_id_t const> selected,
+                                              NodeHistograms               &sibling,
+                                              feature_id_t                  feature)
+{
+    hess = fd::fill_hess(hess);
+    std::span<feature_id_t const> const one{&feature, 1};
+    if (split_input.id == 0 || split_input.rows.empty())
+    {
+        std::array node = {std::ref(split_input)};
+        populate_totals(ds, grad, hess, node, feature);
+        sibling[feature] -= split_input.hists[feature];
+        return;
+    }
+    fill_lone_routed(ds, grad, hess, split_input, one, fd::totals_plan(ds, feature),
+                     fd::selection_plan(ds, selected), sibling);
+}
+
+void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
+                                       floats_view hess, split_input_refs nodes,
+                                       std::span<feature_id_t const> selected)
+{
+    carve_and_fill(ds, grad, fd::fill_hess(hess), nodes, selected,
+                   fd::selection_plan(ds, selected));
+}
+
+void CpuHistogramEngine::populate_totals(Dataset const &ds, floats_view grad,
+                                         floats_view hess, split_input_refs nodes,
+                                         feature_id_t feature)
+{
+    carve_and_fill(ds, grad, fd::fill_hess(hess), nodes, {&feature, 1},
+                   fd::totals_plan(ds, feature));
 }
 
 void CpuHistogramEngine::begin_tree(Dataset const & /*ds*/, floats_view /*grad*/,

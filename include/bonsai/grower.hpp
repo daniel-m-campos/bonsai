@@ -208,6 +208,18 @@ struct CpuHistogramEngine
     // populate() is the one-node case.
     void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
                        split_input_refs nodes, std::span<feature_id_t const> selected);
+    // The fill for children that become leaves: only `feature`, the one
+    // SplitInput::totals() reads, is carved and filled; the other histograms
+    // stay empty and must not be read (invariants: totals-fill-matches-full-fill).
+    void populate_totals(Dataset const &ds, floats_view grad, floats_view hess,
+                         split_input_refs nodes, feature_id_t feature);
+    // populate_lone's form of the same: the smaller child's `feature` filled
+    // with the lone fill's own row blocks and subtracted from `sibling`
+    // (invariants: lone-totals-fill-matches-lone-fill).
+    void populate_lone_totals(Dataset const &ds, floats_view grad, floats_view hess,
+                              SplitInput                   &split_input,
+                              std::span<feature_id_t const> selected,
+                              NodeHistograms &sibling, feature_id_t feature);
 };
 
 static_assert(HistogramEngine<CpuHistogramEngine>);

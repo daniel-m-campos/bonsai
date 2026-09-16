@@ -101,11 +101,13 @@ struct SelectionPlan
 struct PlanCache
 {
     std::optional<SelectionPlan> plan;
-    Dataset const               *ds        = nullptr;
-    feature_id_t const          *sel       = nullptr;
-    size_t                       n         = 0;
-    float const                 *hess      = nullptr;
-    bool                         unit_hess = false;
+    std::optional<SelectionPlan> totals;
+    feature_id_t                 totals_feature = 0;
+    Dataset const               *ds             = nullptr;
+    feature_id_t const          *sel            = nullptr;
+    size_t                       n              = 0;
+    float const                 *hess           = nullptr;
+    bool                         unit_hess      = false;
 };
 
 inline PlanCache &plan_cache()
@@ -134,6 +136,18 @@ inline SelectionPlan const &selection_plan(Dataset const                &ds,
     assert(cache.ds == &ds && cache.sel == selected.data() &&
            cache.n == selected.size());
     return *cache.plan;
+}
+inline SelectionPlan const &totals_plan(Dataset const &ds, feature_id_t feature)
+{
+    PlanCache &cache = plan_cache();
+    if (!cache.totals || cache.totals_feature != feature)
+    {
+        cache.totals_feature = feature;
+        cache.totals.emplace(ds,
+                             std::span<feature_id_t const>{&cache.totals_feature, 1});
+    }
+    assert(cache.ds == nullptr || cache.ds == &ds);
+    return *cache.totals;
 }
 
 } // namespace bonsai::fill_detail

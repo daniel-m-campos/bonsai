@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bonsai/detail/place.hpp"
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -10,8 +11,7 @@
 #include <utility>
 
 #ifdef __linux__
-#include <fstream>
-#include <string>
+#include <sched.h>
 #endif
 
 #ifdef BONSAI_USE_OPENMP
@@ -57,17 +57,6 @@ inline int quota_cpus(std::string_view pair)
     }
     return static_cast<int>(std::max<int64_t>(1, quota / period));
 }
-
-#ifdef __linux__
-// First line of a file, empty when it does not open.
-inline std::string first_line(char const *path)
-{
-    std::ifstream in{path};
-    std::string   line;
-    std::getline(in, line);
-    return line;
-}
-#endif
 
 // Whole CPUs the CPU bandwidth quota allows, 0 when there is none. Reads
 // the unified cgroup v2 mount then the v1 pair, both at the paths a
@@ -121,6 +110,17 @@ inline void warn_if_over_quota(int requested)
                  "set OMP_WAIT_POLICY=passive to avoid it.",
                  requested, quota, quota);
 }
+#ifdef BONSAI_USE_OPENMP
+// The runtime's thread count, read once and before any FitPlace narrows the
+// calling thread: the runtime sizes itself from the mask it first sees,
+// so a fit with an explicit count opening the scope ahead of the first
+// region would otherwise leave every later auto count at one.
+inline int runtime_threads()
+{
+    static int const n = omp_get_max_threads();
+    return n;
+}
+#endif
 } // namespace internal
 
 // The configuration point, called before a fit and never inside a parallel
@@ -153,22 +153,80 @@ inline int n_threads()
         return requested;
     }
     int const quota  = internal::cached_quota_cpus();
-    int const capped = std::min(omp_get_max_threads(), auto_thread_cap);
+    int const capped = std::min(internal::runtime_threads(), auto_thread_cap);
     return quota > 0 ? std::min(capped, quota) : capped;
 #else
     return 1;
 #endif
 }
 
-// Runs f(i) for i in [0, n) on a team of `workers`. Iterations must be
-// independent. Each index is processed by exactly one thread, so per-index
-// OUTPUTS are bit-identical at any thread count; sites whose work
-// DECOMPOSITION consults n_threads() (the fill plan) key the model bits to
-// the configured count, the fixed-N contract
-// (invariants: host-determinism). Dynamic scheduling keeps asymmetric
-// cores (e.g. P/E) busy; the chunk size scales with n so per-chunk overhead
-// stays negligible for big loops while small loops still spread one index
-// per thread. A team of one runs the loop inline, entering no region.
+// The placement scope a fit's entry point opens for the length of the call:
+// the calling thread takes the team's first CPU, so what it allocates
+// between regions homes on the team's node, and its workers take the CPUs
+// after it. The mask comes back when the scope closes, so no thread created
+// outside a fit inherits a one-CPU mask. Skipped when the runtime's
+// placement variables are set, when the mask is narrower than the team, or
+// while another fit in the process holds a place
+// (invariants: caller-mask-restored-after-fit).
+class FitPlace
+{
+  public:
+    FitPlace()
+    {
+#ifdef BONSAI_USE_OPENMP
+        internal::runtime_threads();
+#endif
+#ifdef __linux__
+        if (sched_getaffinity(0, sizeof saved_, &saved_) != 0)
+        {
+            return;
+        }
+        internal::CpuPlaces const &mask = internal::cpu_places();
+        if (internal::runtime_places_threads() ||
+            mask.team.size() < static_cast<size_t>(n_threads()))
+        {
+            return;
+        }
+        if (internal::placed_fits().fetch_add(1, std::memory_order_relaxed) != 0)
+        {
+            internal::placed_fits().fetch_sub(1, std::memory_order_relaxed);
+            return;
+        }
+        placed_                         = true;
+        internal::fit_place_open_flag() = true;
+        internal::run_on(mask.team[0]);
+#endif
+    }
+    ~FitPlace()
+    {
+#ifdef __linux__
+        if (placed_)
+        {
+            internal::fit_place_open_flag() = false;
+            internal::placed_fits().fetch_sub(1, std::memory_order_relaxed);
+            sched_setaffinity(0, sizeof saved_, &saved_);
+        }
+#endif
+    }
+    FitPlace(FitPlace const &)            = delete;
+    FitPlace &operator=(FitPlace const &) = delete;
+
+  private:
+#ifdef __linux__
+    bool      placed_ = false;
+    cpu_set_t saved_{};
+#endif
+};
+
+// Runs f(i) for i in [0, n) on a team of `workers`, each worker at its
+// place while the caller's FitPlace is open. Iterations must be independent. Each index
+// is processed by exactly one thread, so per-index OUTPUTS are bit-identical at any
+// thread count; sites whose work DECOMPOSITION consults n_threads() (the fill plan)
+// key the model bits to the configured count, the fixed-N contract (invariants:
+// host-determinism). Dynamic scheduling keeps asymmetric cores (e.g. P/E) busy; the
+// chunk size scales with n so per-chunk overhead stays negligible for big loops
+// while small loops still spread one index per thread. A team of one runs the loop
+// inline, entering no region.
 template <typename F> void for_each_index_on(int workers, size_t n, F &&f)
 {
 #ifdef BONSAI_USE_OPENMP
@@ -179,10 +237,15 @@ template <typename F> void for_each_index_on(int workers, size_t n, F &&f)
         // compilation passes drop even with OpenMP enabled host-side.
         [[maybe_unused]] auto const chunk = static_cast<int64_t>(
             std::max<size_t>(1, n / (static_cast<size_t>(nt) * 4)));
-#pragma omp parallel for schedule(dynamic, chunk) num_threads(nt)
-        for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
+        bool const placed = internal::fit_place_open();
+#pragma omp parallel num_threads(nt)
         {
-            f(static_cast<size_t>(i));
+            internal::take_place(omp_get_thread_num(), placed);
+#pragma omp for schedule(dynamic, chunk)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
+            {
+                f(static_cast<size_t>(i));
+            }
         }
         return;
     }

@@ -5,6 +5,7 @@
 #include "bonsai/row_view.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
+#include <cassert>
 #include <concepts>
 #include <cstddef>
 #include <limits>
@@ -61,6 +62,14 @@ struct SplitInput
     // Node-level totals: the cached sums when set, else from the first
     // populated histogram (every populated feature sums the same rows;
     // unselected features are zero-binned placeholders and are skipped).
+    // The feature totals() reads for a node carved from `selected`, which
+    // must not be empty: carve leaves unselected features empty, so it is
+    // the lowest selected id (invariants: totals-fill-matches-full-fill).
+    static feature_id_t totals_feature(std::span<feature_id_t const> selected)
+    {
+        assert(!selected.empty());
+        return *std::ranges::min_element(selected);
+    }
     NodeTotals totals() const
     {
         if (row_count > 0)

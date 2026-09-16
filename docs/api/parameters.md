@@ -110,4 +110,4 @@ Compute placement: CPU threads and CUDA device. No effect on the model bits.
 | parameter | type | default | effect |
 |---|---|---|---|
 | `device_id` | integer | `0` | CUDA device for cuda_ growers. Placement only: ignored by CPU growers and deliberately not stored in the model. |
-| `n_threads` | integer | `0` | CPU threads for training. 0 auto-detects hardware threads, capped at 16 and at the CPU quota of a quota-limited container. An explicit count over that quota is honored, so the model stays reproducible, and warns once. Set OMP_WAIT_POLICY=passive where the pool is oversubscribed. |
+| `n_threads` | integer | `0` | CPU threads for training. 0 auto-detects hardware threads, capped at 16 and at the CPU quota of a quota-limited container. An explicit count over that quota is honored, so the model stays reproducible, and warns once. Set OMP_WAIT_POLICY=passive where the pool is oversubscribed. Worker threads bind to one core each, one package first, unless OMP_PROC_BIND or OMP_PLACES is set; OMP_PROC_BIND=false leaves placement to the scheduler, for several fits sharing one container. |

@@ -46,10 +46,12 @@ class LeafStep : public TreeStep<EngineT>
         return {.node = std::move(root), .split = split[0], .depth = 0};
     }
 
-    ChildPair split_children(Candidate &c, node_id_t left_id, node_id_t right_id)
+    ChildPair split_children(Candidate &c, node_id_t left_id, node_id_t right_id,
+                             bool may_split)
     {
-        auto [left, right] = split_node(ds_, grad_, hess_, std::move(c.node), c.split,
-                                        left_id, right_id, selected_, engine_);
+        auto [left, right] =
+            split_node(ds_, grad_, hess_, std::move(c.node), c.split, left_id, right_id,
+                       selected_, may_split, engine_);
         return {.nodes = {std::move(left), std::move(right)},
                 .depth = static_cast<uint8_t>(c.depth + 1)};
     }
@@ -124,12 +126,13 @@ class LeafStep<EngineT, SplitterT> : public TreeStep<EngineT>
                 .right_sums = sums[1]};
     }
 
-    ChildPair split_children(Candidate &c, node_id_t left_id, node_id_t right_id)
+    ChildPair split_children(Candidate &c, node_id_t left_id, node_id_t right_id,
+                             bool may_split)
     {
         Phase<&GrowProfiler::partition_s>  phase;
         typename EngineT::LeafPartOp const op{c.slot, c.split.feature_id,
                                               c.split.bin_id, c.split.default_left,
-                                              c.depth + 1 < config_.max_depth};
+                                              may_split};
         auto const                         round = engine_.leaf_split(ds_, op);
         ChildPair                          pair;
         pair.depth              = static_cast<uint8_t>(c.depth + 1);

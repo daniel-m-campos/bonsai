@@ -2,7 +2,7 @@
   "clone_windows": 64,
   "shape_clone_windows": 509,
   "vocabulary_singletons": 146,
-  "contract_prose_lines": 1523,
+  "contract_prose_lines": 1571,
   "binding_prose_lines": 437,
   "hardware_leaks": 51
 }
