@@ -37,6 +37,17 @@ struct MirrorSlice
     {
         return s1 - s0;
     }
+
+    MirrorSlice subrange(size_t b0, size_t b1) const
+    {
+        return {.s0       = s0 + b0,
+                .s1       = s0 + b1,
+                .rm_base  = rm_base,
+                .rm_width = rm_width,
+                .cell0    = cell0,
+                .cells    = cells,
+                .fid0     = fid0 + b0};
+    }
 };
 
 inline std::vector<MirrorSlice> mirror_slices(Dataset const                &ds,
