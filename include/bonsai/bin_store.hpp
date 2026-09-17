@@ -40,11 +40,7 @@ class IngestPlane
     explicit IngestPlane(void const *backend_tag = nullptr) : backend_tag_(backend_tag)
     {
     }
-    IngestPlane(IngestPlane const &)            = default;
-    IngestPlane &operator=(IngestPlane const &) = default;
-    IngestPlane(IngestPlane &&)                 = default;
-    IngestPlane &operator=(IngestPlane &&)      = default;
-    virtual ~IngestPlane()                      = default;
+    virtual ~IngestPlane() = default;
 
     // One-time host materialization: fill the HELD alternative with the
     // plane's binned columns, feature-major, byte-identical to the host fill
