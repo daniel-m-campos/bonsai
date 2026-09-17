@@ -147,6 +147,22 @@ TEST_CASE("Csv: a headerless file names its columns f0..fn", "[csv][fit]")
     std::filesystem::remove(path);
 }
 
+TEST_CASE("Csv: a blank header line falls back to numbered names", "[csv][edge]")
+{
+    auto const path =
+        (std::filesystem::temp_directory_path() / "bonsai-blank-header.csv").string();
+    std::ofstream{path} << "\n1,2\n3,4\n";
+    bonsai::DataConfig data_cfg;
+    data_cfg.header       = true;
+    data_cfg.label_column = 0;
+
+    auto const batch = bonsai::detail::csv::parse(path, data_cfg);
+    REQUIRE(batch.feature_names == std::vector<std::string>{"f1"});
+    REQUIRE(batch.labels == std::vector<float>{1.0F, 3.0F});
+    REQUIRE(batch.features[0] == std::vector<float>{2.0F, 4.0F});
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Csv: a short row is a column count mismatch, not a silent gap",
           "[csv][edge]")
 {
