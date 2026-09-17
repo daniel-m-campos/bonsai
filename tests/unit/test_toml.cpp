@@ -6,6 +6,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "bonsai/config/errors.hpp"
 #include "bonsai/config/toml.hpp"
@@ -84,6 +85,29 @@ TEST_CASE("Toml: wrong type throws ConfigError", "[toml][edge]")
 max_depth = "six"
 )";
     REQUIRE_THROWS_AS(bonsai::config::parse_toml(kText), bonsai::ConfigError);
+}
+
+TEST_CASE("Toml: a bad list names the item and the type it expected", "[toml][edge]")
+{
+    SECTION("an item of the wrong type")
+    {
+        constexpr auto kText = R"(
+[tree]
+monotone_constraints = [1, "a"]
+)";
+        REQUIRE_THROWS_WITH(bonsai::config::parse_toml(kText),
+                            Catch::Matchers::ContainsSubstring(
+                                "item 1: wrong type (expected integer)"));
+    }
+    SECTION("a scalar in place of the array")
+    {
+        constexpr auto kText = R"(
+[tree]
+monotone_constraints = "abc"
+)";
+        REQUIRE_THROWS_WITH(bonsai::config::parse_toml(kText),
+                            Catch::Matchers::ContainsSubstring("must be an array"));
+    }
 }
 
 TEST_CASE("Overrides: apply dotted keys updates the right fields", "[overrides][fit]")

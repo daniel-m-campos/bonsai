@@ -111,7 +111,7 @@ template <> struct FieldCodec<int>
         auto opt = node.value<int64_t>();
         if (!opt)
         {
-            return std::unexpected("wrong type");
+            return std::unexpected("wrong type (expected integer)");
         }
         return static_cast<int>(*opt);
     }
@@ -171,7 +171,7 @@ template <> struct FieldCodec<std::string>
         auto opt = node.value<std::string>();
         if (!opt)
         {
-            return std::unexpected("wrong type");
+            return std::unexpected("wrong type (expected string)");
         }
         return *opt;
     }
@@ -214,96 +214,55 @@ inline ParseResult<std::vector<std::string_view>> split_list(std::string_view va
     return out;
 }
 
-template <> struct FieldCodec<std::vector<std::string>>
+template <typename T> struct FieldCodec<std::vector<T>>
 {
-    static ParseResult<std::vector<std::string>> from_toml(toml::node const &node)
+    static ParseResult<std::vector<T>> from_toml(toml::node const &node)
     {
         auto const *arr = node.as_array();
         if (arr == nullptr)
         {
-            return std::unexpected("must be an array of strings");
+            return std::unexpected("must be an array");
         }
-        std::vector<std::string> out;
+        std::vector<T> out;
         out.reserve(arr->size());
         for (auto const &item : *arr)
         {
-            auto v = item.value<std::string>();
+            auto v = FieldCodec<T>::from_toml(item);
             if (!v)
             {
-                return std::unexpected("items must be strings");
+                return std::unexpected("item " + std::to_string(out.size()) + ": " +
+                                       v.error());
             }
-            out.push_back(*v);
+            out.push_back(std::move(*v));
         }
         return out;
     }
-    static ParseResult<std::vector<std::string>> from_string(std::string_view value)
+    static ParseResult<std::vector<T>> from_string(std::string_view value)
     {
         auto const pieces = split_list(value);
         if (!pieces)
         {
             return std::unexpected(pieces.error());
         }
-        return std::vector<std::string>(pieces->begin(), pieces->end());
-    }
-    static toml::array to_toml(std::vector<std::string> const &v)
-    {
-        toml::array a;
-        for (auto const &s : v)
-        {
-            a.push_back(s);
-        }
-        return a;
-    }
-};
-
-template <> struct FieldCodec<std::vector<int>>
-{
-    static ParseResult<std::vector<int>> from_toml(toml::node const &node)
-    {
-        auto const *arr = node.as_array();
-        if (arr == nullptr)
-        {
-            return std::unexpected("must be an array of ints");
-        }
-        std::vector<int> out;
-        out.reserve(arr->size());
-        for (auto const &item : *arr)
-        {
-            auto v = item.value<int64_t>();
-            if (!v)
-            {
-                return std::unexpected("items must be integers");
-            }
-            out.push_back(static_cast<int>(*v));
-        }
-        return out;
-    }
-    static ParseResult<std::vector<int>> from_string(std::string_view value)
-    {
-        auto const pieces = split_list(value);
-        if (!pieces)
-        {
-            return std::unexpected(pieces.error());
-        }
-        std::vector<int> out;
+        std::vector<T> out;
         out.reserve(pieces->size());
         for (auto const piece : *pieces)
         {
-            auto const r = read_int_from_string(piece);
-            if (!r)
+            auto v = FieldCodec<T>::from_string(piece);
+            if (!v)
             {
-                return std::unexpected(r.error());
+                return std::unexpected(v.error());
             }
-            out.push_back(*r);
+            out.push_back(std::move(*v));
         }
         return out;
     }
-    static toml::array to_toml(std::vector<int> const &v)
+    static toml::array to_toml(std::vector<T> const &v)
     {
         toml::array a;
         for (auto const &x : v)
         {
-            a.push_back(static_cast<int64_t>(x));
+            a.push_back(FieldCodec<T>::to_toml(x));
         }
         return a;
     }
