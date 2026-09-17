@@ -12,6 +12,7 @@
 #include <limits>
 #include <numeric>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "bonsai/task.hpp"
@@ -34,24 +35,18 @@ float compute_r2(floats_view preds, floats_view labels)
 {
     assert(preds.size() == labels.size());
     assert(!preds.empty());
-    auto const n      = static_cast<double>(labels.size());
-    double     mean_y = 0.0;
-    for (float const y : labels)
-    {
-        mean_y += static_cast<double>(y);
-    }
-    mean_y /= n;
-
-    double ss_res = 0.0;
-    double ss_tot = 0.0;
-    for (size_t i = 0; i < labels.size(); ++i)
-    {
-        double const d_res =
-            static_cast<double>(preds[i]) - static_cast<double>(labels[i]);
-        double const d_tot = static_cast<double>(labels[i]) - mean_y;
-        ss_res += d_res * d_res;
-        ss_tot += d_tot * d_tot;
-    }
+    double const mean_y = std::reduce(labels.begin(), labels.end(), 0.0) /
+                          static_cast<double>(labels.size());
+    auto const [ss_res, ss_tot] = std::transform_reduce(
+        preds.begin(), preds.end(), labels.begin(), std::pair{0.0, 0.0},
+        [](auto const &a, auto const &b)
+        { return std::pair{a.first + b.first, a.second + b.second}; },
+        [mean_y](float p, float y)
+        {
+            double const d_res = static_cast<double>(p) - static_cast<double>(y);
+            double const d_tot = static_cast<double>(y) - mean_y;
+            return std::pair{d_res * d_res, d_tot * d_tot};
+        });
     if (ss_tot == 0.0)
     {
         return std::numeric_limits<float>::quiet_NaN();
