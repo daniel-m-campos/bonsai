@@ -32,14 +32,14 @@ struct all_named<TypeList<Ts...>> : std::bool_constant<(HasName<Ts> && ...)>
 template <typename L> inline constexpr bool all_named_v = all_named<L>::value;
 } // namespace detail
 
-// Single point of truth for "every dispatchable impl has an impl_name<T>
-// specialization." Fires at the typelist edit site instead of at every
+// Single point of truth for "every dispatchable impl has a name_of<T> row in
+// registry/names.hpp." Fires at the typelist edit site instead of at every
 // for_each_type consumer.
 static_assert(detail::all_named_v<Objectives>,
-              "every type in Objectives needs an impl_name<T> specialization");
+              "every type in Objectives needs a name_of<T> row in registry/names.hpp");
 static_assert(detail::all_named_v<Growers>,
-              "every type in Growers needs an impl_name<T> specialization");
+              "every type in Growers needs a name_of<T> row in registry/names.hpp");
 static_assert(detail::all_named_v<Samplers>,
-              "every type in Samplers needs an impl_name<T> specialization");
+              "every type in Samplers needs a name_of<T> row in registry/names.hpp");
 
 } // namespace bonsai
