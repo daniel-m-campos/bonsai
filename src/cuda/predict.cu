@@ -9,13 +9,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <limits>
 #include <memory>
 #include <new>
-#include <print>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -202,10 +200,10 @@ bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t 
     auto const f      = static_cast<uint32_t>(n_features);
     try
     {
-        ProfileCounters::Lap lap{.enabled = profile_on()};
-        RowMap const         map{rows, n_rows};
-        auto const           n = static_cast<uint32_t>(map.n);
-        DeviceBuffer<float>  scores;
+        WalkProfile         prof;
+        RowMap const        map{rows, n_rows};
+        auto const          n = static_cast<uint32_t>(map.n);
+        DeviceBuffer<float> scores;
         scores.reserve(map.n);
         dim3 const grid(static_cast<uint32_t>((map.n + 255) / 256));
         auto const launch = [&](auto const *bins)
@@ -216,25 +214,17 @@ bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t 
         };
         cp->with_bins(launch);
         check(cudaGetLastError(), "predict walk launch");
-        double walk_s = 0.0;
-        double d2h_s  = 0.0;
-        if (profile_on())
-        {
-            check(cudaDeviceSynchronize(), "predict walk sync");
-            lap(walk_s);
-        }
+        prof.walked("predict walk sync");
         check(cudaMemcpy(out.data(), scores.data(), out.size() * sizeof(float),
                          cudaMemcpyDeviceToHost),
               "predict scores fetch");
-        lap(d2h_s);
-        if (profile_on())
-        {
-            std::println(stderr,
-                         "cuda-predict: pack={:.3f}s upload={:.3f}s walk={:.3f}s "
-                         "d2h={:.3f}s rows={} plane={} trees={}",
-                         plan.pack_s, plan.upload_s, walk_s, d2h_s, map.n, n_rows,
-                         static_cast<size_t>(k));
-        }
+        prof.fetched();
+        prof.report("predict", {.pack_s   = plan.pack_s,
+                                .upload_s = plan.upload_s,
+                                .rows     = map.n,
+                                .plane    = n_rows,
+                                .unit     = "trees",
+                                .count    = static_cast<size_t>(k)});
     }
     catch (std::runtime_error const &)
     {

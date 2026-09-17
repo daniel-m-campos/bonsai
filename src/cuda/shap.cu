@@ -10,13 +10,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <limits>
 #include <memory>
 #include <new>
-#include <print>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -253,10 +251,10 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
     auto const p      = static_cast<uint32_t>(plan.n_paths);
     try
     {
-        ProfileCounters::Lap lap{.enabled = profile_on()};
-        RowMap const         map{rows, n_rows};
-        auto const           n = static_cast<uint32_t>(map.n);
-        DeviceBuffer<float>  phi;
+        WalkProfile         prof;
+        RowMap const        map{rows, n_rows};
+        auto const          n = static_cast<uint32_t>(map.n);
+        DeviceBuffer<float> phi;
         phi.reserve(out_rows * cols);
         check(cudaMemset(phi.data(), 0, out_rows * cols * sizeof(float)),
               "shap contribs clear");
@@ -287,18 +285,12 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
             cp->with_bins(launch);
             check(cudaGetLastError(), "shap walk launch");
         }
-        double walk_s = 0.0;
-        double d2h_s  = 0.0;
-        if (profile_on())
-        {
-            check(cudaDeviceSynchronize(), "shap walk sync");
-            lap(walk_s);
-        }
+        prof.walked("shap walk sync");
         std::vector<float> raw(out_rows * cols, 0.0F);
         check(cudaMemcpy(raw.data(), phi.data(), raw.size() * sizeof(float),
                          cudaMemcpyDeviceToHost),
               "shap contribs fetch");
-        lap(d2h_s);
+        prof.fetched();
         auto const   lr = static_cast<double>(plan.learning_rate);
         double const bias =
             (plan.bias_total * lr) + static_cast<double>(plan.init_score);
@@ -311,14 +303,12 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
             }
             out[base + n_features] = bias;
         }
-        if (profile_on())
-        {
-            std::println(stderr,
-                         "cuda-shap: pack={:.3f}s upload={:.3f}s walk={:.3f}s "
-                         "d2h={:.3f}s rows={} plane={} paths={}",
-                         plan.pack_s, plan.upload_s, walk_s, d2h_s, out_rows, n_rows,
-                         plan.n_paths);
-        }
+        prof.report("shap", {.pack_s   = plan.pack_s,
+                             .upload_s = plan.upload_s,
+                             .rows     = out_rows,
+                             .plane    = n_rows,
+                             .unit     = "paths",
+                             .count    = plan.n_paths});
     }
     catch (std::runtime_error const &)
     {
