@@ -1,6 +1,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <cmath>
 #include <cstddef>
 #include <utility>
@@ -679,6 +680,22 @@ TEST_CASE("MulticlassBooster: separable 3-class data reaches perfect accuracy",
     std::vector<float> pred2(raw.n_rows);
     loaded.booster->predict(raw.view(), pred2);
     CHECK(pred2 == pred);
+}
+
+// INVARIANT: init-scores-length-pins-output-count
+// A multiclass booster's init scores are one per output or none: the score
+// broadcast copies that vector into each row, so a vector of another length
+// is refused at the boundary rather than written past a row.
+TEST_CASE("MulticlassBooster: init scores of the wrong length are refused",
+          "[booster][multiclass][edge]")
+{
+    Config cfg              = tiny_cfg();
+    cfg.objective.n_classes = 3;
+    MulticlassBooster<DepthwiseGrower<>, AllRowsSampler> b{cfg};
+    CHECK_THROWS_WITH(b.load_state({}, {0.1F, 0.2F}),
+                      Catch::Matchers::ContainsSubstring("disagrees"));
+    CHECK_NOTHROW(b.load_state({}, {0.1F, 0.2F, 0.3F}));
+    CHECK_NOTHROW(b.load_state({}, {}));
 }
 
 // The device predict seam. Both device routes read DevicePlanInput, and a
