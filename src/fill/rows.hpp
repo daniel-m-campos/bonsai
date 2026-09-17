@@ -42,24 +42,57 @@ struct FillTarget
     CellMode                      mode;
 };
 
+struct CellIndex
+{
+    ArenaView                     a0;
+    std::span<HistCell *const>    bases;
+    std::span<feature_id_t const> sel;
+    size_t                        s0;
+    size_t                        fid0;
+};
+
+template <typename RunRowsFn, typename UnitHessT>
+inline void fill_by_mode(CellMode mode, CellIndex const ci, RunRowsFn &&run_rows,
+                         UnitHessT unit_hess)
+{
+    if (mode == CellMode::uniform)
+    {
+        run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
+                 { return ci.a0[s, row_bins[s]]; }, unit_hess);
+    }
+    else if (mode == CellMode::dense)
+    {
+        run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
+                 { return ci.bases[s][row_bins[s]]; }, unit_hess);
+    }
+    else
+    {
+        run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
+                 { return ci.bases[s][row_bins[ci.sel[ci.s0 + s] - ci.fid0]]; },
+                 unit_hess);
+    }
+}
+
 template <bool NodeOrder = false>
 inline void fill_rows(SplitInput const &node, size_t first, size_t last,
                       floats_view grad, floats_view hess, FillTarget const &target)
 {
-    uint8_t const *const                rm_ptr  = target.rm.data();
-    std::span<HistCell *const> const    bases   = target.bases;
-    std::span<feature_id_t const> const sel     = target.selected;
-    size_t const                        width   = target.slice.rm_width;
-    size_t const                        s0      = target.slice.s0;
-    size_t const                        fid0    = target.slice.fid0;
-    size_t const                        n_sel_b = target.slice.n_selected();
-    std::span<row_id_t const> const     rows    = node.rows;
-    constexpr size_t                    k_ahead = 16;
-    size_t const                        n_rows  = node.rows.size();
-    size_t const                        kp =
+    uint8_t const *const             rm_ptr  = target.rm.data();
+    std::span<HistCell *const> const bases   = target.bases;
+    size_t const                     width   = target.slice.rm_width;
+    size_t const                     n_sel_b = target.slice.n_selected();
+    std::span<row_id_t const> const  rows    = node.rows;
+    constexpr size_t                 k_ahead = 16;
+    size_t const                     n_rows  = node.rows.size();
+    size_t const                     kp =
         n_rows > k_ahead ? std::clamp(n_rows - k_ahead, first, last) : first;
-    ArenaView const a0{target.mode == CellMode::uniform ? bases[0] : nullptr, n_sel_b};
-    auto            run_rows = [&](auto cell_at, auto unit_hess)
+    CellIndex const ci{
+        .a0 = ArenaView{target.mode == CellMode::uniform ? bases[0] : nullptr, n_sel_b},
+        .bases = bases,
+        .sel   = target.selected,
+        .s0    = target.slice.s0,
+        .fid0  = target.slice.fid0};
+    auto run_rows = [&](auto cell_at, auto unit_hess)
     {
         auto walk = [&](auto prefetch, size_t a, size_t b)
         {
@@ -95,31 +128,13 @@ inline void fill_rows(SplitInput const &node, size_t first, size_t last,
         walk(std::true_type{}, first, kp);
         walk(std::false_type{}, kp, last);
     };
-    auto by_mode = [&](auto unit_hess)
-    {
-        if (target.mode == CellMode::uniform)
-        {
-            run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
-                     { return a0[s, row_bins[s]]; }, unit_hess);
-        }
-        else if (target.mode == CellMode::dense)
-        {
-            run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
-                     { return bases[s][row_bins[s]]; }, unit_hess);
-        }
-        else
-        {
-            run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
-                     { return bases[s][row_bins[sel[s0 + s] - fid0]]; }, unit_hess);
-        }
-    };
     if (hess.empty())
     {
-        by_mode(std::true_type{});
+        fill_by_mode(target.mode, ci, run_rows, std::true_type{});
     }
     else
     {
-        by_mode(std::false_type{});
+        fill_by_mode(target.mode, ci, run_rows, std::false_type{});
     }
 }
 
