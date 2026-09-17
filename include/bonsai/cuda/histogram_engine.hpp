@@ -97,7 +97,9 @@ class CudaHistogramEngine
     // keyed by the node's index in the grower's frontier ("slot"); splits are
     // found on the device and only decisions and child sums cross the bus.
     // Growers gate on the concept, not on the engine's name (invariants:
-    // device-grower-by-engine-type).
+    // device-grower-by-engine-type). LeafStamp, ResidentNode and finalize_tree
+    // are the ResidentTreeEngine part both planes share, with the resident_*
+    // calls further down.
 
     // One child-level derivation: the smaller child's histogram builds from
     // its device row segment; the larger derives on-device as parent minus

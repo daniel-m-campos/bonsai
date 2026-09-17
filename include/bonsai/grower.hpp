@@ -113,44 +113,51 @@ concept HistogramEngine =
         b.populate(ds, grad, hess, split_input, selected);
     };
 
-// The GPU data plane: histograms and rows stay device-resident, so only
-// decisions and counts cross the bus.
-// The LevelStep drives this whole cluster or none of it, so it is one concept
-// and not seven. begin_root opens the tree on the device or throws
-// (device-oversized-tree-refuses-not-falls-back), so the step has no per-tree
-// mode to carry.
+// What both GPU planes share: the tree's device finalize and the resident
+// objective's arm, finalize and end; each plane adds its own growth calls.
+// A step constrains on a plane, never on this concept alone, so a plane is
+// taken whole or not at all.
+template <typename T>
+concept ResidentTreeEngine =
+    HistogramEngine<T> &&
+    requires(T b, std::span<float const> node_values, std::span<float> values,
+             std::span<node_id_t>                      leaf_ids,
+             std::span<typename T::ResidentNode const> res_nodes,
+             std::span<float>                          scores_out) {
+        typename T::LeafStamp;
+        typename T::ResidentNode;
+        b.finalize_tree(node_values, values, leaf_ids);
+        { b.resident_armed() } -> std::convertible_to<bool>;
+        b.resident_finalize(res_nodes);
+        b.resident_end(scores_out);
+    };
+
+// The GPU level plane: histograms and rows stay device-resident, so only
+// decisions and counts cross the bus. begin_root opens the tree on the
+// device or throws (device-oversized-tree-refuses-not-falls-back), so the
+// step has no per-tree mode to carry.
 template <typename T>
 concept GPULevelEngine =
-    HistogramEngine<T> &&
+    ResidentTreeEngine<T> &&
     requires(T b, Dataset const &ds, TreeConfig const &config, floats_view grad,
              floats_view hess, SplitInput &root, std::span<feature_id_t const> selected,
              std::span<typename T::LeafStamp const>   stamps,
              std::span<typename T::PartitionOp const> pops,
              std::span<typename T::LevelOp const> lops, std::span<uint32_t> counts,
              std::span<SplitInput const> level, std::span<SplitOutput> out,
-             std::span<NodeTotals> child_sums, std::span<float const> node_values,
-             std::span<float> values, std::span<node_id_t> leaf_ids,
-             std::span<float const>                    init_scores,
-             std::span<typename T::ResidentNode const> res_nodes,
-             std::span<float>                          scores_out) {
+             std::span<NodeTotals> child_sums, std::span<float const> init_scores) {
         typename T::LevelOp;
         typename T::PartitionOp;
-        typename T::LeafStamp;
-        typename T::ResidentNode;
         b.begin_root(ds, grad, hess, root, selected);
         b.stamp_leaves(stamps);
         b.partition_level(ds, pops, counts);
         b.advance_level(ds, lops);
         b.advance_layout_only();
-        b.finalize_tree(node_values, values, leaf_ids);
         b.find_splits_many(ds, config, level, out, child_sums);
         b.find_level_split(ds, config, level, out, child_sums);
         {
             b.resident_begin(ds, DeviceObjectiveKind::mse, init_scores, 1.0F)
         } -> std::convertible_to<bool>;
-        { b.resident_armed() } -> std::convertible_to<bool>;
-        b.resident_finalize(res_nodes);
-        b.resident_end(scores_out);
     };
 
 // The GPU leaf plane: best-first growth expands one leaf at a time, so the
@@ -159,33 +166,23 @@ concept GPULevelEngine =
 // device or throws.
 template <typename T>
 concept GPULeafEngine =
-    HistogramEngine<T> &&
+    ResidentTreeEngine<T> &&
     requires(T b, Dataset const &ds, TreeConfig const &config, floats_view grad,
              floats_view hess, SplitInput &root, std::span<feature_id_t const> selected,
              std::span<typename T::LeafStamp const> stamps,
              typename T::LeafPartOp const &part_op, std::span<SplitInput const> nodes,
              std::span<uint32_t const> slots, std::span<SplitOutput> out,
-             std::span<NodeTotals> child_sums, std::span<float const> node_values,
-             std::span<float> values, std::span<node_id_t> leaf_ids,
-             std::span<float const>                    init_scores,
-             std::span<typename T::ResidentNode const> res_nodes,
-             std::span<float>                          scores_out) {
+             std::span<NodeTotals> child_sums, std::span<float const> init_scores) {
         typename T::LeafPartOp;
         typename T::LeafRound;
-        typename T::LeafStamp;
-        typename T::ResidentNode;
         b.leaf_begin_root(ds, config, grad, hess, root, selected);
         { b.leaf_split(ds, part_op) } -> std::convertible_to<typename T::LeafRound>;
         b.leaf_find(ds, config, nodes, slots, out, child_sums);
         b.leaf_stamp(stamps);
-        b.finalize_tree(node_values, values, leaf_ids);
         {
             b.resident_begin_leaf(ds, config, DeviceObjectiveKind::mse, init_scores,
                                   1.0F)
         } -> std::convertible_to<bool>;
-        { b.resident_armed() } -> std::convertible_to<bool>;
-        b.resident_finalize(res_nodes);
-        b.resident_end(scores_out);
     };
 
 struct CpuHistogramEngine
@@ -266,7 +263,7 @@ bool engine_resident_begin_leaf(EngineT &engine, Dataset const &ds,
 template <typename EngineT>
 void engine_resident_end(EngineT &engine, std::span<float> scores)
 {
-    if constexpr (requires { engine.resident_end(scores); })
+    if constexpr (ResidentTreeEngine<EngineT>)
     {
         engine.resident_end(scores);
     }
