@@ -18,6 +18,19 @@ namespace bonsai::fill_detail
 // latency in row iterations rather than the mirror fill's 16 rows.
 inline constexpr size_t k_col_ahead = 64;
 
+template <typename FillFn>
+inline void with_hess(std::span<float const> hess, FillFn &&fill)
+{
+    if (hess.empty())
+    {
+        fill([](size_t) { return 1.0F; });
+    }
+    else
+    {
+        fill([hess](size_t k) { return hess[k]; });
+    }
+}
+
 inline void fill_column(Dataset const &ds, feature_id_t fid, Histogram &h,
                         std::span<row_id_t const> rows, bool identity, GhView const &gh)
 {
@@ -56,14 +69,7 @@ inline void fill_column(Dataset const &ds, feature_id_t fid, Histogram &h,
                           }
                           gather(hess_of);
                       };
-                      if (oh.empty())
-                      {
-                          fill([](size_t) { return 1.0F; });
-                      }
-                      else
-                      {
-                          fill([oh](size_t k) { return oh[k]; });
-                      }
+                      with_hess(oh, fill);
                   });
 }
 
@@ -88,14 +94,7 @@ inline void fill_column_runs(Dataset const &ds, feature_id_t fid, Histogram &h,
                               }
                           }
                       };
-                      if (oh.empty())
-                      {
-                          fill([](size_t) { return 1.0F; });
-                      }
-                      else
-                      {
-                          fill([oh](size_t k) { return oh[k]; });
-                      }
+                      with_hess(oh, fill);
                   });
 }
 
