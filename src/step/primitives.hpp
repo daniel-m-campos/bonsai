@@ -47,8 +47,9 @@ struct DenseBuild
 inline float write_leaf(DenseBuild &build, SplitInput const &node,
                         TreeConfig const &config)
 {
-    auto const v         = static_cast<float>(bounded_leaf_weight(
-        node.total_grad(), node.total_hess(), config, node.lo, node.hi));
+    auto const [g, h] = node.totals();
+    auto const v =
+        static_cast<float>(bounded_leaf_weight(g, h, config, node.lo, node.hi));
     build.nodes[node.id] = DenseTree::leaf(v);
     build.leaf_bounds.resize(build.nodes.size());
     build.leaf_bounds[node.id] = {.lo = node.lo, .hi = node.hi};

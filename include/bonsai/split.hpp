@@ -86,14 +86,6 @@ struct SplitInput
         }
         return {};
     }
-    double total_grad() const
-    {
-        return totals().sum_grad;
-    }
-    double total_hess() const
-    {
-        return totals().sum_hess;
-    }
 };
 
 // A split proposal. Only `valid` says the other fields mean anything: an

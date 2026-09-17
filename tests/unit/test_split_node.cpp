@@ -27,9 +27,10 @@ TEST_CASE("HistogramNodeSplitFinder: picks the obvious cut on a single feature",
     CHECK(s.feature_id == feature_id_t{0});
     CHECK(s.bin_id == bin_id_t{0});
 
-    double const expected = score(-1.0, 1.0, cfg.lambda_l2) +
+    NodeTotals const total    = node.totals();
+    double const     expected = score(-1.0, 1.0, cfg.lambda_l2) +
                             score(+1.0, 1.0, cfg.lambda_l2) -
-                            score(node.total_grad(), node.total_hess(), cfg.lambda_l2);
+                            score(total.sum_grad, total.sum_hess, cfg.lambda_l2);
     CHECK(s.gain == expected);
 }
 
@@ -79,9 +80,10 @@ TEST_CASE("HistogramNodeSplitFinder: missing cell prefers default_left when its 
     CHECK(s.bin_id == bin_id_t{0});
 
     // Expected: g_left = -1 + (-1) = -2, h_left = 2; g_right = +1, h_right = 1.
-    double const expected = score(-2.0, 2.0, cfg.lambda_l2) +
+    NodeTotals const total    = node.totals();
+    double const     expected = score(-2.0, 2.0, cfg.lambda_l2) +
                             score(+1.0, 1.0, cfg.lambda_l2) -
-                            score(node.total_grad(), node.total_hess(), cfg.lambda_l2);
+                            score(total.sum_grad, total.sum_hess, cfg.lambda_l2);
     CHECK(s.gain == expected);
 }
 
@@ -105,9 +107,10 @@ TEST_CASE("HistogramNodeSplitFinder: missing cell prefers default_right when its
     CHECK(s.bin_id == bin_id_t{0});
 
     // g_left = -1, h_left = 1; g_right = +1 + (+1) = +2, h_right = 2.
-    double const expected = score(-1.0, 1.0, cfg.lambda_l2) +
+    NodeTotals const total    = node.totals();
+    double const     expected = score(-1.0, 1.0, cfg.lambda_l2) +
                             score(+2.0, 2.0, cfg.lambda_l2) -
-                            score(node.total_grad(), node.total_hess(), cfg.lambda_l2);
+                            score(total.sum_grad, total.sum_hess, cfg.lambda_l2);
     CHECK(s.gain == expected);
 }
 

@@ -54,11 +54,11 @@ inline void propagate_monotone_bounds(double parent_lo, double parent_hi,
     {
         return;
     }
-    double const wL  = bounded_leaf_weight(left.total_grad(), left.total_hess(), config,
-                                           parent_lo, parent_hi);
-    double const wR  = bounded_leaf_weight(right.total_grad(), right.total_hess(),
-                                           config, parent_lo, parent_hi);
-    double const mid = 0.5 * (wL + wR);
+    auto const [gL, hL] = left.totals();
+    auto const [gR, hR] = right.totals();
+    double const wL     = bounded_leaf_weight(gL, hL, config, parent_lo, parent_hi);
+    double const wR     = bounded_leaf_weight(gR, hR, config, parent_lo, parent_hi);
+    double const mid    = 0.5 * (wL + wR);
     if (mc > 0)
     {
         left.hi  = std::min(left.hi, mid);
@@ -85,7 +85,7 @@ void project_monotone_leaves(std::vector<SplitInputT> const   &frontier,
     hessians.reserve(frontier.size());
     for (auto const &leaf : frontier)
     {
-        hessians.push_back(static_cast<float>(leaf.total_hess()));
+        hessians.push_back(static_cast<float>(leaf.totals().sum_hess));
     }
     project_monotone(monotone_levels(level_splits, config.monotone_constraints),
                      hessians, leaf_table);
@@ -590,8 +590,9 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     leaf_covers.reserve(frontier.size());
     for (size_t li = 0; li < frontier.size(); ++li)
     {
-        auto const &leaf = frontier[li];
-        float const v = gd::leaf_value(leaf.total_grad(), leaf.total_hess(), config());
+        auto const &leaf  = frontier[li];
+        auto const [g, h] = leaf.totals();
+        float const v     = gd::leaf_value(g, h, config());
         leaf_table.push_back(v);
         leaf_covers.push_back(static_cast<float>(gd::row_count_of(leaf)));
     }
