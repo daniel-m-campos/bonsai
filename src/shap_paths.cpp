@@ -181,6 +181,52 @@ std::vector<double> shap_path_weights(size_t max_len)
     return weights;
 }
 
+namespace
+{
+
+void build_poly(std::span<ShapPathElem const> elems, std::span<bin_id_t const> row_bins,
+                std::span<uint8_t const> last_bin, std::span<double> poly,
+                std::span<char> satisfied)
+{
+    poly[0] = 1.0;
+    for (size_t j = 0; j < elems.size(); ++j)
+    {
+        uint16_t const     tag = elems[j].feature;
+        feature_id_t const f   = tag & ~ShapPathElem::k_missing_ok;
+        bin_id_t const     bin = row_bins[f];
+        bool const one = bin == last_bin[f] ? (tag & ShapPathElem::k_missing_ok) != 0
+                                            : bin >= elems[j].lo && bin <= elems[j].hi;
+        satisfied[j]   = static_cast<char>(one);
+
+        double const z = elems[j].zero_fraction;
+        poly[j + 1]    = 0.0;
+        for (size_t i = j + 2; i-- > 1;)
+        {
+            poly[i] = (z * poly[i]) + (one ? poly[i - 1] : 0.0);
+        }
+        poly[0] *= z;
+    }
+}
+
+double deflate_sum(std::span<double const> poly, std::span<double const> w, double z,
+                   std::span<double> deflated)
+{
+    size_t const n  = w.size();
+    deflated[n - 1] = poly[n];
+    for (size_t i = n - 1; i-- > 0;)
+    {
+        deflated[i] = poly[i + 1] - (z * deflated[i + 1]);
+    }
+    double sum = 0.0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        sum += w[i] * deflated[i];
+    }
+    return sum;
+}
+
+} // namespace
+
 void eval_shap_paths(ShapPaths const &paths, std::span<bin_id_t const> row_bins,
                      size_t cols, std::span<double> phi)
 {
@@ -202,28 +248,8 @@ void eval_shap_paths(ShapPaths const &paths, std::span<bin_id_t const> row_bins,
             continue;
         }
         auto const elems = std::span{paths.elems}.subspan(head.first, n);
-
-        poly[0] = 1.0;
-        for (size_t j = 0; j < n; ++j)
-        {
-            uint16_t const     tag = elems[j].feature;
-            feature_id_t const f   = tag & ~ShapPathElem::k_missing_ok;
-            bin_id_t const     bin = row_bins[f];
-            bool const         one = bin == paths.last_bin[f]
-                                         ? (tag & ShapPathElem::k_missing_ok) != 0
-                                         : bin >= elems[j].lo && bin <= elems[j].hi;
-            satisfied[j]           = static_cast<char>(one);
-
-            double const z = elems[j].zero_fraction;
-            poly[j + 1]    = 0.0;
-            for (size_t i = j + 2; i-- > 1;)
-            {
-                poly[i] = (z * poly[i]) + (one ? poly[i - 1] : 0.0);
-            }
-            poly[0] *= z;
-        }
-
-        double const *w = weights.data() + ((n - 1) * n / 2);
+        build_poly(elems, row_bins, paths.last_bin, poly, satisfied);
+        auto const w = std::span{weights}.subspan((n - 1) * n / 2, n);
 
         double unsatisfied_sum = 0.0;
         for (size_t i = 0; i < n; ++i)
@@ -241,18 +267,8 @@ void eval_shap_paths(ShapPaths const &paths, std::span<bin_id_t const> row_bins,
                 out -= value * unsatisfied_sum;
                 continue;
             }
-            double const z  = elems[k].zero_fraction;
-            deflated[n - 1] = poly[n];
-            for (size_t i = n - 1; i-- > 0;)
-            {
-                deflated[i] = poly[i + 1] - (z * deflated[i + 1]);
-            }
-            double sum = 0.0;
-            for (size_t i = 0; i < n; ++i)
-            {
-                sum += w[i] * deflated[i];
-            }
-            out += value * (1.0 - z) * sum;
+            double const z = elems[k].zero_fraction;
+            out += value * (1.0 - z) * deflate_sum(poly, w, z, deflated);
         }
     }
 }
