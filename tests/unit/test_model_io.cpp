@@ -468,6 +468,16 @@ TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
                             Catch::Matchers::ContainsSubstring("cuts"));
     }
 
+    SECTION("a scalar in place of the mapper cuts is refused")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(), [](nlohmann::json &root)
+                          { root["bin_mappers"][0]["cuts"] = 1.5; });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("array"));
+    }
+
     SECTION("a covers array shorter than the nodes is refused")
     {
         TempPath const tmp;
