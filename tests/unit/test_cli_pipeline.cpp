@@ -244,7 +244,7 @@ TEST_CASE("train_with_progress: log_intervals fires the baseline, the period, "
     SECTION("without a validation set the validation spans are empty")
     {
         std::vector<size_t> widths;
-        train_with_progress(cfg, loaded.train,
+        train_with_progress(cfg, loaded.train, {},
                             [&](FitTick const &tick)
                             {
                                 widths.push_back(tick.validation_preds.size() +

@@ -82,6 +82,10 @@ using FitTickFn = std::function<void(FitTick const &)>;
 // no ownership): std::ref(vec) to opt in, default {} to opt out.
 using EvalHistoryRef = std::optional<std::reference_wrapper<std::vector<float>>>;
 
+// An optional reference to a validation set: a LabeledData, or an
+// optional<LabeledData>, converts in place.
+using ValidationRef = std::optional<std::reference_wrapper<LabeledData const>>;
+
 // A warm start continues the loaded booster, whose objective and dispatch
 // were fixed when it was first fit. Field by field: a key the invocation
 // stated (config::stated_keys) must equal the loaded value; an unstated
@@ -114,22 +118,17 @@ train_with_progress(Config const &cfg, LoadedTrainValidation const &loaded,
 // with a per-call validation set without copying the train LabeledData (the
 // copy would also give the bin store a new address, which the device ingest
 // cache keys on).
-// Train alone: no validation set, so no early stopping and no eval history
-// (`eval_history` is left as the caller passed it).
-std::unique_ptr<ITrainableBooster> train_with_progress(
-    Config const &cfg, LabeledData const &train, FitTickFn const &on_tick = {},
-    std::unique_ptr<ITrainableBooster> initial = {}, EvalHistoryRef eval_history = {});
-
-// With a validation set: `eval_history`, when engaged, receives the validation
-// loss after every boosting round (the objective's own eval metric), whether
-// or not early stopping is on; DART skips it (invariants:
-// dart-excludes-early-stopping).
-// Indices are absolute model rounds: a warm start (`initial`) prefixes one
-// quiet-NaN entry per pre-existing round, so argmin over the vector lines up
-// with n_iters()/truncate()/predict-at-round counting.
+// Without a validation set there is no early stopping and no eval history
+// (`eval_history` is left as the caller passed it). With one, `eval_history`,
+// when engaged, receives the validation loss after every boosting round (the
+// objective's own eval metric), whether or not early stopping is on; DART
+// skips it (invariants: dart-excludes-early-stopping). Indices are absolute
+// model rounds: a warm start (`initial`) prefixes one quiet-NaN entry per
+// pre-existing round, so argmin lines up with n_iters()/truncate()/predict-at-
+// round counting.
 std::unique_ptr<ITrainableBooster>
 train_with_progress(Config const &cfg, LabeledData const &train,
-                    LabeledData const &validation, FitTickFn const &on_tick = {},
+                    ValidationRef validation = {}, FitTickFn const &on_tick = {},
                     std::unique_ptr<ITrainableBooster> initial      = {},
                     EvalHistoryRef                     eval_history = {});
 
