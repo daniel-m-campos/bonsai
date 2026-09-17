@@ -28,7 +28,6 @@
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -1205,17 +1204,21 @@ class Booster final : public Ensemble<Gr, Sa>
                       train_leaf_values &leaf_values, floats_view labels,
                       RowView const &view)
     {
-        RowIndex const                                    rows{view};
-        std::unordered_map<node_id_t, std::vector<float>> residuals;
+        RowIndex const                  rows{view};
+        std::vector<std::vector<float>> residuals(tree.leaf_id_end());
         for (size_t k = 0; k < rows.size(); ++k)
         {
             row_id_t const r = rows[k];
             residuals[leaf_ids[r]].push_back(labels[r] - scores_[r]);
         }
-        std::unordered_map<node_id_t, float> renewed;
-        renewed.reserve(residuals.size());
-        for (auto &[leaf, res] : residuals)
+        std::vector<float> renewed(residuals.size(), 0.0F);
+        for (node_id_t leaf = 0; leaf < residuals.size(); ++leaf)
         {
+            std::vector<float> &res = residuals[leaf];
+            if (res.empty())
+            {
+                continue;
+            }
             float v = objective_.renew_leaf(std::span<float>{res});
             if (!leaf_bounds.empty())
             {
@@ -1224,12 +1227,12 @@ class Booster final : public Ensemble<Gr, Sa>
                                                   leaf_bounds[leaf].hi));
             }
             tree.set_leaf_value(leaf, v);
-            renewed.emplace(leaf, v);
+            renewed[leaf] = v;
         }
         for (size_t k = 0; k < rows.size(); ++k)
         {
             row_id_t const r = rows[k];
-            leaf_values[r]   = renewed.at(leaf_ids[r]);
+            leaf_values[r]   = renewed[leaf_ids[r]];
         }
     }
 

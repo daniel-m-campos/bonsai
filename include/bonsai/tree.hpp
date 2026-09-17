@@ -113,6 +113,12 @@ class DenseTree
         nodes_[id].threshold_or_value = value;
     }
 
+    // One past the largest id set_leaf_value accepts.
+    size_t leaf_id_end() const
+    {
+        return nodes_.size();
+    }
+
     // Accumulates into out; caller initializes (e.g. to zero or to a bias).
     void predict(features_view X, floats_out out) const;
 
@@ -195,6 +201,12 @@ class ObliviousTree
     void set_leaf_value(size_t index, float value)
     {
         leaf_table_[index] = value;
+    }
+
+    // One past the largest index set_leaf_value accepts.
+    size_t leaf_id_end() const
+    {
+        return leaf_table_.size();
     }
 
     // Accumulates into out; caller initializes (e.g. to zero or to a bias).
