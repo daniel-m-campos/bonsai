@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <numeric>
 #include <print>
-#include <string>
 #include <vector>
 
 #include "bonsai/booster.hpp"
@@ -34,8 +33,8 @@ int run_importance(ImportanceOpts const &opts)
     std::println("{:<24} {:>14} {:>8}", "feature", "gain", "split");
     for (size_t const f : order)
     {
-        auto const name = f < names.size() ? names[f] : "f" + std::to_string(f);
-        std::println("{:<24} {:>14.2f} {:>8.0f}", name, gain[f], split[f]);
+        std::println("{:<24} {:>14.2f} {:>8.0f}", internal::feature_label(names, f),
+                     gain[f], split[f]);
     }
     return EXIT_SUCCESS;
 }
