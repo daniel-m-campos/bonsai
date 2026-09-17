@@ -95,7 +95,7 @@ void CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_vi
 {
     std::array one = {std::ref(split_input)};
     populate_many(ds, grad, hess, one, selected);
-} // namespace fd
+}
 
 bool CpuHistogramEngine::populate_lone(Dataset const &ds, floats_view grad,
                                        floats_view hess, SplitInput &split_input,
