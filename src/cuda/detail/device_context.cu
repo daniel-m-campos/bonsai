@@ -505,17 +505,15 @@ void CudaDeviceContext::init_shared_limit()
     {
         sm_count = 0;
     }
-    int optin = 0;
-    if (cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev) !=
-            cudaSuccess ||
-        static_cast<size_t>(optin) <= k_max_shared_bytes)
+    size_t const ceiling = device_shared_ceiling();
+    if (ceiling <= k_max_shared_bytes)
     {
         return;
     }
-    auto const opt_in = [optin](auto kernel)
+    auto const opt_in = [ceiling](auto kernel)
     {
         return cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                    optin) == cudaSuccess;
+                                    static_cast<int>(ceiling)) == cudaSuccess;
     };
     if (opt_in(hist_kernel<uint8_t>) && opt_in(hist_kernel<uint16_t>) &&
         opt_in(hist_tile_kernel<k_bin_tile_width, false, uint8_t>) &&
@@ -527,7 +525,7 @@ void CudaDeviceContext::init_shared_limit()
         opt_in(hist_small_kernel<k_bin_tile_width, SmallFill::store_unit_h, uint8_t>) &&
         opt_in(hist_small_kernel<k_bin_tile_width, SmallFill::store_unit_h, uint16_t>))
     {
-        shared_limit = static_cast<size_t>(optin);
+        shared_limit = ceiling;
     }
     cudaGetLastError();
 }

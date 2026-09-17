@@ -4,6 +4,7 @@
 
 #include <vector_types.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -68,7 +69,8 @@ inline constexpr size_t hist_shared_bytes(size_t max_bins)
 // 48 KiB static budget). The engine raises it at runtime to the device's
 // opt-in limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the bin
 // count the device refuses from ~3k to ~6k+ per feature.
-inline constexpr size_t   k_max_shared_bytes     = 48UL * 1024UL;
+inline constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
+
 inline constexpr uint32_t k_fill_blocks_per_sm   = 4;
 inline constexpr uint32_t k_fill_chunk_rows      = 32768;
 inline constexpr uint32_t k_derive_blocks_per_sm = 4;

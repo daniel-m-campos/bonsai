@@ -7,6 +7,9 @@
 #include "profile.cuh"
 #include <cuda.h>
 
+#include <cuda_runtime_api.h>
+
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -28,6 +31,19 @@ inline void check(cudaError_t rc, char const *what)
         throw std::runtime_error(std::string{"cuda: "} + what + ": " +
                                  cudaGetErrorString(rc));
     }
+}
+
+inline size_t device_shared_ceiling()
+{
+    int dev   = 0;
+    int optin = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess ||
+        cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev) !=
+            cudaSuccess)
+    {
+        return k_max_shared_bytes;
+    }
+    return std::max(k_max_shared_bytes, static_cast<size_t>(optin));
 }
 
 // perf: Stream-ordered allocation with the device mempool told to keep freed
