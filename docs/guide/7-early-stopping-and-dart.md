@@ -140,7 +140,7 @@ grow, rescale via `Tree::scale_leaves`, add everything back.
 The neat trick is recovering a dropped tree's per-row training
 contribution **without caching predictions** (200 trees × 500k rows of
 cache is a non-starter): route rows through the tree *in bin space*:
-`internal::accumulate_train_contribution` maps each stored float threshold
+`detail::accumulate_train_contribution` maps each stored float threshold
 back to its bin with one `lower_bound` over the mapper cuts, exact because
 thresholds are cut values (the same invariant chapter 5's fix uses).
 

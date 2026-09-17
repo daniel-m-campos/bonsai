@@ -15,9 +15,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include "bonsai/booster.hpp"
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/detail/ensemble_ops.hpp"
 #include "bonsai/detail/perf.hpp"
 #include "bonsai/parallel.hpp"
 
@@ -306,7 +306,7 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
     auto const lines = body_lines(buf, pos);
     if (all_names.empty() && !lines.empty())
     {
-        all_names = numbered_feature_names(field_count(lines.front()));
+        all_names = detail::numbered_feature_names(field_count(lines.front()));
     }
     lap(prof.index_s);
 
@@ -423,7 +423,7 @@ ColumnBatch dense_from_rows(std::vector<SparseRow> const &rows, DataConfig const
             batch.features[f][r] = v;
         }
     }
-    batch.feature_names = numbered_feature_names(n_features);
+    batch.feature_names = detail::numbered_feature_names(n_features);
     return batch;
 }
 

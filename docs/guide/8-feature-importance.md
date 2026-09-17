@@ -52,8 +52,8 @@ leaf values, not the histograms that produced them). So:
   per node id, `ObliviousTree` per level, and both serialize. Gains have
   been in the model format since v5; the format is at v7 today
   (`k_format_version`, [`src/io/model.cpp`](../../src/io/model.cpp)).
-- Accumulation is a ~20-line walk: `internal::accumulate_importance` in
-  [`include/bonsai/booster.hpp`](../../include/bonsai/booster.hpp):
+- Accumulation is a ~20-line walk: `detail::accumulate_importance` in
+  [`include/bonsai/detail/ensemble_ops.hpp`](../../include/bonsai/detail/ensemble_ops.hpp):
   for each internal node, `out[feature] += 1` or `+= gain`. That is the
   entire feature.
 - Surfaces: `bonsai importance --model m.msgpack`

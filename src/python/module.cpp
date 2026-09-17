@@ -251,7 +251,7 @@ resolve_feature_names(size_t                                         n_features,
         check_feature_names(*supplied, n_features);
         return *supplied;
     }
-    return bonsai::numbered_feature_names(n_features);
+    return bonsai::detail::numbered_feature_names(n_features);
 }
 
 using ResidentMatrix = std::shared_ptr<bonsai::DeviceMatrix const>;

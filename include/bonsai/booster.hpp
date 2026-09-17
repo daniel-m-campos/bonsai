@@ -4,6 +4,7 @@
 #include "bonsai/config/config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/bin_walk.hpp"
+#include "bonsai/detail/ensemble_ops.hpp"
 #include "bonsai/detail/perf.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/monotone.hpp"
@@ -18,15 +19,11 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdlib>
-#include <format>
-#include <iterator>
 #include <mdspan>
 #include <memory>
-#include <mutex>
 #include <numeric>
 #include <optional>
 #include <random>
-#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -39,12 +36,6 @@ namespace bonsai
 // How to score a feature's contribution across the ensemble:
 //   split: number of times the feature is chosen for a split
 //   gain:  total loss reduction from those splits (usually what you want)
-enum class ImportanceType : uint8_t
-{
-    split,
-    gain,
-};
-
 // What a device predict plan needs from a booster: the dense ensemble to pack
 // in bin space, the scale and base every prediction applies to the packed
 // sum, and the mutation epoch that says when a cached plan is stale.
@@ -219,326 +210,6 @@ class ITrainableBooster : public IBooster
     virtual void truncate(size_t n_rounds) = 0;
 };
 
-inline std::string numbered_feature_name(size_t f)
-{
-    return "f" + std::to_string(f);
-}
-
-inline std::vector<std::string> numbered_feature_names(size_t n)
-{
-    return std::views::iota(size_t{0}, n) |
-           std::views::transform(numbered_feature_name) |
-           std::ranges::to<std::vector>();
-}
-
-namespace internal
-{
-
-// Accumulate a tree's (unscaled-by-lr) contribution over a binned Dataset's
-// rows, routing the columns the tree was grown on. Used by DART to subtract
-// dropped trees without caching per-tree train predictions, and by warm start.
-template <Tree T>
-void accumulate_train_contribution(T const &tree, Dataset const &ds, floats_out out)
-{
-    auto const sb = detail::split_bins(tree, ds);
-    parallel::for_each_index(ds.plane_n_rows(),
-                             [&](size_t r)
-                             {
-                                 out[r] +=
-                                     detail::value_binned(tree, sb, [&](size_t f)
-                                                          { return ds.bin_at(f, r); });
-                             });
-}
-
-// accumulate_train_contribution's reader twin: one output per VIEW row, in the
-// view's order, which is the shape every reader over a row view answers in.
-// Identical to the twin above when the dataset is not a view.
-template <Tree T>
-void accumulate_view_contribution(T const &tree, Dataset const &ds, floats_out out)
-{
-    auto const     sb = detail::split_bins(tree, ds);
-    RowIndex const rows{ds.row_view()};
-    parallel::for_each_index(rows.size(),
-                             [&](size_t k)
-                             {
-                                 row_id_t const r = rows[k];
-                                 out[k] +=
-                                     detail::value_binned(tree, sb, [&](size_t f)
-                                                          { return ds.bin_at(f, r); });
-                             });
-}
-
-inline std::string feature_label(std::span<std::string const> names, size_t f)
-{
-    return f < names.size() ? names[f] : numbered_feature_name(f);
-}
-
-// Indented text dump, one line per node.
-inline void dump_tree(DenseTree const &tree, std::span<std::string const> names,
-                      std::string &out)
-{
-    auto const &nodes  = tree.nodes();
-    auto const &gains  = tree.split_gains();
-    auto const &covers = tree.covers();
-    auto        into   = std::back_inserter(out);
-    // NOLINTNEXTLINE(misc-no-recursion)
-    auto walk = [&](auto const &self, node_id_t id, int depth) -> void
-    {
-        out.append(static_cast<size_t>(depth) * 2, ' ');
-        auto const &n    = nodes[id];
-        bool const  leaf = DenseTree::is_leaf(n);
-        if (leaf)
-        {
-            std::format_to(into, "leaf={:f}", n.threshold_or_value);
-        }
-        else
-        {
-            std::format_to(into, "{} <= {:f} [nan->{}] gain={:f}",
-                           feature_label(names, n.feature_id), n.threshold_or_value,
-                           n.default_left ? "left" : "right",
-                           id < gains.size() ? gains[id] : 0.0F);
-        }
-        if (id < covers.size())
-        {
-            std::format_to(into, " cover={}", static_cast<size_t>(covers[id]));
-        }
-        out += '\n';
-        if (!leaf)
-        {
-            self(self, n.left, depth + 1);
-            self(self, n.right, depth + 1);
-        }
-    };
-    walk(walk, 0, 0);
-}
-
-inline void dump_tree(ObliviousTree const &tree, std::span<std::string const> names,
-                      std::string &out)
-{
-    auto const &splits = tree.splits();
-    auto const &gains  = tree.level_gains();
-    auto        into   = std::back_inserter(out);
-    for (size_t lvl = 0; lvl < splits.size(); ++lvl)
-    {
-        std::format_to(into, "level {}: {} <= {:f} [nan->{}] gain={:f}\n", lvl,
-                       feature_label(names, splits[lvl].feature_id),
-                       splits[lvl].threshold,
-                       splits[lvl].default_left ? "left" : "right",
-                       lvl < gains.size() ? gains[lvl] : 0.0F);
-    }
-    out += "leaves:";
-    for (float const v : tree.leaf_table())
-    {
-        std::format_to(into, " {:f}", v);
-    }
-    out += '\n';
-    if (!tree.leaf_covers().empty())
-    {
-        out += "covers:";
-        for (float const c : tree.leaf_covers())
-        {
-            std::format_to(into, " {}", static_cast<size_t>(c));
-        }
-        out += '\n';
-    }
-}
-
-inline float gain_at(std::span<float const> gains, size_t i)
-{
-    return i < gains.size() ? gains[i] : 0.0F;
-}
-
-inline auto feature_gain_of(DenseTree const &tree)
-{
-    return std::views::iota(size_t{0}, tree.nodes().size()) |
-           std::views::filter([&tree](size_t i)
-                              { return !DenseTree::is_leaf(tree.nodes()[i]); }) |
-           std::views::transform(
-               [&tree](size_t i)
-               {
-                   return std::pair{size_t{tree.nodes()[i].feature_id},
-                                    gain_at(tree.split_gains(), i)};
-               });
-}
-
-inline auto feature_gain_of(ObliviousTree const &tree)
-{
-    return std::views::iota(size_t{0}, tree.splits().size()) |
-           std::views::transform(
-               [&tree](size_t lvl)
-               {
-                   return std::pair{size_t{tree.splits()[lvl].feature_id},
-                                    gain_at(tree.level_gains(), lvl)};
-               });
-}
-
-// One tree's contribution to per-feature importance.
-template <Tree T>
-void accumulate_importance(T const &tree, ImportanceType type, std::vector<double> &out)
-{
-    for (auto const [f, gain] : feature_gain_of(tree))
-    {
-        if (out.size() <= f)
-        {
-            out.resize(f + 1, 0.0);
-        }
-        out[f] += type == ImportanceType::split ? 1.0 : gain;
-    }
-}
-
-// The per-tree biases a contribs batch shares across its rows: the expected
-// value is row-independent, so one walk per tree replaces one per (row, tree).
-template <typename Trees> std::vector<double> shap_biases(Trees const &trees)
-{
-    return trees |
-           std::views::transform([](auto const &tree)
-                                 { return tree_expected_value(tree); }) |
-           std::ranges::to<std::vector<double>>();
-}
-
-// Per-row, per-tree leaf indices; out is n_rows * trees.size(), row-major by
-// row. Both boosters store trees flat (multiclass round-major), so the walk
-// is the same one.
-template <typename Trees>
-void predict_leaf_over(Trees const &trees, features_view X, std::span<node_id_t> out)
-{
-    size_t const n       = X.extent(0);
-    size_t const n_trees = trees.size();
-    assert(out.size() == n * n_trees);
-    auto const leaves = std::mdspan(out.data(), n, n_trees);
-    parallel::for_each_index(n,
-                             [&](size_t i)
-                             {
-                                 for (size_t t = 0; t < n_trees; ++t)
-                                 {
-                                     leaves[i, t] =
-                                         trees[t].leaf_for(X, static_cast<row_id_t>(i));
-                                 }
-                             });
-}
-
-// The per-tree SplitBins a binned batch shares across its rows: the threshold
-// inversion is row-independent, so one walk per tree replaces one per (row,
-// tree). The bias hoist's counterpart for routing.
-template <typename Trees>
-std::vector<detail::SplitBins> tree_split_bins(Trees const &trees, Dataset const &bins)
-{
-    return trees |
-           std::views::transform([&](auto const &tree)
-                                 { return detail::split_bins(tree, bins); }) |
-           std::ranges::to<std::vector<detail::SplitBins>>();
-}
-
-// predict_leaf_over's twin over binned rows, same row-major-by-row output.
-template <typename Trees>
-void predict_leaf_over_binned(Trees const &trees, Dataset const &bins,
-                              std::span<node_id_t> out)
-{
-    RowIndex const rows{bins.row_view()};
-    size_t const   n_trees = trees.size();
-    assert(out.size() == rows.size() * n_trees);
-    auto const sb     = tree_split_bins(trees, bins);
-    auto const leaves = std::mdspan(out.data(), rows.size(), n_trees);
-    parallel::for_each_index(
-        rows.size(),
-        [&](size_t k)
-        {
-            row_id_t const r      = rows[k];
-            auto const     bin_of = [&](size_t f) { return bins.bin_at(f, r); };
-            for (size_t t = 0; t < n_trees; ++t)
-            {
-                leaves[k, t] = detail::leaf_binned(trees[t], sb[t], bin_of);
-            }
-        });
-}
-
-// TreeSHAP's cover-weighted walk is written against the dense shape, so an
-// oblivious ensemble is expanded once per tree (2^depth nodes) rather than
-// once per row.
-inline std::vector<DenseTree> densify(std::vector<ObliviousTree> const &trees)
-{
-    return trees | std::views::transform(dense_equivalent) |
-           std::ranges::to<std::vector<DenseTree>>();
-}
-
-// Epoch-keyed derived-value cache, one home for every pack a booster mints
-// from its trees (the dense SHAP equivalents, the predict walk packs).
-// Readers are concurrent (the bindings release the GIL); a mutation only
-// bumps the booster's epoch and never touches the cache. Epochs start at 1,
-// so epoch_ = 0 is the never-filled state. The build callable runs under
-// the lock, so one thread rebuilds per stale epoch, and the returned
-// shared_ptr keeps a superseded value alive for a reader still walking it.
-template <typename ValueT> class EpochCache
-{
-  public:
-    template <typename BuildF>
-    std::shared_ptr<ValueT const> get(uint64_t epoch, BuildF &&build) const
-    {
-        std::scoped_lock const lock(mutex_);
-        if (epoch_ != epoch)
-        {
-            cache_ = std::make_shared<ValueT const>(build());
-            epoch_ = epoch;
-        }
-        return cache_;
-    }
-
-  private:
-    mutable std::mutex                    mutex_;
-    mutable std::shared_ptr<ValueT const> cache_;
-    mutable uint64_t                      epoch_ = 0;
-};
-
-// A value paired with its mutation counter. Readers take read(); every writer
-// goes through mutate(), which bumps the epoch before handing the value over.
-// Mutation is never concurrent with reads (the GIL-released concurrency is
-// predict-only). An epoch-keyed reader samples epoch() before read(), which
-// get(trees.epoch(), build) does by argument order, so even a torn
-// interleaving rebuilds on the next call instead of caching a stale value
-// under the final epoch. The counter is monotonic, so several mutations in
-// one round are fine.
-template <typename T> class Versioned
-{
-  public:
-    T const &read() const
-    {
-        return value_;
-    }
-    uint64_t epoch() const
-    {
-        return epoch_;
-    }
-    T &mutate()
-    {
-        ++epoch_;
-        return value_;
-    }
-
-  private:
-    T        value_;
-    uint64_t epoch_ = 1;
-};
-
-// TreeSHAP walks DenseTree; an oblivious ensemble hands over its cached dense
-// equivalents and a dense ensemble hands over its own trees.
-template <typename TreeT, typename Fn>
-void with_dense_trees(EpochCache<std::vector<DenseTree>> const &dense,
-                      Versioned<std::vector<TreeT>> const &trees, Fn &&fn)
-{
-    if constexpr (std::same_as<TreeT, ObliviousTree>)
-    {
-        auto const held =
-            dense.get(trees.epoch(), [&] { return densify(trees.read()); });
-        std::forward<Fn>(fn)(*held);
-    }
-    else
-    {
-        std::forward<Fn>(fn)(trees.read());
-    }
-}
-
-} // namespace internal
-
 // The trees a model answers queries from, K outputs wide. trees_ is flat and
 // round-major: the tree for output k of round r sits at index r * K + k, so a
 // query that reads the ensemble (leaf ids, importance, SHAP, the dump, the
@@ -578,20 +249,20 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
         std::vector<double> out;
         for (auto const &tree : trees_.read())
         {
-            internal::accumulate_importance(tree, type, out);
+            detail::accumulate_importance(tree, type, out);
         }
         return out;
     }
 
     void predict_leaf(features_view X, std::span<node_id_t> out) const override
     {
-        internal::predict_leaf_over(trees_.read(), X, out);
+        detail::predict_leaf_over(trees_.read(), X, out);
     }
 
     void predict_leaf_binned(Dataset const       &bins,
                              std::span<node_id_t> out) const override
     {
-        internal::predict_leaf_over_binned(trees_.read(), bins, out);
+        detail::predict_leaf_over_binned(trees_.read(), bins, out);
     }
 
     std::string dump(std::span<std::string const> feature_names) const override
@@ -606,7 +277,7 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
                 out += " class " + std::to_string(t % n_outputs_);
             }
             out += ":\n";
-            internal::dump_tree(trees[t], feature_names, out);
+            detail::dump_tree(trees[t], feature_names, out);
         }
         return out;
     }
@@ -617,14 +288,14 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
     void pred_contribs(features_view X, std::span<double> out,
                        size_t n_features) const override
     {
-        internal::with_dense_trees(dense_, trees_, [&](auto const &trees)
-                                   { contribs_over(trees, X, out, n_features); });
+        detail::with_dense_trees(dense_, trees_, [&](auto const &trees)
+                                 { contribs_over(trees, X, out, n_features); });
     }
 
     void pred_contribs_binned(Dataset const &bins, std::span<double> out,
                               size_t n_features) const override
     {
-        internal::with_dense_trees(
+        detail::with_dense_trees(
             dense_, trees_, [&](auto const &trees)
             { contribs_over_binned(trees, bins, out, n_features); });
     }
@@ -659,10 +330,9 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
         assert(!bins.mirror().bins().empty());
         size_t const first = trees.size() - n_outputs_;
         float const  lr    = config_.learning_rate;
-        auto const   sb =
-            internal::tree_split_bins(std::span{trees}.subspan(first), bins);
-        auto const    &m  = bins.mirror();
-        auto const     rm = m.bins();
+        auto const  sb = detail::tree_split_bins(std::span{trees}.subspan(first), bins);
+        auto const &m  = bins.mirror();
+        auto const  rm = m.bins();
         RowIndex const rows{bins.row_view()};
         parallel::for_each_index(
             rows.size(),
@@ -727,7 +397,7 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
     std::shared_ptr<std::vector<DenseTree> const> dense_trees() const
     {
         return dense_.get(trees_.epoch(),
-                          [&] { return internal::densify(trees_.read()); });
+                          [&] { return detail::densify(trees_.read()); });
     }
 
     // Output k's base score; a model loaded without one starts at zero.
@@ -849,7 +519,7 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
     void contribs_over(Trees const &trees, features_view X, std::span<double> out,
                        size_t n_features) const
     {
-        auto const biases = internal::shap_biases(trees);
+        auto const biases = detail::shap_biases(trees);
         contribs_impl(trees, X.extent(0), out, n_features,
                       [&](size_t t, row_id_t row, std::span<double> phi)
                       { tree_shap(trees[t], X, row, phi, biases[t]); });
@@ -861,8 +531,8 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
     void contribs_over_binned(Trees const &trees, Dataset const &bins,
                               std::span<double> out, size_t n_features) const
     {
-        auto const     biases = internal::shap_biases(trees);
-        auto const     sb     = internal::tree_split_bins(trees, bins);
+        auto const     biases = detail::shap_biases(trees);
+        auto const     sb     = detail::tree_split_bins(trees, bins);
         RowIndex const rows{bins.row_view()};
         contribs_impl(trees, rows.size(), out, n_features,
                       [&](size_t t, row_id_t position, std::span<double> phi)
@@ -880,16 +550,16 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
     // The ensemble and its mutation epoch in one place: reads go through
     // read(), every write through mutate(), which is what bumps the epoch the
     // dense SHAP cache and the device plans rebuild on.
-    internal::Versioned<std::vector<tree_type>> trees_;
+    detail::Versioned<std::vector<tree_type>> trees_;
     // One base score per output; empty until the first round or a load.
     std::vector<float>    init_scores_;
     std::vector<float>    grad_;
     std::vector<float>    hess_;
     std::vector<row_id_t> row_indices_;
     // The rows a drawing sampler may pick from; empty when none draws.
-    std::vector<row_id_t>                        candidates_;
-    FitId                                        rows_fit_{};
-    internal::EpochCache<std::vector<DenseTree>> dense_;
+    std::vector<row_id_t>                      candidates_;
+    FitId                                      rows_fit_{};
+    detail::EpochCache<std::vector<DenseTree>> dense_;
 };
 
 // One boosting round in update_one_iter runs in a fixed order that several
@@ -1060,7 +730,7 @@ class Booster final : public Ensemble<Gr, Sa>
         scores_.assign(train.plane_n_rows(), 0.0F);
         for (auto const &t : trees())
         {
-            internal::accumulate_train_contribution(t, train, scores_);
+            detail::accumulate_train_contribution(t, train, scores_);
         }
         float const init = init_score();
         float const lr   = config().learning_rate;
@@ -1150,7 +820,7 @@ class Booster final : public Ensemble<Gr, Sa>
         dropped_sum.assign(train.plane_n_rows(), 0.0F);
         for (size_t const i : dropped)
         {
-            internal::accumulate_train_contribution(trees()[i], train, dropped_sum);
+            detail::accumulate_train_contribution(trees()[i], train, dropped_sum);
         }
         parallel::for_each_index(
             scores_.size(),
@@ -1296,7 +966,7 @@ class Booster final : public Ensemble<Gr, Sa>
         std::ranges::fill(scores, 0.0F);
         for (size_t t = 0; t < k; ++t)
         {
-            internal::accumulate_view_contribution(trees[t], bins, scores);
+            detail::accumulate_view_contribution(trees[t], bins, scores);
         }
         raw_to_scores(scores, init_score());
     }
@@ -1329,7 +999,7 @@ class Booster final : public Ensemble<Gr, Sa>
         float const        init = init_score();
         for (size_t t = 0; t < trees.size(); ++t)
         {
-            internal::accumulate_view_contribution(trees[t], bins, raw);
+            detail::accumulate_view_contribution(trees[t], bins, raw);
             parallel::for_each_index(
                 n, [&](size_t i)
                 { stages[t, i] = init + (raw[i] * config().learning_rate); });
@@ -1391,8 +1061,8 @@ class Booster final : public Ensemble<Gr, Sa>
     // deterministically, so an address here would skip re-arming for a
     // DIFFERENT fold at the same depth, leaving the previous fold's labels,
     // scores and rows live.
-    FitId                           resident_fit_{};
-    internal::EpochCache<walk_type> walk_;
+    FitId                         resident_fit_{};
+    detail::EpochCache<walk_type> walk_;
 };
 
 } // namespace bonsai

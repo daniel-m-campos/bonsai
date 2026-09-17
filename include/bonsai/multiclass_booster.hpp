@@ -247,7 +247,7 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
         for (size_t t = 0; t < trees().size(); ++t)
         {
             std::vector<float> raw(n, 0.0F);
-            internal::accumulate_train_contribution(trees()[t], train, raw);
+            detail::accumulate_train_contribution(trees()[t], train, raw);
             size_t const k      = t % n_k;
             auto const   scores = std::mdspan(scores_.data(), n, n_k);
             for (size_t i = 0; i < n; ++i)
@@ -386,7 +386,7 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
         return raw_scores_over(
             bins.view_n_rows(), n_rounds,
             [&](tree_type const &tree, std::vector<float> &raw)
-            { internal::accumulate_view_contribution(tree, bins, raw); });
+            { detail::accumulate_view_contribution(tree, bins, raw); });
     }
 
     // n_rows x K training accumulator.
