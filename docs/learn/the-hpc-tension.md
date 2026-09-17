@@ -7,7 +7,7 @@ The rest is held by tests, and by rules the code refuses to break.
 
 ## The concept is only a syntactic floor
 
-The engine concepts in `include/bonsai/grower.hpp` carry their own contracts: `HistogramEngine` requires two methods, `GPULevelEngine` refines it with the whole device vocabulary as one concept rather than seven, because the device data plane works whole or not at all.
+The engine concepts in `include/bonsai/grower.hpp` carry their own contracts: `HistogramEngine` requires two methods, `ResidentTreeEngine` adds the tree's device finalize and the resident objective's lifecycle, and `GPULevelEngine` and `GPULeafEngine` each add their own growth and arming calls on top of it. A step constrains on a plane, never on the shared concept alone, because the device data plane works whole or not at all.
 What that page hands to this one is the part no requires-clause can hold: `populate` must accumulate the node's rows into the bins the mappers define, in "an order that is a pure function of configuration," with missing values in the last bin ([`grower.hpp`](../../include/bonsai/grower.hpp)).
 A type can satisfy every signature and bend all of it, and the comment names the consequence: it "trains silently wrong models."
 The compiler cannot see this, but the `[cuda]` parity suite can.
