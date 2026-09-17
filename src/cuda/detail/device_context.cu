@@ -9,6 +9,7 @@
 #include "bonsai/types.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -1534,13 +1535,16 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
 void CudaDeviceContext::leaf_stamp(
     std::span<CudaHistogramEngine::LeafStamp const> stamps)
 {
-    std::vector<CudaHistogramEngine::LeafStamp> side[2];
+    std::array<std::vector<CudaHistogramEngine::LeafStamp>, 2> side;
     for (CudaHistogramEngine::LeafStamp const &st : stamps)
     {
         side[leaf.slot_in_b[st.slot]].push_back(st);
     }
-    launch_stamp(side[0], leaf.segs, lvl.rows.data(), "leaf stamp launch");
-    launch_stamp(side[1], leaf.segs, lvl.rows_b.data(), "leaf stamp launch");
+    for (bool const in_b : {false, true})
+    {
+        launch_stamp(side[in_b ? 1 : 0], leaf.segs, lvl.rows_of(in_b).data(),
+                     "leaf stamp launch");
+    }
 }
 
 bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
