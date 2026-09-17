@@ -99,6 +99,8 @@ def test_rle_picks_the_right_representation():
     assert "1 range" in repr(ds.subset(rows=slice(100, 900)))
     blocks = np.concatenate([np.arange(0, 100), np.arange(500, 700), np.arange(3000, 3100)])
     assert "3 segments" in repr(ds.subset(rows=blocks))
+    # 400 rows over a 3100-row span is 0.129, printed rounded, not truncated
+    assert "density 0.13" in repr(ds.subset(rows=blocks))
     rng = np.random.default_rng(0)
     scattered = np.sort(rng.choice(len(X), size=800, replace=False))
     assert "gathered" in repr(ds.subset(rows=scattered))

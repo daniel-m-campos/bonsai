@@ -405,13 +405,6 @@ std::string view_shape_phrase(bonsai::RowView const &view)
     return std::to_string(view.size()) + " gathered rows";
 }
 
-std::string two_decimals(double value)
-{
-    std::string const text = std::to_string(value);
-    size_t const      dot  = text.find('.');
-    return dot == std::string::npos ? text : text.substr(0, dot + 3);
-}
-
 struct IndexAxis
 {
     std::string_view                            keyword;
@@ -1706,6 +1699,17 @@ Model load(std::string const &path)
                  std::move(loaded.cfg)};
 }
 
+std::string dataset_repr(Dataset const &d)
+{
+    std::string const view =
+        d.is_view()
+            ? std::format(", view: {}, density {:.2f}, shares parent plane",
+                          view_shape_phrase(d.row_view()), d.row_view().density())
+            : "";
+    return std::format("Dataset({} x {}, {}{})", d.n_rows(), d.n_features(), d.device(),
+                       view);
+}
+
 constexpr std::string_view k_params_sig =
     "params: bonsai.params.Params | collections.abc.Mapping[str, object] | None";
 
@@ -2121,18 +2125,7 @@ NB_MODULE(_bonsai, m)
             "-------\n"
             "Dataset\n"
             "    A Dataset that owns its own plane; its ``base`` is None.")
-        .def("__repr__",
-             [](Dataset const &d)
-             {
-                 std::string const view =
-                     d.is_view()
-                         ? std::format(", view: {}, density {}, shares parent plane",
-                                       view_shape_phrase(d.row_view()),
-                                       two_decimals(d.row_view().density()))
-                         : "";
-                 return std::format("Dataset({} x {}, {}{})", d.n_rows(),
-                                    d.n_features(), d.device(), view);
-             });
+        .def("__repr__", &dataset_repr);
 
     m.def("train", &train_dataset, nb::arg("params").none(), nb::arg("dataset"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
