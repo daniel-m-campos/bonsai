@@ -6,17 +6,10 @@
 
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/internal/field_name.hpp"
+#include "bonsai/detail/member_pointer.hpp"
 
 namespace bonsai::config::internal
 {
-
-template <typename T> struct member_pointer_traits;
-
-template <typename C, typename M> struct member_pointer_traits<M C::*>
-{
-    using class_type  = C;
-    using member_type = M;
-};
 
 template <typename Sub, typename T> struct Field
 {
@@ -28,7 +21,7 @@ template <typename Sub, typename T> struct Field
 
 template <auto MemPtr> consteval auto field()
 {
-    using Traits = member_pointer_traits<std::remove_cv_t<decltype(MemPtr)>>;
+    using Traits = detail::member_pointer_traits<std::remove_cv_t<decltype(MemPtr)>>;
     using Sub    = typename Traits::class_type;
     using T      = typename Traits::member_type;
     return Field<Sub, T>{field_name<MemPtr>(), MemPtr};
