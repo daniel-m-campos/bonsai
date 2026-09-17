@@ -248,12 +248,7 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
     SplitOutput        best;
     for (feature_id_t fid = 0; fid < n_features; ++fid)
     {
-        SplitOutput cand;
-        update_best_for_feature_for_node(input, fid, node_totals, config, cand);
-        if (cand.valid && cand.gain > best.gain)
-        {
-            best = cand;
-        }
+        update_best_for_feature_for_node(input, fid, node_totals, config, best);
     }
     return best;
 }
