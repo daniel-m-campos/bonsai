@@ -7,12 +7,15 @@
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <driver_types.h>
 #include <memory>
 #include <optional>
+#include <print>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -315,11 +318,22 @@ struct CudaDeviceContext
     void   launch_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps,
                         std::span<RowSeg const> segs, uint32_t const *rows,
                         char const *label);
-    NodeTotals                      fetch_root_sums();
-    void                            wait_for_profile(ProfileCounters::Lap &lap);
-    void                            note_plane(bool tiled, size_t shared);
-    void                            note_quant();
-    void                            note_once(Once &noted, std::string_view line);
+    NodeTotals                              fetch_root_sums();
+    void                                    wait_for_profile(ProfileCounters::Lap &lap);
+    void                                    note_plane(bool tiled, size_t shared);
+    void                                    note_quant();
+    template <std::invocable MakeLine> void note_once(Once &noted, MakeLine const &line)
+    {
+        if (!prof_counters.enabled || !noted.first())
+        {
+            return;
+        }
+        std::println(stderr, "bonsai: {}", line());
+    }
+    void note_once(Once &noted, std::string_view line)
+    {
+        note_once(noted, [line] { return line; });
+    }
     bool                            unit_hessian() const;
     size_t                          tiled_shared_bytes() const;
     bool                            tiled_plane() const;
