@@ -29,6 +29,11 @@ namespace
 // fill, sparser ones to the row-chunk fill; measured, not tunable.
 constexpr size_t k_col_fill_den = 4;
 
+bool fills_by_column(Dataset const &ds, SplitInput const &node)
+{
+    return !ds.bins_are_u8() || node.rows.size() * k_col_fill_den >= ds.plane_n_rows();
+}
+
 void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
                     split_input_refs nodes, std::span<feature_id_t const> selected,
                     fd::SelectionPlan const &sp)
@@ -41,19 +46,11 @@ void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
     {
         return;
     }
-    if (!ds.bins_are_u8())
-    {
-        for (SplitInput &node : nodes)
-        {
-            fd::fill_columns(ds, grad, hess, node, selected);
-        }
-        return;
-    }
     static thread_local std::vector<std::reference_wrapper<SplitInput>> sparse_nodes;
     sparse_nodes.clear();
     for (SplitInput &node : nodes)
     {
-        if (node.rows.size() * k_col_fill_den >= ds.plane_n_rows())
+        if (fills_by_column(ds, node))
         {
             fd::fill_columns(ds, grad, hess, node, selected);
         }
@@ -74,19 +71,18 @@ void fill_lone_routed(Dataset const &ds, floats_view grad, floats_view hess,
                       NodeHistograms &sibling)
 {
     split_input.hists.carve_storage(sp.layout, ds.n_features());
-    if (ds.bins_are_u8() &&
-        split_input.rows.size() * k_col_fill_den < ds.plane_n_rows())
+    if (fills_by_column(ds, split_input))
+    {
+        fd::fill_columns_lone(ds, grad, hess, split_input, selected, sp.layout,
+                              sibling);
+    }
+    else
     {
         fd::FillPlan const plan =
             fd::plan_lone_fill(split_input.rows.size(), blocks_from,
                                static_cast<size_t>(parallel::n_threads()));
         fd::fill_lone(ds, split_input, selected, sp, sp.layout, sibling, plan.ranges,
                       plan.blocks, fd::ordered_gh(split_input.rows, grad, hess));
-    }
-    else
-    {
-        fd::fill_columns_lone(ds, grad, hess, split_input, selected, sp.layout,
-                              sibling);
     }
     assert(split_input.hists.all_runs_carved(sp.layout, selected));
 }
