@@ -2138,13 +2138,10 @@ inline uint32_t eval_loss_pass1(DeviceObjectiveKind kind, float const *scores,
 }
 
 template <typename BinT>
-__global__ void
-route_add_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t n_rows,
-                 uint32_t n_feats, uint32_t const *feature, uint32_t const *split_bin,
-                 uint32_t const *left, uint32_t const *right,
-                 uint32_t const *default_left, uint32_t const *is_leaf,
-                 float const *value, float lr, float *scores, uint32_t n,
-                 uint32_t const *bin_rows, uint32_t const *score_rows)
+__global__ void route_add_kernel(BinT const *bins, uint32_t const *n_bins,
+                                 uint32_t n_rows, uint32_t n_feats, NodeTableRef nodes,
+                                 float lr, float *scores, uint32_t n,
+                                 uint32_t const *bin_rows, uint32_t const *score_rows)
 {
     uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
     if (k >= n)
@@ -2153,15 +2150,16 @@ route_add_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t n_rows,
     }
     uint32_t const r   = mapped_row(bin_rows, k);
     uint32_t       idx = 0;
-    while (is_leaf[idx] == 0)
+    while (nodes.is_leaf[idx] == 0)
     {
-        uint32_t const f    = feature[idx];
+        uint32_t const f    = nodes.feature[idx];
         uint32_t const last = n_bins[f] - 1;
         uint32_t const b    = bins[tiled_cell(f, r, n_rows, n_feats)];
-        bool const l = (b == last) ? (default_left[idx] != 0) : (b <= split_bin[idx]);
-        idx          = l ? left[idx] : right[idx];
+        bool const     l =
+            (b == last) ? (nodes.default_left[idx] != 0) : (b <= nodes.split_bin[idx]);
+        idx = l ? nodes.left[idx] : nodes.right[idx];
     }
-    scores[mapped_row(score_rows, k)] += lr * value[idx];
+    scores[mapped_row(score_rows, k)] += lr * nodes.value[idx];
 }
 
 // perf: Identity row list built on device: full-data fits

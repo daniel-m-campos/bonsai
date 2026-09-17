@@ -226,7 +226,17 @@ struct CudaDeviceContext
         Staged<uint32_t> default_left;
         Staged<uint32_t> is_leaf;
         Staged<float>    value;
-        void stage(std::span<CudaHistogramEngine::ResidentNode const> nodes);
+        void         stage(std::span<CudaHistogramEngine::ResidentNode const> nodes);
+        NodeTableRef ref() const
+        {
+            return {.feature      = feature.device(),
+                    .split_bin    = split_bin.device(),
+                    .left         = left.device(),
+                    .right        = right.device(),
+                    .default_left = default_left.device(),
+                    .is_leaf      = is_leaf.device(),
+                    .value        = value.device()};
+        }
     };
 
     struct ResidentPlane

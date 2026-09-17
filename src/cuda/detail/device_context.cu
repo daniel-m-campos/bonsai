@@ -1658,12 +1658,9 @@ void CudaDeviceContext::resident_finalize(
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            NodeTable const &t = resident.nodes;
             route_add_kernel<<<grid, dim3(256)>>>(
                 bins, data.n_bins_ptr(), static_cast<uint32_t>(data.key.n_rows),
-                static_cast<uint32_t>(data.key.n_feats), t.feature.device(),
-                t.split_bin.device(), t.left.device(), t.right.device(),
-                t.default_left.device(), t.is_leaf.device(), t.value.device(),
+                static_cast<uint32_t>(data.key.n_feats), resident.nodes.ref(),
                 resident.learning_rate, resident.scores.data(), n, resident.rows.data(),
                 resident.rows.data());
         });
@@ -1801,14 +1798,12 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
     auto lap = prof_counters.lap();
     veval.nodes.stage(nodes);
 
-    auto const       n = static_cast<uint32_t>(veval.rows.n);
-    dim3 const       grid((n + 255) / 256);
-    NodeTable const &t = veval.nodes;
+    auto const n = static_cast<uint32_t>(veval.rows.n);
+    dim3 const grid((n + 255) / 256);
     route_add_kernel<<<grid, dim3(256)>>>(
         veval.bin_source, veval.n_bins.data(), static_cast<uint32_t>(veval.plane_rows),
-        static_cast<uint32_t>(veval.n_feats), t.feature.device(), t.split_bin.device(),
-        t.left.device(), t.right.device(), t.default_left.device(), t.is_leaf.device(),
-        t.value.device(), lr, veval.scores.data(), n, veval.rows.data(), nullptr);
+        static_cast<uint32_t>(veval.n_feats), veval.nodes.ref(), lr,
+        veval.scores.data(), n, veval.rows.data(), nullptr);
     check(cudaGetLastError(), "eval route+add launch");
     if (veval.kind != DeviceObjectiveKind::none)
     {
