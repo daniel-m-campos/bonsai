@@ -231,25 +231,19 @@ inline std::vector<std::string> numbered_feature_names(size_t n)
 namespace internal
 {
 
-// The bin-space walk lives in detail/bin_walk.hpp so src/shap.cpp can reach it
-// too; these keep every existing call site spelled internal::.
-using detail::leaf_binned;
-using detail::split_bins;
-using detail::SplitBins;
-using detail::value_binned;
-
 // Accumulate a tree's (unscaled-by-lr) contribution over a binned Dataset's
 // rows, routing the columns the tree was grown on. Used by DART to subtract
 // dropped trees without caching per-tree train predictions, and by warm start.
 template <Tree T>
 void accumulate_train_contribution(T const &tree, Dataset const &ds, floats_out out)
 {
-    auto const sb = split_bins(tree, ds);
+    auto const sb = detail::split_bins(tree, ds);
     parallel::for_each_index(ds.plane_n_rows(),
                              [&](size_t r)
                              {
-                                 out[r] += value_binned(tree, sb, [&](size_t f)
-                                                        { return ds.bin_at(f, r); });
+                                 out[r] +=
+                                     detail::value_binned(tree, sb, [&](size_t f)
+                                                          { return ds.bin_at(f, r); });
                              });
 }
 
@@ -259,14 +253,15 @@ void accumulate_train_contribution(T const &tree, Dataset const &ds, floats_out 
 template <Tree T>
 void accumulate_view_contribution(T const &tree, Dataset const &ds, floats_out out)
 {
-    auto const     sb = split_bins(tree, ds);
+    auto const     sb = detail::split_bins(tree, ds);
     RowIndex const rows{ds.row_view()};
     parallel::for_each_index(rows.size(),
                              [&](size_t k)
                              {
                                  row_id_t const r = rows[k];
-                                 out[k] += value_binned(tree, sb, [&](size_t f)
-                                                        { return ds.bin_at(f, r); });
+                                 out[k] +=
+                                     detail::value_binned(tree, sb, [&](size_t f)
+                                                          { return ds.bin_at(f, r); });
                              });
 }
 
@@ -423,12 +418,12 @@ void predict_leaf_over(Trees const &trees, features_view X, std::span<node_id_t>
 // inversion is row-independent, so one walk per tree replaces one per (row,
 // tree). The bias hoist's counterpart for routing.
 template <typename Trees>
-std::vector<SplitBins> tree_split_bins(Trees const &trees, Dataset const &bins)
+std::vector<detail::SplitBins> tree_split_bins(Trees const &trees, Dataset const &bins)
 {
     return trees |
            std::views::transform([&](auto const &tree)
-                                 { return split_bins(tree, bins); }) |
-           std::ranges::to<std::vector<SplitBins>>();
+                                 { return detail::split_bins(tree, bins); }) |
+           std::ranges::to<std::vector<detail::SplitBins>>();
 }
 
 // predict_leaf_over's twin over binned rows, same row-major-by-row output.
@@ -449,7 +444,7 @@ void predict_leaf_over_binned(Trees const &trees, Dataset const &bins,
             auto const     bin_of = [&](size_t f) { return bins.bin_at(f, r); };
             for (size_t t = 0; t < n_trees; ++t)
             {
-                leaves[k, t] = leaf_binned(trees[t], sb[t], bin_of);
+                leaves[k, t] = detail::leaf_binned(trees[t], sb[t], bin_of);
             }
         });
 }
@@ -675,7 +670,7 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
                 for (size_t k = 0; k < n_outputs_; ++k)
                 {
                     scores[(i * n_outputs_) + k] +=
-                        lr * internal::value_binned(trees[first + k], sb[k], bin_of);
+                        lr * detail::value_binned(trees[first + k], sb[k], bin_of);
                 }
             });
     }

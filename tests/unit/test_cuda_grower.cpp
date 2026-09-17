@@ -129,11 +129,11 @@ template <typename GrowerT> void check_device_eval_parity(uint8_t max_depth)
     REQUIRE(grower.eval_accumulate(grown.tree, ds, lr, dev_scores, loss));
     REQUIRE(!loss.has_value());
 
-    auto const sb = internal::split_bins(grown.tree, ds);
+    auto const sb = detail::split_bins(grown.tree, ds);
     for (size_t r = 0; r < host_scores.size(); ++r)
     {
-        host_scores[r] += lr * internal::value_binned(grown.tree, sb, [&](size_t f)
-                                                      { return ds.bin_at(f, r); });
+        host_scores[r] += lr * detail::value_binned(grown.tree, sb, [&](size_t f)
+                                                    { return ds.bin_at(f, r); });
         REQUIRE_THAT(dev_scores[r], Catch::Matchers::WithinAbs(host_scores[r], 1e-6));
     }
 
@@ -186,7 +186,7 @@ TEST_CASE("CudaDepthwiseGrower device eval walk honors a row view",
     auto grown = grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
 
     float const  lr = 0.1F;
-    auto const   sb = internal::split_bins(grown.tree, ds);
+    auto const   sb = detail::split_bins(grown.tree, ds);
     size_t const n  = ds.plane_n_rows();
 
     auto const check_view = [&](Dataset const &parent, std::vector<row_id_t> const &ids)
@@ -200,9 +200,8 @@ TEST_CASE("CudaDepthwiseGrower device eval walk honors a row view",
         REQUIRE(!loss.has_value());
         for (size_t k = 0; k < ids.size(); ++k)
         {
-            host[k] +=
-                lr * internal::value_binned(grown.tree, sb, [&](size_t f)
-                                            { return parent.bin_at(f, ids[k]); });
+            host[k] += lr * detail::value_binned(grown.tree, sb, [&](size_t f)
+                                                 { return parent.bin_at(f, ids[k]); });
             REQUIRE_THAT(dev[k], Catch::Matchers::WithinAbs(host[k], 1e-6));
         }
 
