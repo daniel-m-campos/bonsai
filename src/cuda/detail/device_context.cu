@@ -535,8 +535,7 @@ size_t CudaDeviceContext::stage_selection(Dataset const                &ds,
     }
     lvl.n_selected = static_cast<uint32_t>(selected.size());
     lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
-    lvl.features.host.assign(selected.begin(), selected.end());
-    lvl.features.sync();
+    lvl.features.assign(selected);
     lvl.sel_slot.host.assign(ds.n_features(), k_not_selected);
     for (uint32_t i = 0; i < selected.size(); ++i)
     {
@@ -851,14 +850,10 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     check(cudaMemset(lvl.cur().data(), 0, lvl.slot_cells() * sizeof(hist_int_t)),
           "zero root slot");
     stage_root_rows(root, identity);
-    lvl.row_offsets.host.assign(1, 0);
-    lvl.row_offsets.sync();
-    lvl.row_counts.host.assign(1, n);
-    lvl.row_counts.sync();
-    lvl.slots.host.assign(1, 0);
-    lvl.slots.sync();
-    lvl.derive.host.assign(1, k_filled_slot);
-    lvl.derive.sync();
+    lvl.row_offsets.assign_one(0);
+    lvl.row_counts.assign_one(n);
+    lvl.slots.assign_one(0);
+    lvl.derive.assign_one(k_filled_slot);
     root_lap(prof_counters.root_stage_s);
     if (identity)
     {
