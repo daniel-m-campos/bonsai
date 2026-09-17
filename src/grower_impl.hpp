@@ -603,10 +603,13 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     // segments and downloads the per-row assignment. Lapped as finalize:
     // a 16M CPU decomposition found ~15s of stamping hiding in levelwise's
     // conservation gap because only depthwise lapped it.
-    gd::GrowProfiler::Lap flap;
-    step.finalize_leaves(frontier, leaf_table, values, leaf_ids, selection.rows,
-                         std::span<ObliviousTree::LevelSplit const>{level_splits},
-                         std::span<bin_id_t const>{level_bins});
+    gd::GrowProfiler::Lap  flap;
+    gd::LeafFinalize const fin{.values       = values,
+                               .leaf_ids     = leaf_ids,
+                               .row_indices  = selection.rows,
+                               .level_splits = level_splits,
+                               .level_bins   = level_bins};
+    step.finalize_leaves(frontier, leaf_table, fin);
 
     if (!resident)
     {
