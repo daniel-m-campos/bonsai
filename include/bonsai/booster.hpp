@@ -345,43 +345,46 @@ inline void dump_tree(ObliviousTree const &tree, std::span<std::string const> na
     }
 }
 
-// One tree's contribution to per-feature importance.
-inline void accumulate_importance(DenseTree const &tree, ImportanceType type,
-                                  std::vector<double> &out)
+inline float gain_at(std::span<float const> gains, size_t i)
 {
-    auto const &nodes = tree.nodes();
-    auto const &gains = tree.split_gains();
-    for (size_t i = 0; i < nodes.size(); ++i)
-    {
-        if (DenseTree::is_leaf(nodes[i]))
-        {
-            continue;
-        }
-        size_t const f = nodes[i].feature_id;
-        if (out.size() <= f)
-        {
-            out.resize(f + 1, 0.0);
-        }
-        out[f] +=
-            type == ImportanceType::split ? 1.0 : (i < gains.size() ? gains[i] : 0.0F);
-    }
+    return i < gains.size() ? gains[i] : 0.0F;
 }
 
-inline void accumulate_importance(ObliviousTree const &tree, ImportanceType type,
-                                  std::vector<double> &out)
+inline auto feature_gain_of(DenseTree const &tree)
 {
-    auto const &splits = tree.splits();
-    auto const &gains  = tree.level_gains();
-    for (size_t lvl = 0; lvl < splits.size(); ++lvl)
+    return std::views::iota(size_t{0}, tree.nodes().size()) |
+           std::views::filter([&tree](size_t i)
+                              { return !DenseTree::is_leaf(tree.nodes()[i]); }) |
+           std::views::transform(
+               [&tree](size_t i)
+               {
+                   return std::pair{size_t{tree.nodes()[i].feature_id},
+                                    gain_at(tree.split_gains(), i)};
+               });
+}
+
+inline auto feature_gain_of(ObliviousTree const &tree)
+{
+    return std::views::iota(size_t{0}, tree.splits().size()) |
+           std::views::transform(
+               [&tree](size_t lvl)
+               {
+                   return std::pair{size_t{tree.splits()[lvl].feature_id},
+                                    gain_at(tree.level_gains(), lvl)};
+               });
+}
+
+// One tree's contribution to per-feature importance.
+template <Tree T>
+void accumulate_importance(T const &tree, ImportanceType type, std::vector<double> &out)
+{
+    for (auto const [f, gain] : feature_gain_of(tree))
     {
-        size_t const f = splits[lvl].feature_id;
         if (out.size() <= f)
         {
             out.resize(f + 1, 0.0);
         }
-        out[f] += type == ImportanceType::split
-                      ? 1.0
-                      : (lvl < gains.size() ? gains[lvl] : 0.0F);
+        out[f] += type == ImportanceType::split ? 1.0 : gain;
     }
 }
 
