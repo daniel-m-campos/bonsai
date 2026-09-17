@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -24,14 +25,9 @@ template <typename L> inline constexpr size_t size_v = size<L>::value;
 
 template <size_t I, typename L> struct type_at;
 
-template <size_t I, typename Head, typename... Tail>
-struct type_at<I, TypeList<Head, Tail...>> : type_at<I - 1, TypeList<Tail...>>
+template <size_t I, typename... Ts> struct type_at<I, TypeList<Ts...>>
 {
-};
-
-template <typename Head, typename... Tail> struct type_at<0, TypeList<Head, Tail...>>
-{
-    using type = Head;
+    using type = std::tuple_element_t<I, std::tuple<Ts...>>;
 };
 
 template <size_t I, typename L> using type_at_t = typename type_at<I, L>::type;
