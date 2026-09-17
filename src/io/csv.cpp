@@ -14,11 +14,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "bonsai/bin_mappers.hpp"
 #include "bonsai/booster.hpp"
-#include "bonsai/config/config.hpp"
 #include "bonsai/config/data_config.hpp"
-#include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/detail/perf.hpp"
 #include "bonsai/parallel.hpp"
@@ -356,24 +353,6 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
 }
 
 } // namespace bonsai::detail::csv
-
-namespace bonsai::io
-{
-
-Dataset read_csv(std::string const &path, DataConfig const &cfg,
-                 BinMappers const &mappers)
-{
-    auto const batch = detail::csv::parse(path, cfg);
-    return Dataset::bin(batch, mappers, cfg);
-}
-
-BinMappers fit_from_csv(std::string const &path, Config const &cfg)
-{
-    auto const batch = detail::csv::parse(path, cfg.data);
-    return BinMappers::fit(batch, cfg.bin_mapper);
-}
-
-} // namespace bonsai::io
 
 namespace bonsai::detail::libsvm
 {
