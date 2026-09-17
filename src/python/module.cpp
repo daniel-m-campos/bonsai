@@ -1599,6 +1599,47 @@ nb::list params_schema()
     return sections;
 }
 
+std::optional<bonsai::io::LoadedBooster>
+load_init(std::optional<std::string> const &init_model)
+{
+    if (!init_model)
+    {
+        return std::nullopt;
+    }
+    return bonsai::io::load_booster(*init_model);
+}
+
+bonsai::Config reconcile_init(bonsai::Config                                  cfg,
+                              std::optional<bonsai::io::LoadedBooster> const &init,
+                              ParamItems const                               &items)
+{
+    if (!init)
+    {
+        return cfg;
+    }
+    return bonsai::cli::reconcile_warm_start(std::move(cfg), init->cfg,
+                                             stated_keys(items));
+}
+
+Model run_fit(bonsai::Config cfg, bonsai::cli::LabeledData const &train,
+              bonsai::BinMappers mappers, std::optional<EvalSet> const &eval_set,
+              std::optional<bonsai::io::LoadedBooster> init)
+{
+    std::optional<bonsai::cli::LabeledData> owned;
+    auto const *const                       validation =
+        resolve_eval_set(eval_set, cfg, mappers, init.has_value(), owned);
+    std::vector<float> history;
+    auto               initial = init ? std::move(init->booster) : nullptr;
+    auto               booster =
+        validation != nullptr
+                          ? bonsai::cli::train_with_progress(cfg, train, *validation, {},
+                                                             std::move(initial), std::ref(history))
+                          : bonsai::cli::train_with_progress(cfg, train, {}, std::move(initial),
+                                                             std::ref(history));
+    return Model{std::move(booster), std::move(mappers), std::move(cfg),
+                 std::move(history)};
+}
+
 Model train(nb::object const &params, nb::handle X, nb::handle y,
             std::optional<EvalSet> const     &eval_set,
             std::optional<std::string> const &init_model, nb::handle sample_weight,
@@ -1610,34 +1651,22 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
             "feature_names cannot be given with init_model: a warm start keeps "
             "the loaded model's feature names");
     }
-    ParamItems       items          = items_from_params(params);
-    nb::object const named_monotone = take_named_monotone(items);
-    bonsai::Config   cfg            = config_from_params(render_params(items));
-    bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
+    ParamItems           items          = items_from_params(params);
+    nb::object const     named_monotone = take_named_monotone(items);
+    bonsai::Config const placement      = config_from_params(render_params(items));
+    bonsai::parallel::set_n_threads(placement.parallel.n_threads);
     bonsai::parallel::FitPlace const placed;
 
     auto const [xarg, yarg, warg] = resolve_inputs(
-        X, y, sample_weight, cfg.parallel.device_id, "sample_weight", "");
-
-    std::optional<bonsai::io::LoadedBooster> init;
-    if (init_model)
-    {
-        init.emplace(bonsai::io::load_booster(*init_model));
-    }
-
+        X, y, sample_weight, placement.parallel.device_id, "sample_weight", "");
+    auto                     init = load_init(init_model);
     std::vector<std::string> names =
         resolve_feature_names(xarg.n_features, feature_names);
-    if (put_monotone(items, named_monotone,
-                     init ? init->mappers.feature_names()
-                          : std::span<std::string const>{names}))
-    {
-        cfg = config_from_params(render_params(items));
-    }
-    if (init)
-    {
-        cfg = bonsai::cli::reconcile_warm_start(std::move(cfg), init->cfg,
-                                                stated_keys(items));
-    }
+    put_monotone(items, named_monotone,
+                 init ? init->mappers.feature_names()
+                      : std::span<std::string const>{names});
+    bonsai::Config cfg =
+        reconcile_init(config_from_params(render_params(items)), init, items);
 
     nb::gil_scoped_release release;
 
@@ -1652,20 +1681,8 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
         ingest_training(xarg, yarg.view(), wview, cfg, on_device,
                         init ? std::optional{std::move(init->mappers)} : std::nullopt,
                         std::move(names));
-    std::optional<bonsai::cli::LabeledData> owned;
-    auto const *const                       validation =
-        resolve_eval_set(eval_set, cfg, loaded.mappers, init.has_value(), owned);
-
-    std::vector<float> history;
-    auto               initial = init ? std::move(init->booster) : nullptr;
-    auto               booster =
-        validation != nullptr
-                          ? bonsai::cli::train_with_progress(cfg, loaded.train, *validation, {},
-                                                             std::move(initial), std::ref(history))
-                          : bonsai::cli::train_with_progress(cfg, loaded.train, {},
-                                                             std::move(initial), std::ref(history));
-    return Model{std::move(booster), std::move(loaded.mappers), cfg,
-                 std::move(history)};
+    return run_fit(std::move(cfg), loaded.train, std::move(loaded.mappers), eval_set,
+                   std::move(init));
 }
 
 Model train_dataset(nb::object const &params, Dataset const &dataset,
@@ -1675,8 +1692,7 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
     ParamItems       items = items_from_params(params);
     nb::object const named = take_named_monotone(items);
     put_monotone(items, named, dataset.loaded().mappers.feature_names());
-    ConfigPairs const pairs = render_params(items);
-    for (auto const &[key, value] : pairs)
+    for (auto const &[key, value] : items)
     {
         if (key.starts_with("bin_mapper."))
         {
@@ -1686,7 +1702,7 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
                 "instead");
         }
     }
-    bonsai::Config cfg = config_from_params(pairs);
+    bonsai::Config cfg = config_from_params(render_params(items));
     if (auto const resident = dataset.device_id();
         resident && *resident != cfg.parallel.device_id)
     {
@@ -1698,36 +1714,18 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
     }
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
     bonsai::parallel::FitPlace const placed;
-
-    std::optional<bonsai::io::LoadedBooster> init;
-    if (init_model)
+    auto                             init = load_init(init_model);
+    if (init && !init->mappers.same_cuts(dataset.loaded().mappers))
     {
-        init.emplace(bonsai::io::load_booster(*init_model));
-        if (!init->mappers.same_cuts(dataset.loaded().mappers))
-        {
-            throw std::invalid_argument(
-                "init_model's cuts disagree with the dataset's; one set of "
-                "cuts describes one set of columns, so a warm start needs the "
-                "dataset binned with the model's own cuts");
-        }
-        cfg = bonsai::cli::reconcile_warm_start(std::move(cfg), init->cfg,
-                                                stated_keys(items));
+        throw std::invalid_argument(
+            "init_model's cuts disagree with the dataset's; one set of "
+            "cuts describes one set of columns, so a warm start needs the "
+            "dataset binned with the model's own cuts");
     }
-    nb::gil_scoped_release                  release;
-    std::optional<bonsai::cli::LabeledData> owned;
-    auto const *const                       validation = resolve_eval_set(
-        eval_set, cfg, dataset.loaded().mappers, init.has_value(), owned);
-    std::vector<float> history;
-    auto               initial = init ? std::move(init->booster) : nullptr;
-    auto const        &train   = dataset.train_data();
-
-    auto booster =
-        validation != nullptr
-            ? bonsai::cli::train_with_progress(cfg, train, *validation, {},
-                                               std::move(initial), std::ref(history))
-            : bonsai::cli::train_with_progress(cfg, train, {}, std::move(initial),
-                                               std::ref(history));
-    return Model{std::move(booster), dataset.loaded().mappers, cfg, std::move(history)};
+    cfg = reconcile_init(std::move(cfg), init, items);
+    nb::gil_scoped_release release;
+    return run_fit(std::move(cfg), dataset.train_data(), dataset.loaded().mappers,
+                   eval_set, std::move(init));
 }
 
 Model load(std::string const &path)
