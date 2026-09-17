@@ -11,6 +11,7 @@
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -531,22 +532,14 @@ std::vector<ResidentNodeT> perfect_tree_table(size_t depth, SplitAtFn &&split_at
     std::vector<ResidentNodeT> table(n_internal + n_leaves);
     for (size_t i = 0; i < n_internal; ++i)
     {
-        size_t lvl = 0;
-        size_t cap = 1;
-        size_t off = i;
-        while (off >= cap)
-        {
-            off -= cap;
-            cap <<= 1U;
-            ++lvl;
-        }
-        LevelSplitBins const s  = split_at(lvl);
-        ResidentNodeT       &rn = table[i];
-        rn.feature_id           = s.feature_id;
-        rn.split_bin            = s.split_bin;
-        rn.default_left         = s.default_left;
-        rn.left                 = static_cast<node_id_t>((2 * i) + 1);
-        rn.right                = static_cast<node_id_t>((2 * i) + 2);
+        size_t const         lvl = std::bit_width(i + 1) - 1;
+        LevelSplitBins const s   = split_at(lvl);
+        ResidentNodeT       &rn  = table[i];
+        rn.feature_id            = s.feature_id;
+        rn.split_bin             = s.split_bin;
+        rn.default_left          = s.default_left;
+        rn.left                  = static_cast<node_id_t>((2 * i) + 1);
+        rn.right                 = static_cast<node_id_t>((2 * i) + 2);
     }
     for (size_t j = 0; j < n_leaves; ++j)
     {
