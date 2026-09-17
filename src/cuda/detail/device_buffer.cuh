@@ -423,6 +423,51 @@ class KernelTimer
     cudaEvent_t events_[2] = {nullptr, nullptr};
 };
 
+struct WalkReport
+{
+    double      pack_s;
+    double      upload_s;
+    size_t      rows;
+    size_t      plane;
+    char const *unit;
+    size_t      count;
+};
+
+class WalkProfile
+{
+  public:
+    void walked(char const *sync_label)
+    {
+        if (!lap_.enabled)
+        {
+            return;
+        }
+        check(cudaDeviceSynchronize(), sync_label);
+        lap_(walk_s_);
+    }
+    void fetched()
+    {
+        lap_(d2h_s_);
+    }
+    void report(char const *kind, WalkReport const &r) const
+    {
+        if (!lap_.enabled)
+        {
+            return;
+        }
+        std::println(stderr,
+                     "cuda-{}: pack={:.3f}s upload={:.3f}s walk={:.3f}s d2h={:.3f}s "
+                     "rows={} plane={} {}={}",
+                     kind, r.pack_s, r.upload_s, walk_s_, d2h_s_, r.rows, r.plane,
+                     r.unit, r.count);
+    }
+
+  private:
+    ProfileCounters::Lap lap_{.enabled = profile_on()};
+    double               walk_s_ = 0.0;
+    double               d2h_s_  = 0.0;
+};
+
 template <typename T> struct Staged
 {
     std::vector<T>  host;
