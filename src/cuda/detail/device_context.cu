@@ -762,23 +762,19 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
     data.bins_are_u8       = dataset.bins_are_u8();
     lvl.root_rows_cached_n = 0;
     size_t const cells     = dataset.n_features() * dataset.plane_n_rows();
+    auto const   upload    = [&]<typename BinT>(DeviceBuffer<BinT> &target)
+    {
+        PinnedBuffer<BinT> staging(cells);
+        stage_tiled(dataset, staging.data());
+        target.upload(staging.data(), cells);
+    };
     if (data.bins_are_u8)
     {
-        data.bins8.reserve(cells);
-        PinnedBuffer<uint8_t> staging(cells);
-        stage_tiled(dataset, staging.data());
-        check(cudaMemcpy(data.bins8.data(), staging.data(), cells,
-                         cudaMemcpyHostToDevice),
-              "upload bins");
+        upload(data.bins8);
     }
     else
     {
-        data.bins16.reserve(cells);
-        PinnedBuffer<uint16_t> staging(cells);
-        stage_tiled(dataset, staging.data());
-        check(cudaMemcpy(data.bins16.data(), staging.data(), cells * sizeof(uint16_t),
-                         cudaMemcpyHostToDevice),
-              "upload bins");
+        upload(data.bins16);
     }
     data.n_bins.upload(counts.data(), counts.size());
     blap(prof_counters.bins_upload_s);
