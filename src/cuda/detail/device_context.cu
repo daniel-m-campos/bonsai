@@ -91,6 +91,16 @@ NodeScreen node_screen_of(NodeTotals const &sums, TreeConfig const &config)
             .sum_hess     = bracket(sums.sum_hess)};
 }
 
+void stage_monotone(Staged<int> &monotone, TreeConfig const &config, size_t n_features)
+{
+    monotone.host.resize(n_features);
+    for (feature_id_t f = 0; f < n_features; ++f)
+    {
+        monotone.host[f] = monotone_constraint_of(config, f);
+    }
+    monotone.sync();
+}
+
 [[noreturn]] void refuse_hist_budget(size_t max_bins, size_t limit)
 {
     throw ConfigError(
@@ -416,12 +426,7 @@ bool CudaDeviceContext::LevelPipeline::stage_find_inputs(
     node_bounds.sync();
     node_screen.sync();
     bool const any_mask = stage_allowed(level);
-    monotone.host.resize(ds.n_features());
-    for (feature_id_t f = 0; f < ds.n_features(); ++f)
-    {
-        monotone.host[f] = monotone_constraint_of(config, f);
-    }
-    monotone.sync();
+    stage_monotone(monotone, config, ds.n_features());
     return any_mask;
 }
 
@@ -1338,12 +1343,7 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
             refuse_leaf_pool(max_slots, selected.size(), max_sel_bins);
         }
     }
-    leaf.monotone.host.resize(ds.n_features());
-    for (feature_id_t f = 0; f < ds.n_features(); ++f)
-    {
-        leaf.monotone.host[f] = monotone_constraint_of(config, f);
-    }
-    leaf.monotone.sync();
+    stage_monotone(leaf.monotone, config, ds.n_features());
 
     auto root_lap  = prof_counters.lap();
     lvl.cur_is_a   = true;
