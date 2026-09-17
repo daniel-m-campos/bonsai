@@ -98,34 +98,28 @@ typed_overrides(std::string_view text)
         throw ConfigError(std::string{"config: TOML parse error: "} + e.what());
     }
     std::vector<std::pair<std::string, OverrideValue>> out;
-    std::apply(
-        [&](auto const &...secs)
+    internal::tuple_for_each(
+        internal::all_sections,
+        [&](auto const &sec)
         {
-            (
-                [&]
+            if (auto const *node = root.get(sec.name))
+            {
+                auto const *table = node->as_table();
+                if (table == nullptr)
                 {
-                    if (auto const *node = root.get(secs.name))
-                    {
-                        auto const *table = node->as_table();
-                        if (table == nullptr)
-                        {
-                            throw ConfigError(std::string{"config: ["} +
-                                              std::string{secs.name} +
-                                              "] must be a table");
-                        }
-                        internal::visit_section(*table, secs,
-                                                [&](auto const &field, auto value)
-                                                {
-                                                    out.emplace_back(
-                                                        std::string{secs.name} + "." +
-                                                            std::string{field.leaf},
-                                                        widen(std::move(value)));
-                                                });
-                    }
-                }(),
-                ...);
-        },
-        internal::all_sections);
+                    throw ConfigError(std::string{"config: ["} + std::string{sec.name} +
+                                      "] must be a table");
+                }
+                internal::visit_section(*table, sec,
+                                        [&](auto const &field, auto value)
+                                        {
+                                            out.emplace_back(
+                                                std::string{sec.name} + "." +
+                                                    std::string{field.leaf},
+                                                widen(std::move(value)));
+                                        });
+            }
+        });
     internal::require_known_sections(root, internal::all_sections);
     return out;
 }
