@@ -1778,11 +1778,8 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
             eval_loss_pass1(veval.kind, veval.scores.data(), veval.labels.data(), n,
                             veval.loss_partial.device());
         veval.loss_partial.fetch(blocks);
-        double total = 0.0;
-        for (uint32_t b = 0; b < blocks; ++b)
-        {
-            total += veval.loss_partial.host[b];
-        }
+        double const total = std::accumulate(veval.loss_partial.host.begin(),
+                                             veval.loss_partial.host.end(), 0.0);
         lap(prof_counters.eval_kernel_s);
         return static_cast<float>(total / static_cast<double>(n));
     }
