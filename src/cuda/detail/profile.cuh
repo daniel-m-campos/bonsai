@@ -8,8 +8,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <format>
+#include <numeric>
 #include <print>
+#include <span>
 #include <string>
+
+#include "kernel_args.cuh"
 
 namespace bonsai
 {
@@ -20,6 +24,22 @@ inline bool profile_on()
 {
     static bool const on = std::getenv("BONSAI_CUDA_PROFILE") != nullptr;
     return on;
+}
+
+inline size_t row_total(std::span<uint32_t const> counts)
+{
+    return std::reduce(counts.begin(), counts.end(), size_t{0});
+}
+
+inline size_t active_fill_blocks(FillLaunch const         &launched,
+                                 std::span<uint32_t const> counts)
+{
+    size_t active = 0;
+    for (uint32_t const count : counts)
+    {
+        active += node_chunk_count(count, launched.chunk_rows, launched.n_chunks);
+    }
+    return active * launched.grid_x;
 }
 
 struct ProfileCounters
@@ -83,6 +103,30 @@ struct ProfileCounters
             ++launches;
             gpu_nodes += nodes;
         }
+    }
+    void note_fill(uint32_t depth, FillLaunch const &fill,
+                   std::span<uint32_t const> row_counts,
+                   std::span<uint32_t const> small_counts)
+    {
+        if (!enabled)
+        {
+            return;
+        }
+        LevelCounters &c = level(depth);
+        c.rows += row_total(row_counts);
+        c.blocks += active_fill_blocks(fill, row_counts);
+        c.small_rows += row_total(small_counts);
+    }
+    void note_find(uint32_t depth, double kern_s, size_t strip_bytes)
+    {
+        find_kern_s += kern_s;
+        if (depth == 0)
+        {
+            return;
+        }
+        LevelCounters &c = level(depth);
+        c.find_s += kern_s;
+        c.find_gb += static_cast<double>(strip_bytes) * 1e-9;
     }
 
     std::string level_hist_line() const

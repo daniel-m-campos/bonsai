@@ -636,26 +636,6 @@ void CudaDeviceContext::note_quant()
               });
 }
 
-namespace
-{
-
-size_t row_total(std::span<uint32_t const> counts)
-{
-    return std::reduce(counts.begin(), counts.end(), size_t{0});
-}
-
-size_t active_fill_blocks(FillLaunch const &launched, std::span<uint32_t const> counts)
-{
-    size_t active = 0;
-    for (uint32_t const count : counts)
-    {
-        active += node_chunk_count(count, launched.chunk_rows, launched.n_chunks);
-    }
-    return active * launched.grid_x;
-}
-
-} // namespace
-
 FillLaunch CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
                                           uint32_t n_nodes, uint32_t max_rows,
                                           float2 const *gh, uint32_t const *rows,
@@ -1058,13 +1038,8 @@ void CudaDeviceContext::advance_level(Dataset const                             
             static_cast<uint32_t>(max_rows), lvl.other_gh().data(),
             lvl.other_rows().data(), lvl.row_offsets.device(), lvl.row_counts.device(),
             lvl.other().data(), lvl.slots.device());
-        if (prof_counters.enabled)
-        {
-            ProfileCounters::LevelCounters &c = prof_counters.level(lvl.depth + 1);
-            c.rows += row_total(lvl.row_counts.host);
-            c.blocks += active_fill_blocks(launched, lvl.row_counts.host);
-            c.small_rows += row_total(lvl.small_counts.host);
-        }
+        prof.note_fill(lvl.depth + 1, launched, lvl.row_counts.host,
+                       lvl.small_counts.host);
     }
     lvl.small_timer.begin();
     if (!lvl.small_offsets.empty())
@@ -1160,14 +1135,7 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
         check(cudaDeviceSynchronize(), "find kernel wait");
         double kern_s = 0;
         lap(kern_s);
-        prof.find_kern_s += kern_s;
-        if (lvl.depth > 0)
-        {
-            ProfileCounters::LevelCounters &c = prof.level(lvl.depth);
-            c.find_s += kern_s;
-            c.find_gb +=
-                static_cast<double>(lvl.find_strip_bytes(children_read)) * 1e-9;
-        }
+        prof.note_find(lvl.depth, kern_s, lvl.find_strip_bytes(children_read));
     }
     lvl.node_best.fetch(n);
     prof.launched();
