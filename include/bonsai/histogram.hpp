@@ -133,7 +133,7 @@ class Histogram
     // since "all real bins on the left, none on the right" is degenerate.
     cell_view_t cut_cells() const
     {
-        return cells_.first(cells_.size() - 2);
+        return cells_.first(prefix_size());
     }
 
     // Buffer size required by fill_prefix; equals cut_cells().size().

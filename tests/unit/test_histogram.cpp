@@ -161,6 +161,7 @@ TEST_CASE("Histogram: prefix_size equals cut_cells().size()", "[histogram][prefi
     // Degenerate: 1 bin -> no candidate cuts.
     Histogram h1{1};
     CHECK(h1.prefix_size() == 0);
+    CHECK(h1.prefix_size() == h1.cut_cells().size());
 }
 
 TEST_CASE("Histogram: fill_prefix produces cumulative sums over cut_cells",
