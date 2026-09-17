@@ -231,20 +231,21 @@ struct CutsTable
 {
     DeviceBuffer<float>    cuts;
     DeviceBuffer<uint32_t> ofs;
+    std::vector<uint32_t>  host_ofs;
 };
 
 void upload_cuts(BinMappers const &mappers, CutsTable &t)
 {
-    std::vector<uint32_t> ofs(mappers.size() + 1, 0);
-    std::vector<float>    flat;
+    t.host_ofs.assign(mappers.size() + 1, 0);
+    std::vector<float> flat;
     for (size_t f = 0; f < mappers.size(); ++f)
     {
         auto const cuts = mappers[f].cuts();
         flat.insert(flat.end(), cuts.begin(), cuts.end());
-        ofs[f + 1] = static_cast<uint32_t>(flat.size());
+        t.host_ofs[f + 1] = static_cast<uint32_t>(flat.size());
     }
     t.cuts.upload(flat.data(), flat.size());
-    t.ofs.upload(ofs.data(), ofs.size());
+    t.ofs.upload(t.host_ofs.data(), t.host_ofs.size());
 }
 
 bool bins_exceed_shared(size_t max_bins)
@@ -491,15 +492,7 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
     for (size_t f = 0; f < mappers.size(); ++f)
     {
         auto const     n_cuts = static_cast<uint32_t>(mappers[f].n_bins());
-        uint32_t const c0     = [&]
-        {
-            uint32_t ofs = 0;
-            for (size_t g = 0; g < f; ++g)
-            {
-                ofs += static_cast<uint32_t>(mappers[g].n_bins());
-            }
-            return ofs;
-        }();
+        uint32_t const c0     = table.host_ofs[f];
         for (size_t row0 = 0; row0 < n_rows; row0 += rows_per_chunk)
         {
             auto const n =
