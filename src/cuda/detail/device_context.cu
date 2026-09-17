@@ -208,19 +208,17 @@ template <typename BinT> void stage_tiled(Dataset const &dataset, BinT *staging)
             size_t const r1 = std::min(r0 + block, n_rows);
             for (uint32_t f = 0; f < n_feats; ++f)
             {
-                dataset.visit_bins(f,
-                                   [&](auto src)
-                                   {
-                                       uint32_t const t   = f / k_bin_tile_width;
-                                       size_t const   wt  = tile_strip(t, n_feats);
-                                       BinT          *dst = staging +
-                                                   (n_rows * t * k_bin_tile_width) +
-                                                   (f % k_bin_tile_width);
-                                       for (size_t r = r0; r < r1; ++r)
-                                       {
-                                           dst[r * wt] = static_cast<BinT>(src[r]);
-                                       }
-                                   });
+                dataset.visit_bins(
+                    f,
+                    [&](auto src)
+                    {
+                        for (size_t r = r0; r < r1; ++r)
+                        {
+                            staging[tiled_cell(f, static_cast<uint32_t>(r),
+                                               static_cast<uint32_t>(n_rows),
+                                               n_feats)] = static_cast<BinT>(src[r]);
+                        }
+                    });
             }
         });
 }
