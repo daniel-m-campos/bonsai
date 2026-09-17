@@ -56,7 +56,7 @@ constexpr bool persist_skip(std::string_view leaf)
 {
     return std::ranges::any_of(k_persist_skip,
                                [leaf](std::string_view skip) { return skip == leaf; });
-} // namespace cfg_int
+}
 
 template <typename Sub, std::size_t... I>
 constexpr std::size_t section_index_impl(std::index_sequence<I...>)
