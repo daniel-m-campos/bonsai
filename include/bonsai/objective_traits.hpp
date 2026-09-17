@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <concepts>
 #include <cstdint>
 #include <span>
@@ -135,37 +136,37 @@ template <typename T> struct default_metrics_of;
 template <typename T>
 concept HasDefaultMetricNames = requires {
     {
-        default_metrics_of<T>::value()
+        default_metrics_of<T>::names
     } -> std::convertible_to<std::span<std::string_view const>>;
 };
 
 template <> struct default_metrics_of<MSEObjective>
 {
-    static std::span<std::string_view const> value();
+    static constexpr std::array<std::string_view, 1> names{"rmse"};
 };
 template <> struct default_metrics_of<LogLossObjective>
 {
-    static std::span<std::string_view const> value();
+    static constexpr std::array<std::string_view, 2> names{"logloss", "accuracy"};
 };
 template <> struct default_metrics_of<MAEObjective>
 {
-    static std::span<std::string_view const> value();
+    static constexpr std::array<std::string_view, 2> names{"mae", "rmse"};
 };
 template <> struct default_metrics_of<HuberObjective>
 {
-    static std::span<std::string_view const> value();
+    static constexpr std::array<std::string_view, 2> names{"mae", "rmse"};
 };
 template <> struct default_metrics_of<QuantileObjective>
 {
-    static std::span<std::string_view const> value();
+    static constexpr std::array<std::string_view, 2> names{"mae", "rmse"};
 };
 template <> struct default_metrics_of<PoissonObjective>
 {
-    static std::span<std::string_view const> value();
+    static constexpr std::array<std::string_view, 2> names{"rmse", "mae"};
 };
 template <> struct default_metrics_of<SoftmaxObjective>
 {
-    static std::span<std::string_view const> value();
+    static constexpr std::array<std::string_view, 1> names{"mc_accuracy"};
 };
 
 } // namespace bonsai
