@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <print>
+#include <ranges>
 #include <set>
 #include <string_view>
 
@@ -25,16 +26,15 @@ bool trains_here(std::string_view grower_name)
 
 int run_info()
 {
-    auto const                 combos = available_combos();
-    std::set<std::string_view> objectives;
-    std::set<std::string_view> growers;
-    std::set<std::string_view> samplers;
-    for (auto const &c : combos)
+    auto const combos = available_combos();
+    auto const names  = [&](std::string_view AvailableCombo::*field)
     {
-        objectives.insert(c.objective_name);
-        growers.insert(c.grower_name);
-        samplers.insert(c.sampler_name);
-    }
+        return combos | std::views::transform(field) |
+               std::ranges::to<std::set<std::string_view>>();
+    };
+    auto const objectives = names(&AvailableCombo::objective_name);
+    auto const growers    = names(&AvailableCombo::grower_name);
+    auto const samplers   = names(&AvailableCombo::sampler_name);
 
     std::println("bonsai");
     std::print("  objectives: ");
