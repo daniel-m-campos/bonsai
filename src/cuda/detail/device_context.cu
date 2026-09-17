@@ -17,13 +17,13 @@
 #include <cstdlib>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
+#include <format>
 #include <limits>
 #include <memory>
 #include <numeric>
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -605,27 +605,18 @@ void CudaDeviceContext::wait_for_profile(ProfileCounters::Lap &lap)
 
 void CudaDeviceContext::note_plane(bool tiled, size_t shared)
 {
-    if (!prof_counters.enabled || !plane_noted.first())
-    {
-        return;
-    }
-    std::println(stderr,
-                 "bonsai: bin plane is tile-blocked, width {}, {} cells; histogram "
-                 "build is {} at {} shared bytes per block, fixed-point int64 cells{}, "
-                 "small nodes {}",
-                 k_bin_tile_width, data.bins_are_u8 ? "u8" : "u16",
-                 tiled ? "tiled" : "one feature per block", shared,
-                 unit_hessian() ? ", unit-hessian count plane" : "",
-                 tiled ? "stored whole" : "added in place");
-}
-
-void CudaDeviceContext::note_once(Once &noted, std::string_view line)
-{
-    if (!prof_counters.enabled || !noted.first())
-    {
-        return;
-    }
-    std::println(stderr, "bonsai: {}", line);
+    note_once(plane_noted,
+              [&]
+              {
+                  return std::format(
+                      "bin plane is tile-blocked, width {}, {} cells; histogram "
+                      "build is {} at {} shared bytes per block, fixed-point int64 "
+                      "cells{}, small nodes {}",
+                      k_bin_tile_width, data.bins_are_u8 ? "u8" : "u16",
+                      tiled ? "tiled" : "one feature per block", shared,
+                      unit_hessian() ? ", unit-hessian count plane" : "",
+                      tiled ? "stored whole" : "added in place");
+              });
 }
 
 bool CudaDeviceContext::unit_hessian() const
@@ -647,15 +638,16 @@ bool CudaDeviceContext::tiled_plane() const
 
 void CudaDeviceContext::note_quant()
 {
-    if (!prof_counters.enabled || !quant_noted.first())
-    {
-        return;
-    }
-    GhQuant q{};
-    check(cudaMemcpy(&q, grads.quant.data(), sizeof(GhQuant), cudaMemcpyDeviceToHost),
-          "quant fetch");
-    std::println(stderr, "bonsai: fixed-point scale_g=2^{} scale_h=2^{}",
-                 std::ilogb(q.scale.x), std::ilogb(q.scale.y));
+    note_once(quant_noted,
+              [&]
+              {
+                  GhQuant q{};
+                  check(cudaMemcpy(&q, grads.quant.data(), sizeof(GhQuant),
+                                   cudaMemcpyDeviceToHost),
+                        "quant fetch");
+                  return std::format("fixed-point scale_g=2^{} scale_h=2^{}",
+                                     std::ilogb(q.scale.x), std::ilogb(q.scale.y));
+              });
 }
 
 namespace
