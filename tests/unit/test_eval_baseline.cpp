@@ -65,7 +65,7 @@ TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7153001",
     parallel::set_n_threads(4);
     auto const cfg     = make_california_housing_config();
     auto const loaded  = load_train_from_csv(cfg, cfg.data.train);
-    auto const booster = train_in_memory(cfg, loaded.train);
+    auto const booster = train_with_progress(cfg, loaded.train);
 
     auto const sl =
         score_and_label_csv(*booster, cfg.data.test, cfg.data, loaded.mappers.size());
