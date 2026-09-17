@@ -6,7 +6,6 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -99,14 +98,12 @@ typed_overrides(std::string_view text)
         throw ConfigError(std::string{"config: TOML parse error: "} + e.what());
     }
     std::vector<std::pair<std::string, OverrideValue>> out;
-    std::unordered_set<std::string>                    known;
     std::apply(
         [&](auto const &...secs)
         {
             (
                 [&]
                 {
-                    known.insert(std::string{secs.name});
                     if (auto const *node = root.get(secs.name))
                     {
                         auto const *table = node->as_table();
@@ -129,14 +126,7 @@ typed_overrides(std::string_view text)
                 ...);
         },
         internal::all_sections);
-    for (auto const &[k, unused] : root)
-    {
-        if (!known.contains(std::string{k.str()}))
-        {
-            throw ConfigError(std::string{"config: unknown section ["} +
-                              std::string{k.str()} + "]");
-        }
-    }
+    internal::require_known_sections(root, internal::all_sections);
     return out;
 }
 
