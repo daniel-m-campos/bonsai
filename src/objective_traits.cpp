@@ -1,8 +1,6 @@
 #include "bonsai/objective_traits.hpp"
 
-#include <array>
 #include <cmath>
-#include <span>
 #include <string_view>
 
 #include "bonsai/objective.hpp"
@@ -50,49 +48,6 @@ std::string_view task_kind_name(TaskKind kind)
         return "multiclass_classification";
     }
     return "unknown";
-}
-
-std::span<std::string_view const> default_metrics_of<MSEObjective>::value()
-{
-    static constexpr auto names = std::array<std::string_view, 1>{"rmse"};
-    return names;
-}
-
-std::span<std::string_view const> default_metrics_of<LogLossObjective>::value()
-{
-    static constexpr auto names =
-        std::array<std::string_view, 2>{"logloss", "accuracy"};
-    return names;
-}
-
-std::span<std::string_view const> default_metrics_of<MAEObjective>::value()
-{
-    static constexpr auto names = std::array<std::string_view, 2>{"mae", "rmse"};
-    return names;
-}
-
-std::span<std::string_view const> default_metrics_of<HuberObjective>::value()
-{
-    static constexpr auto names = std::array<std::string_view, 2>{"mae", "rmse"};
-    return names;
-}
-
-std::span<std::string_view const> default_metrics_of<QuantileObjective>::value()
-{
-    static constexpr auto names = std::array<std::string_view, 2>{"mae", "rmse"};
-    return names;
-}
-
-std::span<std::string_view const> default_metrics_of<PoissonObjective>::value()
-{
-    static constexpr auto names = std::array<std::string_view, 2>{"rmse", "mae"};
-    return names;
-}
-
-std::span<std::string_view const> default_metrics_of<SoftmaxObjective>::value()
-{
-    static constexpr auto names = std::array<std::string_view, 1>{"mc_accuracy"};
-    return names;
 }
 
 } // namespace bonsai

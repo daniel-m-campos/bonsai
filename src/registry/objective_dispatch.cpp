@@ -20,8 +20,7 @@ namespace bonsai
 namespace
 {
 
-using LinkFn     = void (*)(floats_out);
-using DefaultsFn = std::span<std::string_view const> (*)();
+using LinkFn = void (*)(floats_out);
 
 struct LinkEntry
 {
@@ -37,18 +36,13 @@ struct TaskEntry
 
 struct DefaultsEntry
 {
-    std::string_view name;
-    DefaultsFn       defaults;
+    std::string_view                  name;
+    std::span<std::string_view const> defaults;
 };
 
 template <typename O> void link_thunk(floats_out scores)
 {
     link_inverse_of<O>::apply(scores);
-}
-
-template <typename O> std::span<std::string_view const> defaults_thunk()
-{
-    return default_metrics_of<O>::value();
 }
 
 inline constexpr auto link_table = make_table<Objectives, LinkEntry>(
@@ -69,7 +63,7 @@ inline constexpr auto defaults_table = make_table<Objectives, DefaultsEntry>(
     {
         static_assert(HasDefaultMetricNames<O>,
                       "Objective needs default_metrics_of specialization");
-        return DefaultsEntry{impl_name<O>::value, &defaults_thunk<O>};
+        return DefaultsEntry{impl_name<O>::value, default_metrics_of<O>::names};
     });
 
 template <typename Table>
@@ -102,7 +96,7 @@ std::span<std::string_view const>
 default_metric_names_by_name(std::string_view objective_name)
 {
     return lookup(defaults_table, objective_name, "default_metric_names_by_name")
-        .defaults();
+        .defaults;
 }
 
 } // namespace bonsai
