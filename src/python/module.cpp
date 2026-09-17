@@ -927,11 +927,13 @@ class Model
                            });
     }
 
-    bool routes_binned(Dataset const &ds, char const *method) const
+    using HostRows = std::optional<std::reference_wrapper<array_2d const>>;
+
+    HostRows raw_rows(Dataset const &ds, char const *method) const
     {
         if (mappers_.same_cuts(ds.loaded().mappers))
         {
-            return true;
+            return std::nullopt;
         }
         if (ds.is_view())
         {
@@ -951,26 +953,24 @@ class Model
                 "Dataset with reference= the training dataset, or pass X as a "
                 "host array.");
         }
-        return false;
+        return ds.host_matrix(method);
     }
 
     nb::ndarray<nb::numpy, float> predict(Dataset const &ds,
                                           size_t         num_iteration = 0) const
     {
-        if (!routes_binned(ds, "predict"))
-        {
-            return predict(ds.host_matrix("predict"), num_iteration);
-        }
-        return emit<float>({ds.n_rows()},
-                           [&](std::vector<float> &out)
-                           {
-                               if (!predict_on_device(ds, out, num_iteration))
-                               {
-                                   booster_->predict_at_binned(ds.bins(), out,
-                                                               num_iteration);
-                               }
-                               apply_link_inverse(out);
-                           });
+        auto const raw = raw_rows(ds, "predict");
+        return raw ? predict(raw->get(), num_iteration)
+                   : emit<float>({ds.n_rows()},
+                                 [&](std::vector<float> &out)
+                                 {
+                                     if (!predict_on_device(ds, out, num_iteration))
+                                     {
+                                         booster_->predict_at_binned(ds.bins(), out,
+                                                                     num_iteration);
+                                     }
+                                     apply_link_inverse(out);
+                                 });
     }
 
     nb::ndarray<nb::numpy, double> predict_proba(array_2d const &X) const
@@ -987,15 +987,13 @@ class Model
     nb::ndarray<nb::numpy, double> predict_proba(Dataset const &ds) const
     {
         require_proba_objective();
-        if (!routes_binned(ds, "predict_proba"))
-        {
-            return predict_proba(ds.host_matrix("predict_proba"));
-        }
-        return proba_columns(
-            ds.n_rows(), [&](std::span<double> out)
-            { booster_->predict_proba_binned(ds.bins(), out); },
-            [&](bonsai::floats_out margins)
-            { booster_->predict_at_binned(ds.bins(), margins, 0); });
+        auto const raw = raw_rows(ds, "predict_proba");
+        return raw ? predict_proba(raw->get())
+                   : proba_columns(
+                         ds.n_rows(), [&](std::span<double> out)
+                         { booster_->predict_proba_binned(ds.bins(), out); },
+                         [&](bonsai::floats_out margins)
+                         { booster_->predict_at_binned(ds.bins(), margins, 0); });
     }
 
     nb::ndarray<nb::numpy, float> staged_predict(array_2d const &X) const
@@ -1007,12 +1005,11 @@ class Model
 
     nb::ndarray<nb::numpy, float> staged_predict(Dataset const &ds) const
     {
-        if (!routes_binned(ds, "staged_predict"))
-        {
-            return staged_predict(ds.host_matrix("staged_predict"));
-        }
-        return staged_columns(ds.n_rows(), [&](std::vector<float> &out)
-                              { booster_->predict_staged_binned(ds.bins(), out); });
+        auto const raw = raw_rows(ds, "staged_predict");
+        return raw ? staged_predict(raw->get())
+                   : staged_columns(
+                         ds.n_rows(), [&](std::vector<float> &out)
+                         { booster_->predict_staged_binned(ds.bins(), out); });
     }
 
     nb::ndarray<nb::numpy, uint32_t> predict_leaf(array_2d const &X) const
@@ -1025,17 +1022,15 @@ class Model
 
     nb::ndarray<nb::numpy, uint32_t> predict_leaf(Dataset const &ds) const
     {
-        if (!routes_binned(ds, "predict_leaf"))
-        {
-            return predict_leaf(ds.host_matrix("predict_leaf"));
-        }
-        return emit<bonsai::node_id_t>({ds.n_rows(), booster_->n_trees()},
-                                       [&](std::vector<bonsai::node_id_t> &out)
-                                       {
-                                           booster_->predict_leaf_binned(
-                                               ds.bins(),
-                                               std::span<bonsai::node_id_t>{out});
-                                       });
+        auto const raw = raw_rows(ds, "predict_leaf");
+        return raw ? predict_leaf(raw->get())
+                   : emit<bonsai::node_id_t>({ds.n_rows(), booster_->n_trees()},
+                                             [&](std::vector<bonsai::node_id_t> &out)
+                                             {
+                                                 booster_->predict_leaf_binned(
+                                                     ds.bins(),
+                                                     std::span<bonsai::node_id_t>{out});
+                                             });
     }
 
     std::string dump() const
@@ -1056,21 +1051,20 @@ class Model
 
     nb::ndarray<nb::numpy, double> pred_contribs(Dataset const &ds) const
     {
-        if (!routes_binned(ds, "pred_contribs"))
-        {
-            return pred_contribs(ds.host_matrix("pred_contribs"));
-        }
-        return contrib_columns(ds.n_rows(), ds.n_features(),
-                               [&](std::vector<double> &out)
-                               {
-                                   if (booster_->score_width() > 1 ||
-                                       !contribs_on_device(ds, std::span<double>{out}))
-                                   {
-                                       booster_->pred_contribs_binned(
-                                           ds.bins(), std::span<double>{out},
-                                           ds.n_features());
-                                   }
-                               });
+        auto const raw = raw_rows(ds, "pred_contribs");
+        return raw ? pred_contribs(raw->get())
+                   : contrib_columns(
+                         ds.n_rows(), ds.n_features(),
+                         [&](std::vector<double> &out)
+                         {
+                             if (booster_->score_width() > 1 ||
+                                 !contribs_on_device(ds, std::span<double>{out}))
+                             {
+                                 booster_->pred_contribs_binned(ds.bins(),
+                                                                std::span<double>{out},
+                                                                ds.n_features());
+                             }
+                         });
     }
 
     void save(std::string const &path) const
