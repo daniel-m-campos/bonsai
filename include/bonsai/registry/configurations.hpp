@@ -92,7 +92,7 @@ template <typename Callback> bool with_combo_matching(Config const &cfg, Callbac
             {
                 return;
             }
-            result = std::forward<Callback>(cb).template operator()<Combo>();
+            result = cb.template operator()<Combo>();
             done   = true;
         });
     return done && result;
