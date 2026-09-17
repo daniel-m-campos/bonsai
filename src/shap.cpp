@@ -176,17 +176,22 @@ void recurse(ShapContext<Hot> const &ctx, node_id_t node_id,
     }
 }
 
-template <typename Hot>
-void shap_walk(DenseTree const &tree, Hot const &hot, std::span<double> phi,
-               double expected_value)
+void require_covers(DenseTree const &tree)
 {
-    auto const &covers = tree.covers();
-    if (covers.size() != tree.nodes().size())
+    if (tree.covers().size() != tree.nodes().size())
     {
         throw std::invalid_argument(
             "tree_shap: tree carries no per-node covers (model predates "
             "format v6 or was hand-built)");
     }
+}
+
+template <typename Hot>
+void shap_walk(DenseTree const &tree, Hot const &hot, std::span<double> phi,
+               double expected_value)
+{
+    require_covers(tree);
+    auto const &covers = tree.covers();
     phi[phi.size() - 1] += expected_value;
 
     std::vector<PathElement> path(tree.params().depth + 2);
@@ -249,16 +254,6 @@ double expected_value_impl(DenseTree const &tree, features_view X, row_id_t row,
     return (covers[n.left] * expected_value_impl(tree, X, row, in_subset, n.left) +
             covers[n.right] * expected_value_impl(tree, X, row, in_subset, n.right)) /
            cover;
-}
-
-void require_covers(DenseTree const &tree)
-{
-    if (tree.covers().size() != tree.nodes().size())
-    {
-        throw std::invalid_argument(
-            "tree_shap: tree carries no per-node covers (model predates "
-            "format v6 or was hand-built)");
-    }
 }
 
 } // namespace
