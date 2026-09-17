@@ -11,7 +11,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -206,13 +205,8 @@ std::unique_ptr<ITrainableBooster> train_with_progress(
     Config const &cfg, LoadedTrainValidation const &loaded, FitTickFn const &on_tick,
     std::unique_ptr<ITrainableBooster> initial, EvalHistoryRef eval_history)
 {
-    if (loaded.validation)
-    {
-        return train_with_progress(cfg, loaded.train, *loaded.validation, on_tick,
-                                   std::move(initial), eval_history);
-    }
-    return train_with_progress(cfg, loaded.train, on_tick, std::move(initial),
-                               eval_history);
+    return train_with_progress(cfg, loaded.train, loaded.validation, on_tick,
+                               std::move(initial), eval_history);
 }
 
 namespace
@@ -429,8 +423,6 @@ class EarlyStopping
     uint32_t best_iter_ = 0;
 };
 
-using ValidationRef = std::optional<std::reference_wrapper<LabeledData const>>;
-
 class FitTicker
 {
   public:
@@ -562,10 +554,13 @@ void announce_early_stop(Config const &cfg, uint32_t i, EarlyStopping const &sto
                  stopper.best_loss());
 }
 
+} // namespace
+
 std::unique_ptr<ITrainableBooster>
-train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation,
-           FitTickFn const &on_tick, std::unique_ptr<ITrainableBooster> initial,
-           EvalHistoryRef eval_history)
+train_with_progress(Config const &cfg, LabeledData const &train,
+                    ValidationRef validation, FitTickFn const &on_tick,
+                    std::unique_ptr<ITrainableBooster> initial,
+                    EvalHistoryRef                     eval_history)
 {
     check_label_domain(cfg, train.dataset.labels(), "train");
     if (validation)
@@ -612,25 +607,6 @@ train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation
     }
 
     return booster;
-}
-
-} // namespace
-
-std::unique_ptr<ITrainableBooster> train_with_progress(
-    Config const &cfg, LabeledData const &train, FitTickFn const &on_tick,
-    std::unique_ptr<ITrainableBooster> initial, EvalHistoryRef eval_history)
-{
-    return train_impl(cfg, train, {}, on_tick, std::move(initial), eval_history);
-}
-
-std::unique_ptr<ITrainableBooster>
-train_with_progress(Config const &cfg, LabeledData const &train,
-                    LabeledData const &validation, FitTickFn const &on_tick,
-                    std::unique_ptr<ITrainableBooster> initial,
-                    EvalHistoryRef                     eval_history)
-{
-    return train_impl(cfg, train, std::ref(validation), on_tick, std::move(initial),
-                      eval_history);
 }
 
 ScoredBatch score_csv(IBooster const &booster, std::string const &path,

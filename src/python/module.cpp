@@ -1265,14 +1265,14 @@ void check_eval_labels(std::vector<float> const &labels, bonsai::Config const &c
     }
 }
 
-bonsai::cli::LabeledData const *
+bonsai::cli::ValidationRef
 resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &cfg,
                  bonsai::BinMappers const &mappers, bool warm_start,
                  std::optional<bonsai::cli::LabeledData> &owned)
 {
     if (!eval_set)
     {
-        return nullptr;
+        return std::nullopt;
     }
     if (auto const *const arrays =
             std::get_if<std::pair<array_2d, array_1d>>(&*eval_set))
@@ -1281,7 +1281,7 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
                                    "the matrix passed as eval_set");
         owned = make_validation_labeled(arrays->first, arrays->second);
         check_eval_labels(owned->labels, cfg);
-        return &*owned;
+        return std::cref(*owned);
     }
     auto const *const dataset = std::get<Dataset const *>(*eval_set);
     if (!mappers.same_cuts(dataset->loaded().mappers))
@@ -1311,7 +1311,7 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
     if (!dataset->is_view())
     {
         check_eval_labels(dataset->train_data().labels, cfg);
-        return &dataset->train_data();
+        return std::cref(dataset->train_data());
     }
     if (warm_start)
     {
@@ -1326,7 +1326,7 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
                              "raw rows its parent retained");
     }
     check_eval_labels(dataset->row_view().gather(dataset->train_data().labels), cfg);
-    return &dataset->train_data();
+    return std::cref(dataset->train_data());
 }
 
 using ConfigPairs = std::vector<std::pair<std::string, std::string>>;
@@ -1590,16 +1590,12 @@ Model run_fit(bonsai::Config cfg, bonsai::cli::LabeledData const &train,
               std::optional<bonsai::io::LoadedBooster> init)
 {
     std::optional<bonsai::cli::LabeledData> owned;
-    auto const *const                       validation =
+    bonsai::cli::ValidationRef const        validation =
         resolve_eval_set(eval_set, cfg, mappers, init.has_value(), owned);
     std::vector<float> history;
     auto               initial = init ? std::move(init->booster) : nullptr;
-    auto               booster =
-        validation != nullptr
-                          ? bonsai::cli::train_with_progress(cfg, train, *validation, {},
-                                                             std::move(initial), std::ref(history))
-                          : bonsai::cli::train_with_progress(cfg, train, {}, std::move(initial),
-                                                             std::ref(history));
+    auto               booster = bonsai::cli::train_with_progress(
+        cfg, train, validation, {}, std::move(initial), std::ref(history));
     return Model{std::move(booster), std::move(mappers), std::move(cfg),
                  std::move(history)};
 }
