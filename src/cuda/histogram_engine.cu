@@ -250,16 +250,7 @@ void upload_cuts(BinMappers const &mappers, CutsTable &t)
 
 bool bins_exceed_shared(size_t max_bins)
 {
-    size_t ceiling = k_max_shared_bytes;
-    int    dev     = 0;
-    int    optin   = 0;
-    if (cudaGetDevice(&dev) == cudaSuccess &&
-        cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev) ==
-            cudaSuccess)
-    {
-        ceiling = std::max(ceiling, static_cast<size_t>(optin));
-    }
-    return hist_shared_bytes(max_bins) > ceiling;
+    return hist_shared_bytes(max_bins) > device_shared_ceiling();
 }
 
 bool ingest_would_decline(BinMappers const &mappers)
