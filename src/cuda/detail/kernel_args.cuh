@@ -164,6 +164,17 @@ inline __host__ __device__ uint32_t mapped_row(uint32_t const *rows, uint32_t k)
 
 inline constexpr uint32_t k_not_selected = 0xFFFFFFFFU;
 
+struct NodeTableRef
+{
+    uint32_t const *feature;
+    uint32_t const *split_bin;
+    uint32_t const *left;
+    uint32_t const *right;
+    uint32_t const *default_left;
+    uint32_t const *is_leaf;
+    float const    *value;
+};
+
 struct SiblingDerive
 {
     uint32_t parent_slot;

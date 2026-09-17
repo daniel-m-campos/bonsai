@@ -36,12 +36,11 @@ namespace
 {
 
 template <typename BinT>
-__global__ void predict_walk_kernel(
-    BinT const *bins, uint32_t const *last_bin, uint32_t n_rows, uint32_t n_feats,
-    uint32_t const *roots, uint32_t n_trees, uint32_t const *feature,
-    uint32_t const *split_bin, uint32_t const *left, uint32_t const *right,
-    uint32_t const *default_left, uint32_t const *is_leaf, float const *value, float lr,
-    float init, uint32_t n, uint32_t const *rows, float *out)
+__global__ void predict_walk_kernel(BinT const *bins, uint32_t const *last_bin,
+                                    uint32_t n_rows, uint32_t n_feats,
+                                    uint32_t const *roots, uint32_t n_trees,
+                                    NodeTableRef nodes, float lr, float init,
+                                    uint32_t n, uint32_t const *rows, float *out)
 {
     uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
     if (k >= n)
@@ -54,16 +53,16 @@ __global__ void predict_walk_kernel(
     {
         uint32_t const base = roots[t];
         uint32_t       idx  = base;
-        while (is_leaf[idx] == 0)
+        while (nodes.is_leaf[idx] == 0)
         {
-            uint32_t const f    = feature[idx];
+            uint32_t const f    = nodes.feature[idx];
             uint32_t const last = last_bin[f];
             uint32_t const b    = bins[tiled_cell(f, r, n_rows, n_feats)];
-            bool const     l =
-                (b == last) ? (default_left[idx] != 0) : (b <= split_bin[idx]);
-            idx = base + (l ? left[idx] : right[idx]);
+            bool const     l    = (b == last) ? (nodes.default_left[idx] != 0)
+                                              : (b <= nodes.split_bin[idx]);
+            idx                 = base + (l ? nodes.left[idx] : nodes.right[idx]);
         }
-        acc += value[idx];
+        acc += nodes.value[idx];
     }
     out[k] = __fadd_rn(init, __fmul_rn(lr, acc));
 }
@@ -118,6 +117,17 @@ class CudaPredictPlan
     float  learning_rate = 0.0F;
     float  init_score    = 0.0F;
     double pack_s = 0.0, upload_s = 0.0;
+
+    NodeTableRef ref() const
+    {
+        return {.feature      = feature.data(),
+                .split_bin    = split_bin.data(),
+                .left         = left.data(),
+                .right        = right.data(),
+                .default_left = default_left.data(),
+                .is_leaf      = is_leaf.data(),
+                .value        = value.data()};
+    }
 };
 
 std::shared_ptr<CudaPredictPlan const>
@@ -201,11 +211,8 @@ bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t 
         auto const launch = [&](auto const *bins)
         {
             predict_walk_kernel<<<grid, dim3(256)>>>(
-                bins, plan.last_bin.data(), stride, f, plan.roots.data(), k,
-                plan.feature.data(), plan.split_bin.data(), plan.left.data(),
-                plan.right.data(), plan.default_left.data(), plan.is_leaf.data(),
-                plan.value.data(), plan.learning_rate, plan.init_score, n, map.data(),
-                scores.data());
+                bins, plan.last_bin.data(), stride, f, plan.roots.data(), k, plan.ref(),
+                plan.learning_rate, plan.init_score, n, map.data(), scores.data());
         };
         cp->with_bins(launch);
         check(cudaGetLastError(), "predict walk launch");
