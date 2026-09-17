@@ -71,6 +71,18 @@ nb::ndarray<nb::numpy, T> to_numpy(std::unique_ptr<std::vector<T>> out,
     return {raw->data(), shape, owner};
 }
 
+template <typename T, typename Fill>
+nb::ndarray<nb::numpy, T> emit(std::initializer_list<size_t> shape, Fill &&fill)
+{
+    size_t const count = std::ranges::fold_left(shape, size_t{1}, std::multiplies<>{});
+    auto         out   = std::make_unique<std::vector<T>>(count, T{});
+    {
+        nb::gil_scoped_release release;
+        fill(*out);
+    }
+    return to_numpy(std::move(out), shape);
+}
+
 template <typename Array>
 void place_device_array(Array const &arr, uint32_t device_id, char const *what)
 {
@@ -907,15 +919,12 @@ class Model
                                           size_t          num_iteration = 0) const
     {
         check_width(X, "predict");
-        size_t const n   = X.shape(0);
-        auto         out = std::make_unique<std::vector<float>>(n, 0.0F);
-        {
-            nb::gil_scoped_release release;
-            booster_->predict_at(bonsai::features_view{X.data(), n, X.shape(1)}, *out,
-                                 num_iteration);
-            bonsai::apply_link_inverse_by_name(cfg_.dispatch.objective_name, *out);
-        }
-        return to_numpy(std::move(out), {n});
+        return emit<float>({X.shape(0)},
+                           [&](std::vector<float> &out)
+                           {
+                               booster_->predict_at(as_view(X), out, num_iteration);
+                               apply_link_inverse(out);
+                           });
     }
 
     bool routes_binned(Dataset const &ds, char const *method) const
@@ -952,29 +961,27 @@ class Model
         {
             return predict(ds.host_matrix("predict"), num_iteration);
         }
-        size_t const n   = ds.n_rows();
-        auto         out = std::make_unique<std::vector<float>>(n, 0.0F);
-        {
-            nb::gil_scoped_release release;
-            if (!predict_on_device(ds, *out, num_iteration))
-            {
-                booster_->predict_at_binned(ds.bins(), *out, num_iteration);
-            }
-            bonsai::apply_link_inverse_by_name(cfg_.dispatch.objective_name, *out);
-        }
-        return to_numpy(std::move(out), {n});
+        return emit<float>({ds.n_rows()},
+                           [&](std::vector<float> &out)
+                           {
+                               if (!predict_on_device(ds, out, num_iteration))
+                               {
+                                   booster_->predict_at_binned(ds.bins(), out,
+                                                               num_iteration);
+                               }
+                               apply_link_inverse(out);
+                           });
     }
 
     nb::ndarray<nb::numpy, double> predict_proba(array_2d const &X) const
     {
         check_width(X, "predict_proba");
         require_proba_objective();
-        size_t const                n = X.shape(0);
-        bonsai::features_view const rows{X.data(), n, X.shape(1)};
         return proba_columns(
-            n, [&](std::span<double> out) { booster_->predict_proba(rows, out); },
+            X.shape(0),
+            [&](std::span<double> out) { booster_->predict_proba(as_view(X), out); },
             [&](bonsai::floats_out margins)
-            { booster_->predict_at(rows, margins, 0); });
+            { booster_->predict_at(as_view(X), margins, 0); });
     }
 
     nb::ndarray<nb::numpy, double> predict_proba(Dataset const &ds) const
@@ -994,14 +1001,8 @@ class Model
     nb::ndarray<nb::numpy, float> staged_predict(array_2d const &X) const
     {
         check_width(X, "staged_predict");
-        size_t const n = X.shape(0);
-        return staged_columns(n,
-                              [&](std::vector<float> &out)
-                              {
-                                  booster_->predict_staged(
-                                      bonsai::features_view{X.data(), n, X.shape(1)},
-                                      out);
-                              });
+        return staged_columns(X.shape(0), [&](std::vector<float> &out)
+                              { booster_->predict_staged(as_view(X), out); });
     }
 
     nb::ndarray<nb::numpy, float> staged_predict(Dataset const &ds) const
@@ -1017,15 +1018,9 @@ class Model
     nb::ndarray<nb::numpy, uint32_t> predict_leaf(array_2d const &X) const
     {
         check_width(X, "predict_leaf");
-        size_t const n   = X.shape(0);
-        size_t const k   = booster_->n_trees();
-        auto         out = std::make_unique<std::vector<bonsai::node_id_t>>(n * k, 0);
-        {
-            nb::gil_scoped_release release;
-            booster_->predict_leaf(bonsai::features_view{X.data(), n, X.shape(1)},
-                                   std::span<bonsai::node_id_t>{*out});
-        }
-        return to_numpy(std::move(out), {n, k});
+        return emit<bonsai::node_id_t>(
+            {X.shape(0), booster_->n_trees()}, [&](std::vector<bonsai::node_id_t> &out)
+            { booster_->predict_leaf(as_view(X), std::span<bonsai::node_id_t>{out}); });
     }
 
     nb::ndarray<nb::numpy, uint32_t> predict_leaf(Dataset const &ds) const
@@ -1034,15 +1029,13 @@ class Model
         {
             return predict_leaf(ds.host_matrix("predict_leaf"));
         }
-        size_t const n   = ds.n_rows();
-        size_t const k   = booster_->n_trees();
-        auto         out = std::make_unique<std::vector<bonsai::node_id_t>>(n * k, 0);
-        {
-            nb::gil_scoped_release release;
-            booster_->predict_leaf_binned(ds.bins(),
-                                          std::span<bonsai::node_id_t>{*out});
-        }
-        return to_numpy(std::move(out), {n, k});
+        return emit<bonsai::node_id_t>({ds.n_rows(), booster_->n_trees()},
+                                       [&](std::vector<bonsai::node_id_t> &out)
+                                       {
+                                           booster_->predict_leaf_binned(
+                                               ds.bins(),
+                                               std::span<bonsai::node_id_t>{out});
+                                       });
     }
 
     std::string dump() const
@@ -1053,21 +1046,12 @@ class Model
     nb::ndarray<nb::numpy, double> pred_contribs(array_2d const &X) const
     {
         check_width(X, "pred_contribs");
-        size_t const n     = X.shape(0);
-        size_t const nf    = X.shape(1);
-        size_t const cols  = nf + 1;
-        size_t const width = booster_->score_width();
-        auto         out = std::make_unique<std::vector<double>>(n * width * cols, 0.0);
-        {
-            nb::gil_scoped_release release;
-            booster_->pred_contribs(bonsai::features_view{X.data(), n, nf},
-                                    std::span<double>{*out}, nf);
-        }
-        if (width > 1)
-        {
-            return to_numpy(std::move(out), {n, width, cols});
-        }
-        return to_numpy(std::move(out), {n, cols});
+        return contrib_columns(X.shape(0), X.shape(1),
+                               [&](std::vector<double> &out)
+                               {
+                                   booster_->pred_contribs(
+                                       as_view(X), std::span<double>{out}, X.shape(1));
+                               });
     }
 
     nb::ndarray<nb::numpy, double> pred_contribs(Dataset const &ds) const
@@ -1076,23 +1060,17 @@ class Model
         {
             return pred_contribs(ds.host_matrix("pred_contribs"));
         }
-        size_t const n     = ds.n_rows();
-        size_t const nf    = ds.n_features();
-        size_t const cols  = nf + 1;
-        size_t const width = booster_->score_width();
-        auto         out = std::make_unique<std::vector<double>>(n * width * cols, 0.0);
-        {
-            nb::gil_scoped_release release;
-            if (width > 1 || !contribs_on_device(ds, std::span<double>{*out}))
-            {
-                booster_->pred_contribs_binned(ds.bins(), std::span<double>{*out}, nf);
-            }
-        }
-        if (width > 1)
-        {
-            return to_numpy(std::move(out), {n, width, cols});
-        }
-        return to_numpy(std::move(out), {n, cols});
+        return contrib_columns(ds.n_rows(), ds.n_features(),
+                               [&](std::vector<double> &out)
+                               {
+                                   if (booster_->score_width() > 1 ||
+                                       !contribs_on_device(ds, std::span<double>{out}))
+                                   {
+                                       booster_->pred_contribs_binned(
+                                           ds.bins(), std::span<double>{out},
+                                           ds.n_features());
+                                   }
+                               });
     }
 
     void save(std::string const &path) const
@@ -1164,51 +1142,53 @@ class Model
         }
     }
 
+    void apply_link_inverse(bonsai::floats_out scores) const
+    {
+        bonsai::apply_link_inverse_by_name(cfg_.dispatch.objective_name, scores);
+    }
+
     template <typename ProbaFn, typename MarginFn>
     nb::ndarray<nb::numpy, double> proba_columns(size_t n, ProbaFn &&proba,
                                                  MarginFn &&margin) const
     {
-        size_t const w   = booster_->score_width();
-        auto         out = std::make_unique<std::vector<double>>(n * w, 0.0);
+        size_t const w    = booster_->score_width();
+        auto const   fill = [&](std::vector<double> &out)
         {
-            nb::gil_scoped_release release;
             if (w > 1)
             {
-                proba(std::span<double>{*out});
+                proba(std::span<double>{out});
+                return;
             }
-            else
-            {
-                std::vector<float> margins(n, 0.0F);
-                margin(bonsai::floats_out{margins.data(), n});
-                bonsai::apply_link_inverse_by_name(
-                    cfg_.dispatch.objective_name,
-                    bonsai::floats_out{margins.data(), n});
-                std::ranges::copy(margins, out->begin());
-            }
-        }
-        if (w > 1)
-        {
-            return to_numpy(std::move(out), {n, w});
-        }
-        return to_numpy(std::move(out), {n});
+            std::vector<float> margins(n, 0.0F);
+            margin(bonsai::floats_out{margins});
+            apply_link_inverse(margins);
+            std::ranges::copy(margins, out.begin());
+        };
+        return w > 1 ? emit<double>({n, w}, fill) : emit<double>({n}, fill);
     }
 
     template <typename StagedFn>
     nb::ndarray<nb::numpy, float> staged_columns(size_t n, StagedFn &&staged) const
     {
-        size_t const k   = booster_->n_iters();
-        auto         out = std::make_unique<std::vector<float>>(k * n, 0.0F);
-        {
-            nb::gil_scoped_release release;
-            staged(*out);
-            for (size_t t = 0; t < k; ++t)
-            {
-                bonsai::apply_link_inverse_by_name(
-                    cfg_.dispatch.objective_name,
-                    bonsai::floats_out{std::span{*out}.subspan(t * n, n)});
-            }
-        }
-        return to_numpy(std::move(out), {k, n});
+        size_t const k = booster_->n_iters();
+        return emit<float>({k, n},
+                           [&](std::vector<float> &out)
+                           {
+                               staged(out);
+                               for (size_t t = 0; t < k; ++t)
+                               {
+                                   apply_link_inverse(std::span{out}.subspan(t * n, n));
+                               }
+                           });
+    }
+
+    template <typename Fill>
+    nb::ndarray<nb::numpy, double> contrib_columns(size_t n, size_t n_features,
+                                                   Fill &&fill) const
+    {
+        size_t const width = booster_->score_width();
+        return width > 1 ? emit<double>({n, width, n_features + 1}, fill)
+                         : emit<double>({n, n_features + 1}, fill);
     }
 
     struct DeviceReady
