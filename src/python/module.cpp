@@ -1706,6 +1706,15 @@ Model load(std::string const &path)
                  std::move(loaded.cfg)};
 }
 
+constexpr std::string_view k_params_sig =
+    "params: bonsai.params.Params | collections.abc.Mapping[str, object] | None";
+
+constexpr std::string_view k_eval_and_init_sig =
+    "eval_set: tuple[Annotated[NDArray[numpy.float32], dict(shape=(None, None), "
+    "order='C', device='cpu', writable=False)], Annotated[NDArray[numpy.float32], "
+    "dict(shape=(None,), order='C', device='cpu', writable=False)]] | Dataset | "
+    "None = None, init_model: str | None = None";
+
 } // namespace
 
 NB_MODULE(_bonsai, m)
@@ -2127,14 +2136,9 @@ NB_MODULE(_bonsai, m)
 
     m.def("train", &train_dataset, nb::arg("params").none(), nb::arg("dataset"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
-          nb::sig("def train(params: bonsai.params.Params | "
-                  "collections.abc.Mapping[str, object] | None, dataset: Dataset, "
-                  "eval_set: tuple[Annotated[NDArray[numpy.float32], "
-                  "dict(shape=(None, None), order='C', device='cpu', "
-                  "writable=False)], Annotated[NDArray[numpy.float32], "
-                  "dict(shape=(None,), order='C', device='cpu', writable=False)]] "
-                  "| Dataset | None = None, init_model: str | None = None) -> "
-                  "Model"),
+          nb::sig(std::format("def train({}, dataset: Dataset, {}) -> Model",
+                              k_params_sig, k_eval_and_init_sig)
+                      .c_str()),
           "Train on a prebuilt Dataset, reusing its binning across calls.\n"
           "\n"
           "Parameters\n"
@@ -2167,15 +2171,11 @@ NB_MODULE(_bonsai, m)
     m.def("train", &train, nb::arg("params").none(), nb::arg("X"), nb::arg("y"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
           nb::arg("sample_weight") = nb::none(), nb::arg("feature_names") = nb::none(),
-          nb::sig("def train(params: bonsai.params.Params | "
-                  "collections.abc.Mapping[str, object] | None, X: object, "
-                  "y: object, eval_set: tuple[Annotated[NDArray[numpy.float32], "
-                  "dict(shape=(None, None), order='C', device='cpu', "
-                  "writable=False)], Annotated[NDArray[numpy.float32], "
-                  "dict(shape=(None,), order='C', device='cpu', writable=False)]] "
-                  "| Dataset | None = None, init_model: str | None = None, "
-                  "sample_weight: object | None = None, feature_names: "
-                  "collections.abc.Sequence[str] | None = None) -> Model"),
+          nb::sig(std::format("def train({}, X: object, y: object, {}, "
+                              "sample_weight: object | None = None, feature_names: "
+                              "collections.abc.Sequence[str] | None = None) -> Model",
+                              k_params_sig, k_eval_and_init_sig)
+                      .c_str()),
           "Train a booster on row-major float32 features.\n"
           "\n"
           "Parameters\n"
