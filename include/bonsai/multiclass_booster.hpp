@@ -322,20 +322,14 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
     void label_rows(std::vector<float> const &scores, floats_out y_hat) const
     {
         size_t const k_count = n_outputs();
-        parallel::for_each_index(y_hat.size(),
-                                 [&](size_t i)
-                                 {
-                                     size_t best = 0;
-                                     for (size_t k = 1; k < k_count; ++k)
-                                     {
-                                         if (scores[(i * k_count) + k] >
-                                             scores[(i * k_count) + best])
-                                         {
-                                             best = k;
-                                         }
-                                     }
-                                     y_hat[i] = static_cast<float>(best);
-                                 });
+        parallel::for_each_index(
+            y_hat.size(),
+            [&](size_t i)
+            {
+                auto const row = std::span{scores}.subspan(i * k_count, k_count);
+                y_hat[i] =
+                    static_cast<float>(std::ranges::max_element(row) - row.begin());
+            });
     }
 
     float logloss_from_scores(std::span<float const> scores, floats_view labels) const
