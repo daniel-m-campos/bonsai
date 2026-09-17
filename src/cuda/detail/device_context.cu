@@ -1615,32 +1615,24 @@ bool CudaDeviceContext::resident_begin_leaf(Dataset const &ds, TreeConfig const 
 void CudaDeviceContext::NodeTable::stage(
     std::span<CudaHistogramEngine::ResidentNode const> nodes)
 {
-    size_t const nn = nodes.size();
-    feature.host.resize(nn);
-    split_bin.host.resize(nn);
-    left.host.resize(nn);
-    right.host.resize(nn);
-    default_left.host.resize(nn);
-    is_leaf.host.resize(nn);
-    value.host.resize(nn);
-    for (size_t i = 0; i < nn; ++i)
+    using ResidentNode = CudaHistogramEngine::ResidentNode;
+    auto const column  = [&](auto &st, auto projection)
     {
-        CudaHistogramEngine::ResidentNode const &rn = nodes[i];
-        feature.host[i]                             = rn.feature_id;
-        split_bin.host[i]                           = rn.split_bin;
-        left.host[i]                                = rn.left;
-        right.host[i]                               = rn.right;
-        default_left.host[i]                        = rn.default_left ? 1U : 0U;
-        is_leaf.host[i]                             = rn.is_leaf ? 1U : 0U;
-        value.host[i]                               = rn.value;
-    }
-    feature.sync();
-    split_bin.sync();
-    left.sync();
-    right.sync();
-    default_left.sync();
-    is_leaf.sync();
-    value.sync();
+        st.host.resize(nodes.size());
+        for (size_t i = 0; i < nodes.size(); ++i)
+        {
+            st.host[i] = projection(nodes[i]);
+        }
+        st.sync();
+    };
+    column(feature, [](ResidentNode const &rn) { return rn.feature_id; });
+    column(split_bin, [](ResidentNode const &rn) { return rn.split_bin; });
+    column(left, [](ResidentNode const &rn) { return rn.left; });
+    column(right, [](ResidentNode const &rn) { return rn.right; });
+    column(default_left,
+           [](ResidentNode const &rn) { return rn.default_left ? 1U : 0U; });
+    column(is_leaf, [](ResidentNode const &rn) { return rn.is_leaf ? 1U : 0U; });
+    column(value, [](ResidentNode const &rn) { return rn.value; });
 }
 
 void CudaDeviceContext::resident_finalize(
