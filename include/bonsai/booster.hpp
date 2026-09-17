@@ -739,6 +739,15 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
     {
         return init_scores_.empty() ? 0.0F : init_scores_[k];
     }
+
+    void raw_to_scores(floats_out scores, float init) const
+    {
+        float const lr = config_.learning_rate;
+        for (float &score : scores)
+        {
+            score = init + (score * lr);
+        }
+    }
     std::vector<float> const &init_scores_per_output() const
     {
         return init_scores_;
@@ -904,6 +913,7 @@ class Booster final : public Ensemble<Gr, Sa>
     using Ensemble<Gr, Sa>::grower;
     using Ensemble<Gr, Sa>::hess;
     using Ensemble<Gr, Sa>::mutable_trees;
+    using Ensemble<Gr, Sa>::raw_to_scores;
     using Ensemble<Gr, Sa>::rng;
     using Ensemble<Gr, Sa>::select_rows;
 
@@ -1051,16 +1061,15 @@ class Booster final : public Ensemble<Gr, Sa>
 
     void seed_train_scores(Dataset const &train)
     {
-        std::vector<float> raw(train.plane_n_rows(), 0.0F);
+        scores_.assign(train.plane_n_rows(), 0.0F);
         for (auto const &t : trees())
         {
-            internal::accumulate_train_contribution(t, train, raw);
+            internal::accumulate_train_contribution(t, train, scores_);
         }
         float const init = init_score();
-        scores_.resize(train.plane_n_rows());
-        parallel::for_each_index(
-            train.plane_n_rows(),
-            [&](size_t i) { scores_[i] = init + (config().learning_rate * raw[i]); });
+        float const lr   = config().learning_rate;
+        parallel::for_each_index(train.plane_n_rows(), [&](size_t i)
+                                 { scores_[i] = init + (lr * scores_[i]); });
     }
 
     // True when the round ran on the device instead of the host objective
@@ -1256,18 +1265,14 @@ class Booster final : public Ensemble<Gr, Sa>
         uint64_t const epoch = this->epoch();
         auto const    &trees = this->trees();
         size_t const k = n_trees == 0 ? trees.size() : std::min(n_trees, trees.size());
-        std::fill(scores.begin(), scores.end(), 0.0F);
+        std::ranges::fill(scores, 0.0F);
         if (k > 0)
         {
             auto const walk =
                 walk_.get(epoch, [&] { return walk_type{std::span{trees}}; });
             walk->accumulate(X, k, scores);
         }
-        float const init = init_score();
-        for (float &score : scores)
-        {
-            score = init + (score * config().learning_rate);
-        }
+        raw_to_scores(scores, init_score());
     }
 
     void predict_staged(features_view X, floats_out out) const override
@@ -1293,16 +1298,12 @@ class Booster final : public Ensemble<Gr, Sa>
         assert(bins.view_n_rows() == scores.size());
         auto const  &trees = this->trees();
         size_t const k = n_trees == 0 ? trees.size() : std::min(n_trees, trees.size());
-        std::fill(scores.begin(), scores.end(), 0.0F);
+        std::ranges::fill(scores, 0.0F);
         for (size_t t = 0; t < k; ++t)
         {
             internal::accumulate_view_contribution(trees[t], bins, scores);
         }
-        float const init = init_score();
-        for (float &score : scores)
-        {
-            score = init + (score * config().learning_rate);
-        }
+        raw_to_scores(scores, init_score());
     }
 
     DevicePlanInput device_plan_input() const override
