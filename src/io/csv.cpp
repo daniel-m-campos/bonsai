@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <fstream>
 #include <limits>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -115,21 +116,6 @@ float parse_field(std::string_view raw, size_t row, size_t col)
     return val;
 }
 
-void split_csv_line(std::string_view line, std::vector<std::string_view> &out)
-{
-    out.clear();
-    size_t start = 0;
-    for (size_t i = 0; i < line.size(); ++i)
-    {
-        if (line[i] == ',')
-        {
-            out.emplace_back(line.substr(start, i - start));
-            start = i + 1;
-        }
-    }
-    out.emplace_back(line.substr(start));
-}
-
 std::vector<std::string> header_names(std::string const &buf, size_t &pos,
                                       std::string const &path)
 {
@@ -137,15 +123,11 @@ std::vector<std::string> header_names(std::string const &buf, size_t &pos,
     {
         throw std::runtime_error("csv::parse: empty file '" + path + "'");
     }
-    std::vector<std::string_view> fields;
-    split_csv_line(next_line(buf, pos), fields);
-    std::vector<std::string> names;
-    names.reserve(fields.size());
-    for (auto const &f : fields)
-    {
-        names.emplace_back(trim(f));
-    }
-    return names;
+    return next_line(buf, pos) | std::views::split(',') |
+           std::views::transform(
+               [](auto const &field)
+               { return std::string{trim(std::string_view{field})}; }) |
+           std::ranges::to<std::vector>();
 }
 
 std::vector<std::string_view> body_lines(std::string const &buf, size_t pos)
@@ -164,9 +146,7 @@ std::vector<std::string_view> body_lines(std::string const &buf, size_t pos)
 
 size_t field_count(std::string_view line)
 {
-    std::vector<std::string_view> fields;
-    split_csv_line(line, fields);
-    return fields.size();
+    return static_cast<size_t>(std::ranges::count(line, ',')) + 1;
 }
 
 std::vector<size_t> resolve_feature_cols(size_t n_cols, DataConfig const &cfg)
