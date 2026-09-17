@@ -123,17 +123,18 @@ void BinStore::mint_into(std::span<uint8_t> out_bins) const
     // sync: each worker owns a row block in the parallel::for_each_index
     // below, so writes never overlap; overlapping them races (invariants:
     // host-determinism).
-    size_t const     width = RowMirror::tile_width;
-    uint8_t         *out   = out_bins.data();
-    constexpr size_t tile  = 64;
-    parallel::for_each_index((n_rows_ + tile - 1) / tile,
+    size_t const     width      = RowMirror::tile_width;
+    uint8_t         *out        = out_bins.data();
+    constexpr size_t k_row_tile = 64;
+    constexpr size_t k_col_tile = 64;
+    parallel::for_each_index((n_rows_ + k_row_tile - 1) / k_row_tile,
                              [&](size_t block)
                              {
-                                 size_t const r0 = block * tile;
-                                 size_t const r1 = std::min(r0 + tile, n_rows_);
-                                 for (size_t c0 = 0; c0 < f; c0 += tile)
+                                 size_t const r0 = block * k_row_tile;
+                                 size_t const r1 = std::min(r0 + k_row_tile, n_rows_);
+                                 for (size_t c0 = 0; c0 < f; c0 += k_col_tile)
                                  {
-                                     size_t const c1 = std::min(c0 + tile, f);
+                                     size_t const c1 = std::min(c0 + k_col_tile, f);
                                      for (size_t c = c0; c < c1; ++c)
                                      {
                                          size_t const mb = c / width;
