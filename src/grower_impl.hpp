@@ -446,6 +446,28 @@ inline void route_unsampled(Dataset const &ds, DenseBuild const &build,
                        });
 }
 
+inline void route_unsampled(Dataset const &ds, std::span<float const> leaf_table,
+                            LeafFinalize const &fin)
+{
+    for_each_unsampled(ds.row_view(), fin.row_indices,
+                       [&](row_id_t r)
+                       {
+                           size_t index = 0;
+                           for (size_t lvl = 0; lvl < fin.level_splits.size(); ++lvl)
+                           {
+                               auto const &s = fin.level_splits[lvl];
+                               auto const  last =
+                                   static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
+                               bin_id_t const b    = ds.bin_at(s.feature_id, r);
+                               bool const     left = routes_left(
+                                   b, last, fin.level_bins[lvl], s.default_left);
+                               index = (index << 1U) | (left ? 0U : 1U);
+                           }
+                           fin.values[r]   = leaf_table[index];
+                           fin.leaf_ids[r] = static_cast<node_id_t>(index);
+                       });
+}
+
 } // namespace bonsai::grower_detail
 
 namespace bonsai
@@ -613,24 +635,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
 
     if (!resident)
     {
-        gd::for_each_unsampled(
-            ds.row_view(), selection.rows,
-            [&](row_id_t r)
-            {
-                size_t index = 0;
-                for (size_t lvl = 0; lvl < level_splits.size(); ++lvl)
-                {
-                    auto const &s = level_splits[lvl];
-                    auto const  last =
-                        static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
-                    bin_id_t const b = ds.bin_at(s.feature_id, r);
-                    bool const     left =
-                        routes_left(b, last, level_bins[lvl], s.default_left);
-                    index = (index << 1U) | (left ? 0U : 1U);
-                }
-                values[r]   = leaf_table[index];
-                leaf_ids[r] = static_cast<node_id_t>(index);
-            });
+        gd::route_unsampled(ds, leaf_table, fin);
     }
     flap(gd::GrowProfiler::instance().finalize_s);
 
