@@ -13,6 +13,8 @@
 #include <string>
 #include <utility>
 
+#include "bonsai/detail/member_pointer.hpp"
+
 namespace bonsai::detail
 {
 
@@ -36,12 +38,6 @@ template <typename Prof> struct Lap
     }
 };
 
-template <typename T> struct MemberClass;
-template <typename C, typename M> struct MemberClass<M C::*>
-{
-    using type = C;
-};
-
 // RAII phase: one declaration charges its whole enclosing scope to the named
 // bucket, so the phase is stated where a reader meets it. The instrument
 // boundary: laps sit at step public methods and at the grow loop's phase
@@ -49,7 +45,7 @@ template <typename C, typename M> struct MemberClass<M C::*>
 // phases keeps a plain Lap; a scope guard has one exit and one bucket.
 template <auto Member> struct Phase
 {
-    using Prof = typename MemberClass<decltype(Member)>::type;
+    using Prof = typename member_pointer_traits<decltype(Member)>::class_type;
 
     Lap<Prof> lap;
 
