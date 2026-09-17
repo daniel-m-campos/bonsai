@@ -91,6 +91,16 @@ NodeScreen node_screen_of(NodeTotals const &sums, TreeConfig const &config)
             .sum_hess     = bracket(sums.sum_hess)};
 }
 
+SplitOutput split_of(FeatBest const &b, std::span<uint32_t const> features)
+{
+    return {.gain = b.gain,
+            .feature_id =
+                static_cast<feature_id_t>(features[static_cast<size_t>(b.sel)]),
+            .bin_id       = static_cast<bin_id_t>(b.bin),
+            .default_left = b.dl != 0,
+            .valid        = true};
+}
+
 void stage_monotone(Staged<int> &monotone, TreeConfig const &config, size_t n_features)
 {
     monotone.host.resize(n_features);
@@ -470,12 +480,7 @@ void CudaDeviceContext::LevelPipeline::unpack_splits(std::span<SplitInput const>
             child_sums[(2 * i) + 1] = {};
             continue;
         }
-        out[i]                  = {.gain       = b.gain,
-                                   .feature_id = static_cast<feature_id_t>(
-                      features.host[static_cast<size_t>(b.sel)]),
-                                   .bin_id       = static_cast<bin_id_t>(b.bin),
-                                   .default_left = b.dl != 0,
-                                   .valid        = true};
+        out[i]                  = split_of(b, features.host);
         child_sums[2 * i]       = {.sum_grad = b.gL, .sum_hess = b.hL};
         child_sums[(2 * i) + 1] = {.sum_grad = b.gR, .sum_hess = b.hR};
     }
@@ -1253,17 +1258,9 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     }
     lap(prof.gpu_s);
 
-    FeatBest const &b = lvl.node_best.host[0];
-    SplitOutput     split{};
-    if (b.valid != 0)
-    {
-        split = {.gain       = b.gain,
-                 .feature_id = static_cast<feature_id_t>(
-                     lvl.features.host[static_cast<size_t>(b.sel)]),
-                 .bin_id       = static_cast<bin_id_t>(b.bin),
-                 .default_left = b.dl != 0,
-                 .valid        = true};
-    }
+    FeatBest const   &b = lvl.node_best.host[0];
+    SplitOutput const split =
+        b.valid != 0 ? split_of(b, lvl.features.host) : SplitOutput{};
     for (size_t i = 0; i < n; ++i)
     {
         out[i]                  = split;
