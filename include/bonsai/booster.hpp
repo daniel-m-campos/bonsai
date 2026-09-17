@@ -24,6 +24,7 @@
 #include <numeric>
 #include <optional>
 #include <random>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -212,6 +213,18 @@ class ITrainableBooster : public IBooster
     virtual void truncate(size_t n_rounds) = 0;
 };
 
+inline std::string numbered_feature_name(size_t f)
+{
+    return "f" + std::to_string(f);
+}
+
+inline std::vector<std::string> numbered_feature_names(size_t n)
+{
+    return std::views::iota(size_t{0}, n) |
+           std::views::transform(numbered_feature_name) |
+           std::ranges::to<std::vector>();
+}
+
 namespace internal
 {
 
@@ -256,7 +269,7 @@ void accumulate_view_contribution(T const &tree, Dataset const &ds, floats_out o
 
 inline std::string feature_label(std::span<std::string const> names, size_t f)
 {
-    return f < names.size() ? names[f] : "f" + std::to_string(f);
+    return f < names.size() ? names[f] : numbered_feature_name(f);
 }
 
 // Indented text dump, one line per node.
