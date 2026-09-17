@@ -389,13 +389,10 @@ inline void accumulate_importance(ObliviousTree const &tree, ImportanceType type
 // value is row-independent, so one walk per tree replaces one per (row, tree).
 template <typename Trees> std::vector<double> shap_biases(Trees const &trees)
 {
-    std::vector<double> biases;
-    biases.reserve(trees.size());
-    for (auto const &tree : trees)
-    {
-        biases.push_back(tree_expected_value(tree));
-    }
-    return biases;
+    return trees |
+           std::views::transform([](auto const &tree)
+                                 { return tree_expected_value(tree); }) |
+           std::ranges::to<std::vector<double>>();
 }
 
 // Per-row, per-tree leaf indices; out is n_rows * trees.size(), row-major by
@@ -425,13 +422,10 @@ void predict_leaf_over(Trees const &trees, features_view X, std::span<node_id_t>
 template <typename Trees>
 std::vector<SplitBins> tree_split_bins(Trees const &trees, Dataset const &bins)
 {
-    std::vector<SplitBins> sb;
-    sb.reserve(trees.size());
-    for (auto const &tree : trees)
-    {
-        sb.push_back(split_bins(tree, bins));
-    }
-    return sb;
+    return trees |
+           std::views::transform([&](auto const &tree)
+                                 { return split_bins(tree, bins); }) |
+           std::ranges::to<std::vector<SplitBins>>();
 }
 
 // predict_leaf_over's twin over binned rows, same row-major-by-row output.
@@ -462,13 +456,8 @@ void predict_leaf_over_binned(Trees const &trees, Dataset const &bins,
 // once per row.
 inline std::vector<DenseTree> densify(std::vector<ObliviousTree> const &trees)
 {
-    std::vector<DenseTree> dense;
-    dense.reserve(trees.size());
-    for (auto const &tree : trees)
-    {
-        dense.push_back(dense_equivalent(tree));
-    }
-    return dense;
+    return trees | std::views::transform(dense_equivalent) |
+           std::ranges::to<std::vector<DenseTree>>();
 }
 
 // Epoch-keyed derived-value cache, one home for every pack a booster mints
