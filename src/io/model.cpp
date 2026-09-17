@@ -298,13 +298,8 @@ json mappers_to_json(BinMappers const &mappers)
     for (size_t i = 0; i < mappers.size(); ++i)
     {
         json m;
-        m["name"]     = std::string{names[i]};
-        json cuts_arr = json::array();
-        for (float c : mappers[i].cuts())
-        {
-            cuts_arr.push_back(c);
-        }
-        m["cuts"] = std::move(cuts_arr);
+        m["name"] = std::string{names[i]};
+        m["cuts"] = mappers[i].cuts();
         out.push_back(std::move(m));
     }
     return out;
@@ -318,12 +313,7 @@ BinMappers mappers_from_json(json const &j)
     names.reserve(j.size());
     for (auto const &m : j)
     {
-        std::vector<float> cuts;
-        cuts.reserve(m.at("cuts").size());
-        for (auto const &c : m.at("cuts"))
-        {
-            cuts.push_back(c.get<float>());
-        }
+        auto cuts = m.at("cuts").get<std::vector<float>>();
         if (cuts.empty() || !std::is_sorted(cuts.begin(), cuts.end()))
         {
             throw std::runtime_error(
