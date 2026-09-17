@@ -228,9 +228,12 @@ bool cannot_split(SplitInput const &input, TreeConfig const &config)
            input.rows.size() < 2 * size_t{config.min_data_in_leaf};
 }
 
+constexpr size_t k_scan_ranges_per_thread = 4;
+
 size_t scan_ranges(size_t n_features)
 {
-    size_t const units = static_cast<size_t>(parallel::n_threads()) * 4;
+    size_t const units =
+        static_cast<size_t>(parallel::n_threads()) * k_scan_ranges_per_thread;
     return std::max<size_t>(1, std::min(n_features, units));
 }
 
