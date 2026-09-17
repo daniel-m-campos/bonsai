@@ -292,17 +292,8 @@ CudaIngestPlane::select_columns(std::span<feature_id_t const> keep,
             src, dst, d_keep.data(), map.data(), static_cast<uint32_t>(n_rows),
             static_cast<uint32_t>(n_feats), n_dst, f_dst);
     };
-    size_t const cells = out_rows * keep.size();
-    if (bins_are_u8)
-    {
-        out->bins8.reserve(cells);
-        launch(bins8.data(), out->bins8.data());
-    }
-    else
-    {
-        out->bins16.reserve(cells);
-        launch(bins16.data(), out->bins16.data());
-    }
+    out->reserve_bins(out_rows * keep.size());
+    with_bins(*out, launch);
     check(cudaGetLastError(), "select_columns gather launch");
     check(cudaDeviceSynchronize(), "select_columns gather");
     return out;

@@ -299,15 +299,7 @@ std::shared_ptr<CudaIngestPlane> make_ingest_plane(BinMappers const &mappers,
     plane->n_rows      = n_rows;
     plane->n_feats     = mappers.size();
     plane->n_bins.upload(counts.data(), counts.size());
-    size_t const cells = n_rows * mappers.size();
-    if (u8)
-    {
-        plane->bins8.reserve(cells);
-    }
-    else
-    {
-        plane->bins16.reserve(cells);
-    }
+    plane->reserve_bins(n_rows * mappers.size());
     return plane;
 }
 
