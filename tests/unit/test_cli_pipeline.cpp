@@ -40,26 +40,18 @@ TEST_CASE("load_train_from_csv: tiny.csv yields N rows and non-empty mappers",
     auto const cfg    = make_tiny_config();
     auto const loaded = load_train_from_csv(cfg, cfg.data.train);
 
-    CHECK(loaded.train.plane_n_rows() == 4);
-    CHECK(loaded.train.n_features() > 0);
+    CHECK(loaded.train.dataset.plane_n_rows() == 4);
+    CHECK(loaded.train.dataset.n_features() > 0);
     CHECK(loaded.mappers.size() > 0);
 }
 
-TEST_CASE("train_in_memory: progress callback fires n_iters times in 1..n order",
+TEST_CASE("train_with_progress: a train-only fit runs every configured round",
           "[cli_pipeline][train]")
 {
     auto const cfg    = make_tiny_config();
     auto const loaded = load_train_from_csv(cfg, cfg.data.train);
 
-    std::vector<size_t> iters;
-    auto booster = train_in_memory(cfg, loaded.train, [&](size_t iter, size_t /*total*/)
-                                   { iters.push_back(iter); });
-
-    REQUIRE(iters.size() == cfg.booster_config.n_iters);
-    for (size_t i = 0; i < iters.size(); ++i)
-    {
-        CHECK(iters[i] == i + 1);
-    }
+    auto const booster = train_with_progress(cfg, loaded.train);
     CHECK(booster->n_iters() == cfg.booster_config.n_iters);
 }
 
@@ -67,7 +59,7 @@ TEST_CASE("score_csv: returns one raw score per row", "[cli_pipeline][score]")
 {
     auto const cfg     = make_tiny_config();
     auto const loaded  = load_train_from_csv(cfg, cfg.data.train);
-    auto const booster = train_in_memory(cfg, loaded.train);
+    auto const booster = train_with_progress(cfg, loaded.train);
 
     auto const scored =
         score_csv(*booster, cfg.data.train, cfg.data, loaded.mappers.size());
@@ -79,7 +71,7 @@ TEST_CASE("score_csv: a CSV of the wrong width is refused before predict",
 {
     auto const cfg     = make_tiny_config();
     auto const loaded  = load_train_from_csv(cfg, cfg.data.train);
-    auto const booster = train_in_memory(cfg, loaded.train);
+    auto const booster = train_with_progress(cfg, loaded.train);
 
     REQUIRE_THROWS_WITH(
         score_csv(*booster, cfg.data.train, cfg.data, loaded.mappers.size() + 1),
@@ -91,7 +83,7 @@ TEST_CASE("score_and_label_csv: labels match the CSV's label column",
 {
     auto const cfg     = make_tiny_config();
     auto const loaded  = load_train_from_csv(cfg, cfg.data.train);
-    auto const booster = train_in_memory(cfg, loaded.train);
+    auto const booster = train_with_progress(cfg, loaded.train);
 
     auto const sl =
         score_and_label_csv(*booster, cfg.data.train, cfg.data, loaded.mappers.size());
@@ -185,12 +177,12 @@ TEST_CASE("train_with_progress: labels outside the objective's domain are "
             train_with_progress(cfg, train),
             Catch::Matchers::ContainsSubstring("softmax labels must be integers"));
     }
-    SECTION("bench's in-memory trainer is checked too")
+    SECTION("bench's loader is checked too")
     {
         cfg.dispatch.objective_name = "logloss";
-        auto const in_memory        = load_train_from_csv(cfg, cfg.data.train);
+        auto const bench_train      = load_train_from_csv(cfg, cfg.data.train);
         REQUIRE_THROWS_WITH(
-            train_in_memory(cfg, in_memory.train),
+            train_with_progress(cfg, bench_train.train),
             Catch::Matchers::ContainsSubstring("logloss labels must be 0 or 1"));
     }
     SECTION("softmax refuses a fractional label")

@@ -43,11 +43,14 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
     auto const batch   = detail::parse_input(path, cfg.data);
     auto       mappers = BinMappers::fit(batch, cfg.bin_mapper);
     select_device_for(cfg);
-    auto plane = grower_runs_on_device(cfg.dispatch.grower_name)
-                     ? cuda_ingest(batch, mappers)
-                     : nullptr;
-    auto train = Dataset::bin(batch, mappers, cfg.data, std::move(plane));
-    return LoadedTrain{.mappers = std::move(mappers), .train = std::move(train)};
+    auto plane   = grower_runs_on_device(cfg.dispatch.grower_name)
+                       ? cuda_ingest(batch, mappers)
+                       : nullptr;
+    auto dataset = Dataset::bin(batch, mappers, cfg.data, std::move(plane));
+    return LoadedTrain{
+        .mappers = std::move(mappers),
+        .train =
+            LabeledData{.dataset = std::move(dataset), .features = {}, .labels = {}}};
 }
 
 namespace
@@ -76,29 +79,6 @@ void check_label_domain(Config const &cfg, floats_view labels, std::string_view 
                std::format("integers in [0, {})", cfg.objective.n_classes));
     }
 }
-
-} // namespace
-
-std::unique_ptr<ITrainableBooster>
-train_in_memory(Config const &cfg, Dataset const &train, ProgressFn const &on_progress)
-{
-    check_label_domain(cfg, train.labels(), "train");
-    select_device_for(cfg);
-    auto       booster = make_booster(cfg);
-    auto const n_iters = cfg.booster_config.n_iters;
-    for (uint32_t i = 0; i < n_iters; ++i)
-    {
-        booster->update_one_iter(train);
-        if (on_progress)
-        {
-            on_progress(static_cast<size_t>(i) + 1, static_cast<size_t>(n_iters));
-        }
-    }
-    return booster;
-}
-
-namespace
-{
 
 struct ParsedFeatures
 {
@@ -587,7 +567,7 @@ train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation
            FitTickFn const &on_tick, std::unique_ptr<ITrainableBooster> initial,
            EvalHistoryRef eval_history)
 {
-    check_label_domain(cfg, train.labels, "train");
+    check_label_domain(cfg, train.dataset.labels(), "train");
     if (validation)
     {
         check_label_domain(cfg, validation->get().labels, "validation");

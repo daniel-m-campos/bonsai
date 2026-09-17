@@ -19,16 +19,6 @@
 namespace bonsai::cli
 {
 
-struct LoadedTrain
-{
-    BinMappers mappers;
-    Dataset    train;
-};
-
-// Fit bin mappers from `path`, then bin the same file. No row-major feature
-// buffer, so the result cannot predict.
-LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path);
-
 // One side of a train/validation pair. Carries both the binned Dataset (for
 // update_one_iter / labels) and the row-major FeatureBuffer (for predict).
 // A validation set may leave the Dataset empty, which asks the fit to bin it
@@ -41,6 +31,17 @@ struct LabeledData
     FeatureBuffer      features;
     std::vector<float> labels;
 };
+
+struct LoadedTrain
+{
+    BinMappers  mappers;
+    LabeledData train;
+};
+
+// Fit bin mappers from `path`, then bin the same file. The labels ride in the
+// Dataset (LabeledData::labels stays empty) and there is no row-major feature
+// buffer, so the result trains but cannot predict.
+LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path);
 
 struct LoadedTrainValidation
 {
@@ -59,17 +60,6 @@ LoadedTrainValidation load_train_and_validation_from_csv(Config const &cfg);
 // bins.
 LoadedTrainValidation load_train_and_validation_with_mappers(Config const &cfg,
                                                              BinMappers    mappers);
-
-// Progress callback: receives (iter_one_based, total_iters) after each
-// boosting iteration. The helper calls it every iteration; a caller that
-// wants less does its own throttling in the callback body.
-using ProgressFn = std::function<void(size_t, size_t)>;
-
-// Build a booster from cfg via the registry and run `cfg.booster_config.n_iters`
-// iterations of `update_one_iter` on `train`.
-std::unique_ptr<ITrainableBooster> train_in_memory(Config const     &cfg,
-                                                   Dataset const    &train,
-                                                   ProgressFn const &on_progress = {});
 
 // Per-tick snapshot of model performance during fit. Predictions are RAW
 // scores (link not applied yet); the printer decides whether to invert and

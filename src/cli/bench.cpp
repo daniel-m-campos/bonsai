@@ -48,7 +48,7 @@ int run_bench(BenchOpts const &opts)
     std::unique_ptr<ITrainableBooster> booster;
     {
         parallel::FitPlace const placed;
-        booster = train_in_memory(cfg, loaded.train);
+        booster = train_with_progress(cfg, loaded.train);
     }
     auto const t_fit = seconds_since(t1);
 
@@ -57,16 +57,16 @@ int run_bench(BenchOpts const &opts)
     auto       scored = score_csv(*booster, eval_path, cfg.data, loaded.mappers.size());
     auto const t_predict = seconds_since(t2);
 
-    auto const rows_per_sec =
-        static_cast<double>(loaded.train.plane_n_rows() * cfg.booster_config.n_iters) /
-        t_fit;
+    auto const rows_per_sec = static_cast<double>(loaded.train.dataset.plane_n_rows() *
+                                                  cfg.booster_config.n_iters) /
+                              t_fit;
 
     std::println("bench:");
     std::println("  load_seconds={}", t_load);
     std::println("  fit_seconds={}", t_fit);
     std::println("  predict_seconds={}", t_predict);
     std::println("  rows_per_sec={}", rows_per_sec);
-    std::println("  n_train_rows={}", loaded.train.plane_n_rows());
+    std::println("  n_train_rows={}", loaded.train.dataset.plane_n_rows());
     std::println("  n_predict_rows={}", scored.raw_scores.size());
     std::println("  n_iters={}", cfg.booster_config.n_iters);
 
