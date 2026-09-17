@@ -33,8 +33,8 @@ __global__ void interleave_kernel(float const *grad, float const *hess, uint32_t
 
 inline void interleave(float const *grad, float const *hess, uint32_t n, float2 *gh)
 {
-    interleave_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 1024)), dim3(256)>>>(
-        grad, hess, n, gh);
+    interleave_kernel<<<strided_grid(n, 1024), dim3(k_linear_threads)>>>(grad, hess, n,
+                                                                         gh);
     check(cudaGetLastError(), "interleave launch");
 }
 
@@ -52,8 +52,8 @@ __global__ void gather_gh_kernel(float2 const *gh, uint32_t const *rows,
 inline void gather(float2 const *gh, uint32_t const *rows, uint32_t n,
                    float2 *gh_ordered)
 {
-    gather_gh_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 512)), dim3(256)>>>(
-        gh, rows, n, gh_ordered);
+    gather_gh_kernel<<<strided_grid(n, 512), dim3(k_linear_threads)>>>(gh, rows, n,
+                                                                       gh_ordered);
     check(cudaGetLastError(), "gather launch");
 }
 
@@ -213,8 +213,7 @@ __global__ void gh_quant_kernel(uint2 const *absmax, uint32_t n_rows, GhQuant *o
 inline void launch_gh_quant(float2 const *gh, uint32_t n, uint2 *absmax, GhQuant *out)
 {
     check(cudaMemset(absmax, 0, sizeof(uint2)), "absmax zero");
-    gh_absmax_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 1024)), dim3(256)>>>(
-        gh, n, absmax);
+    gh_absmax_kernel<<<strided_grid(n, 1024), dim3(k_linear_threads)>>>(gh, n, absmax);
     check(cudaGetLastError(), "absmax launch");
     gh_quant_kernel<<<dim3(1), dim3(1)>>>(absmax, n, out);
     check(cudaGetLastError(), "quant launch");
@@ -2045,8 +2044,8 @@ inline void gh_from_scores(DeviceObjectiveKind kind, bool weighted, float const 
                            float const *labels, float const *weights, uint32_t n,
                            float2 *gh)
 {
-    dim3 const grid(std::clamp<uint32_t>(n / 256, 1, 1024));
-    dim3 const block(256);
+    dim3 const grid  = strided_grid(n, 1024);
+    dim3 const block = dim3(k_linear_threads);
     switch (kind)
     {
     case DeviceObjectiveKind::mse:
@@ -2071,7 +2070,7 @@ template <DeviceObjectiveKind Kind>
 __global__ void eval_loss_pass1_kernel(float const *scores, float const *labels,
                                        uint32_t n, double *partial)
 {
-    __shared__ double sl[256];
+    __shared__ double sl[k_linear_threads];
     double            acc = 0.0;
     for (uint32_t r = (blockIdx.x * blockDim.x) + threadIdx.x; r < n;
          r += gridDim.x * blockDim.x)
@@ -2114,8 +2113,8 @@ __global__ void eval_loss_pass1_kernel(float const *scores, float const *labels,
 inline uint32_t eval_loss_pass1(DeviceObjectiveKind kind, float const *scores,
                                 float const *labels, uint32_t n, double *partial)
 {
-    dim3 const grid(std::clamp<uint32_t>(n / 256, 1, 1024));
-    dim3 const block(256);
+    dim3 const grid  = strided_grid(n, 1024);
+    dim3 const block = dim3(k_linear_threads);
     switch (kind)
     {
     case DeviceObjectiveKind::mse:
@@ -2175,8 +2174,8 @@ __global__ void iota_kernel(uint32_t *out, uint32_t n)
 
 __global__ void sum_gh_pass1_kernel(float2 const *gh, uint32_t n, double2 *partial)
 {
-    __shared__ double sg[256];
-    __shared__ double sh[256];
+    __shared__ double sg[k_linear_threads];
+    __shared__ double sh[k_linear_threads];
     double            g = 0.0;
     double            h = 0.0;
     for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < n;

@@ -159,6 +159,24 @@ inline __host__ __device__ size_t tiled_cell(uint32_t f, uint32_t r, uint32_t n_
            (static_cast<size_t>(r) * tile_strip(t, n_feats)) + (f % k_bin_tile_width);
 }
 
+inline constexpr uint32_t k_linear_threads = 256;
+
+inline uint32_t covering_blocks(size_t n)
+{
+    return static_cast<uint32_t>((n + k_linear_threads - 1) / k_linear_threads);
+}
+
+inline dim3 covering_grid(size_t n)
+{
+    return dim3(covering_blocks(n));
+}
+
+inline dim3 strided_grid(size_t n, uint32_t max_blocks)
+{
+    return dim3(std::clamp<uint32_t>(static_cast<uint32_t>(n / k_linear_threads), 1,
+                                     max_blocks));
+}
+
 inline __host__ __device__ uint32_t mapped_row(uint32_t const *rows, uint32_t k)
 {
     return rows == nullptr ? k : rows[k];
