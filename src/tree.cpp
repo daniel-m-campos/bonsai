@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <span>
 #include <stdexcept>
 #include <utility>
 
@@ -256,80 +257,108 @@ ObliviousWalk::ObliviousWalk(std::span<ObliviousTree const> trees)
     }
 }
 
+namespace
+{
+
+struct WalkSpans
+{
+    std::span<feature_id_t const> feat;
+    std::span<float const>        thr;
+    std::span<uint8_t const>      default_left;
+    std::span<uint32_t const>     split_off;
+    std::span<uint32_t const>     leaf_off;
+    std::span<float const>        leaf;
+    features_view                 X;
+    size_t                        n_trees;
+    floats_out                    out;
+};
+
+void walk_scalar_rows(WalkSpans const &w, size_t row0, size_t count)
+{
+    size_t const n_cols = w.X.extent(1);
+    for (size_t i = row0; i < row0 + count; ++i)
+    {
+        float const *row = w.X.data_handle() + (i * n_cols);
+        float        sum = 0.0F;
+        for (size_t t = 0; t < w.n_trees; ++t)
+        {
+            uint32_t idx = 0;
+            for (uint32_t l = w.split_off[t]; l < w.split_off[t + 1]; ++l)
+            {
+                bool const right =
+                    routes_right(row[w.feat[l]], w.thr[l], w.default_left[l] != 0);
+                idx = (idx << 1) | static_cast<uint32_t>(right);
+            }
+            sum += w.leaf[w.leaf_off[t] + idx];
+        }
+        w.out[i] += sum;
+    }
+}
+
+void walk_row_block(WalkSpans const &w, size_t b)
+{
+    size_t const       n_cols = w.X.extent(1);
+    size_t const       row0   = b * k_row_block;
+    std::vector<float> scratch(n_cols * k_row_block);
+    for (size_t r = 0; r < k_row_block; ++r)
+    {
+        float const *row = w.X.data_handle() + ((row0 + r) * n_cols);
+        for (size_t c = 0; c < n_cols; ++c)
+        {
+            scratch[(c * k_row_block) + r] = row[c];
+        }
+    }
+    std::array<float, k_row_block> sum{};
+    for (size_t t = 0; t < w.n_trees; ++t)
+    {
+        std::array<uint32_t, k_row_block> idx{};
+        for (uint32_t l = w.split_off[t]; l < w.split_off[t + 1]; ++l)
+        {
+            float const *col      = scratch.data() + (size_t{w.feat[l]} * k_row_block);
+            float const  thr      = w.thr[l];
+            bool const   nan_left = w.default_left[l] != 0;
+            for (size_t r = 0; r < k_row_block; ++r)
+            {
+                idx[r] = (idx[r] << 1) |
+                         static_cast<uint32_t>(routes_right(col[r], thr, nan_left));
+            }
+        }
+        float const *leaves = w.leaf.data() + w.leaf_off[t];
+        for (size_t r = 0; r < k_row_block; ++r)
+        {
+            sum[r] += leaves[idx[r]];
+        }
+    }
+    for (size_t r = 0; r < k_row_block; ++r)
+    {
+        w.out[row0 + r] += sum[r];
+    }
+}
+
+} // namespace
+
 void ObliviousWalk::accumulate(features_view X, size_t n_trees, floats_out out) const
 {
     assert(X.extent(0) == out.size());
     assert(n_trees < split_off_.size());
-    size_t const n_cols   = X.extent(1);
-    size_t const n_rows   = out.size();
-    size_t const n_blocks = n_rows / k_row_block;
-    size_t const tail     = n_rows - (n_blocks * k_row_block);
-
-    auto scalar_rows = [&](size_t row0, size_t count)
-    {
-        for (size_t i = row0; i < row0 + count; ++i)
-        {
-            float const *row = X.data_handle() + (i * n_cols);
-            float        sum = 0.0F;
-            for (size_t t = 0; t < n_trees; ++t)
-            {
-                uint32_t idx = 0;
-                for (uint32_t l = split_off_[t]; l < split_off_[t + 1]; ++l)
-                {
-                    bool const right =
-                        routes_right(row[feat_[l]], thr_[l], default_left_[l] != 0);
-                    idx = (idx << 1) | static_cast<uint32_t>(right);
-                }
-                sum += leaf_[leaf_off_[t] + idx];
-            }
-            out[i] += sum;
-        }
-    };
-
-    auto blocked = [&](size_t b)
-    {
-        size_t const       row0 = b * k_row_block;
-        std::vector<float> scratch(n_cols * k_row_block);
-        for (size_t w = 0; w < k_row_block; ++w)
-        {
-            float const *row = X.data_handle() + ((row0 + w) * n_cols);
-            for (size_t c = 0; c < n_cols; ++c)
-            {
-                scratch[(c * k_row_block) + w] = row[c];
-            }
-        }
-        std::array<float, k_row_block> sum{};
-        for (size_t t = 0; t < n_trees; ++t)
-        {
-            std::array<uint32_t, k_row_block> idx{};
-            for (uint32_t l = split_off_[t]; l < split_off_[t + 1]; ++l)
-            {
-                float const *col = scratch.data() + (size_t{feat_[l]} * k_row_block);
-                float const  thr = thr_[l];
-                bool const   nan_left = default_left_[l] != 0;
-                for (size_t w = 0; w < k_row_block; ++w)
-                {
-                    idx[w] = (idx[w] << 1) |
-                             static_cast<uint32_t>(routes_right(col[w], thr, nan_left));
-                }
-            }
-            float const *leaves = leaf_.data() + leaf_off_[t];
-            for (size_t w = 0; w < k_row_block; ++w)
-            {
-                sum[w] += leaves[idx[w]];
-            }
-        }
-        for (size_t w = 0; w < k_row_block; ++w)
-        {
-            out[row0 + w] += sum[w];
-        }
-    };
-
+    size_t const    n_rows   = out.size();
+    size_t const    n_blocks = n_rows / k_row_block;
+    size_t const    tail     = n_rows - (n_blocks * k_row_block);
+    WalkSpans const w{.feat         = feat_,
+                      .thr          = thr_,
+                      .default_left = default_left_,
+                      .split_off    = split_off_,
+                      .leaf_off     = leaf_off_,
+                      .leaf         = leaf_,
+                      .X            = X,
+                      .n_trees      = n_trees,
+                      .out          = out};
     int const workers = n_blocks < k_parallel_floor_blocks ? 1 : parallel::n_threads();
-    parallel::for_each_index_on(workers, n_blocks, blocked);
+    parallel::for_each_index_on(workers, n_blocks,
+                                [&](size_t b) { walk_row_block(w, b); });
     if (tail > 0)
     {
-        scalar_rows(n_blocks * k_row_block, tail);
+        walk_scalar_rows(w, n_blocks * k_row_block, tail);
     }
 }
 
