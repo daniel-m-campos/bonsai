@@ -18,6 +18,8 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdlib>
+#include <format>
+#include <iterator>
 #include <mdspan>
 #include <memory>
 #include <mutex>
@@ -277,35 +279,37 @@ inline std::string feature_label(std::span<std::string const> names, size_t f)
 inline void dump_tree(DenseTree const &tree, std::span<std::string const> names,
                       std::string &out)
 {
-    auto const &nodes = tree.nodes();
-    auto const &gains = tree.split_gains();
+    auto const &nodes  = tree.nodes();
+    auto const &gains  = tree.split_gains();
+    auto const &covers = tree.covers();
+    auto        into   = std::back_inserter(out);
     // NOLINTNEXTLINE(misc-no-recursion)
     auto walk = [&](auto const &self, node_id_t id, int depth) -> void
     {
         out.append(static_cast<size_t>(depth) * 2, ' ');
-        auto const &n = nodes[id];
-        if (DenseTree::is_leaf(n))
+        auto const &n    = nodes[id];
+        bool const  leaf = DenseTree::is_leaf(n);
+        if (leaf)
         {
-            out += "leaf=" + std::to_string(n.threshold_or_value);
-            if (id < tree.covers().size())
-            {
-                out +=
-                    " cover=" + std::to_string(static_cast<size_t>(tree.covers()[id]));
-            }
-            out += "\n";
-            return;
+            std::format_to(into, "leaf={:f}", n.threshold_or_value);
         }
-        out += feature_label(names, n.feature_id) +
-               " <= " + std::to_string(n.threshold_or_value) +
-               (n.default_left ? " [nan->left]" : " [nan->right]") +
-               " gain=" + std::to_string(id < gains.size() ? gains[id] : 0.0F);
-        if (id < tree.covers().size())
+        else
         {
-            out += " cover=" + std::to_string(static_cast<size_t>(tree.covers()[id]));
+            std::format_to(into, "{} <= {:f} [nan->{}] gain={:f}",
+                           feature_label(names, n.feature_id), n.threshold_or_value,
+                           n.default_left ? "left" : "right",
+                           id < gains.size() ? gains[id] : 0.0F);
         }
-        out += "\n";
-        self(self, n.left, depth + 1);
-        self(self, n.right, depth + 1);
+        if (id < covers.size())
+        {
+            std::format_to(into, " cover={}", static_cast<size_t>(covers[id]));
+        }
+        out += '\n';
+        if (!leaf)
+        {
+            self(self, n.left, depth + 1);
+            self(self, n.right, depth + 1);
+        }
     };
     walk(walk, 0, 0);
 }
@@ -315,28 +319,29 @@ inline void dump_tree(ObliviousTree const &tree, std::span<std::string const> na
 {
     auto const &splits = tree.splits();
     auto const &gains  = tree.level_gains();
+    auto        into   = std::back_inserter(out);
     for (size_t lvl = 0; lvl < splits.size(); ++lvl)
     {
-        out += "level " + std::to_string(lvl) + ": " +
-               feature_label(names, splits[lvl].feature_id) +
-               " <= " + std::to_string(splits[lvl].threshold) +
-               (splits[lvl].default_left ? " [nan->left]" : " [nan->right]") +
-               " gain=" + std::to_string(lvl < gains.size() ? gains[lvl] : 0.0F) + "\n";
+        std::format_to(into, "level {}: {} <= {:f} [nan->{}] gain={:f}\n", lvl,
+                       feature_label(names, splits[lvl].feature_id),
+                       splits[lvl].threshold,
+                       splits[lvl].default_left ? "left" : "right",
+                       lvl < gains.size() ? gains[lvl] : 0.0F);
     }
     out += "leaves:";
     for (float const v : tree.leaf_table())
     {
-        out += " " + std::to_string(v);
+        std::format_to(into, " {:f}", v);
     }
-    out += "\n";
+    out += '\n';
     if (!tree.leaf_covers().empty())
     {
         out += "covers:";
         for (float const c : tree.leaf_covers())
         {
-            out += " " + std::to_string(static_cast<size_t>(c));
+            std::format_to(into, " {}", static_cast<size_t>(c));
         }
-        out += "\n";
+        out += '\n';
     }
 }
 
