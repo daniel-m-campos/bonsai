@@ -443,9 +443,7 @@ std::vector<uint8_t> save_booster_bytes(IBooster const   &booster,
 
     if (!save_dispatch(booster, cfg, root))
     {
-        throw std::runtime_error(
-            "model: save_booster: no impl for (" + cfg.dispatch.objective_name + ", " +
-            cfg.dispatch.grower_name + ", " + cfg.dispatch.sampler_name + ")");
+        throw UnknownImplError("model: save_booster", cfg.dispatch);
     }
 
     return json::to_msgpack(root);
