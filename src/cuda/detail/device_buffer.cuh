@@ -10,6 +10,7 @@
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -435,8 +436,8 @@ class KernelTimer
         check(cudaEventRecord(events_[i]), "kernel timer record");
     }
 
-    bool        enabled_   = profile_on();
-    cudaEvent_t events_[2] = {nullptr, nullptr};
+    bool                       enabled_ = profile_on();
+    std::array<cudaEvent_t, 2> events_{};
 };
 
 struct WalkReport
