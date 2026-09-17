@@ -232,13 +232,10 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
     {
         size_t const n_k = n_outputs();
         scores_.assign(n * n_k, 0.0F);
-        auto const scores = std::mdspan(scores_.data(), n, n_k);
         for (size_t i = 0; i < n; ++i)
         {
-            for (size_t k = 0; k < n_k; ++k)
-            {
-                scores[i, k] = init_score_at(k);
-            }
+            std::ranges::copy(init_scores(),
+                              std::span{scores_}.subspan(i * n_k, n_k).begin());
         }
     }
 

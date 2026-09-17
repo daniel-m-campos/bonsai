@@ -98,6 +98,12 @@ A frontier node whose children would fall under min_child_hess contributes its p
 
 - enforced by: [`HistogramLevelSplitFinder: an infeasible parent scores zero, not a veto`](../tests/unit/test_split_level.cpp)
 
+### init-scores-length-pins-output-count
+
+A multiclass booster's init scores are one per output or none: the score broadcast copies that vector into each row, so a vector of another length is refused at the boundary rather than written past a row.
+
+- enforced by: [`MulticlassBooster: init scores of the wrong length are refused`](../tests/unit/test_booster.cpp)
+
 ### leaf-budget-cannot-bind-is-depthwise
 
 A depth-D tree has at most 2^D leaves, so a budget of 0 or of 2^D and above never stops an expansion: every leaf with positive gain splits, the same set depthwise splits. Sibling histograms are paired by subtraction in both growers, so leaf values agree to float rounding.
