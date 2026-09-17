@@ -445,10 +445,7 @@ class DepthwiseGrower : public GrowerHost<EngineT>
                           RowSelection selection = {});
 
   private:
-    using Host::begin_grow;
-    using Host::config;
-    using Host::feature_sample;
-    using Host::seam;
+    using Host::begin_grow, Host::config, Host::feature_sample, Host::seam;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
 };
 
@@ -464,10 +461,7 @@ class ObliviousGrower : public GrowerHost<EngineT>
                           RowSelection selection = {});
 
   private:
-    using Host::begin_grow;
-    using Host::config;
-    using Host::feature_sample;
-    using Host::seam;
+    using Host::begin_grow, Host::config, Host::feature_sample, Host::seam;
 };
 
 template <HistogramEngine         EngineT   = CpuHistogramEngine,
@@ -487,10 +481,7 @@ class LeafwiseGrower : public GrowerHost<EngineT>
     }
 
   private:
-    using Host::begin_grow;
-    using Host::config;
-    using Host::feature_sample;
-    using Host::seam;
+    using Host::begin_grow, Host::config, Host::feature_sample, Host::seam;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
 };
 

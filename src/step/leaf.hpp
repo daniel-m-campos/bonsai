@@ -25,12 +25,8 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
 class LeafStep : public TreeStep<EngineT>
 {
     using Step = TreeStep<EngineT>;
-    using Step::config_;
-    using Step::ds_;
-    using Step::engine_;
-    using Step::grad_;
-    using Step::hess_;
-    using Step::selected_;
+    using Step::config_, Step::ds_, Step::engine_, Step::grad_, Step::hess_,
+        Step::selected_;
 
   public:
     using Step::Step;
@@ -90,12 +86,8 @@ template <GPULeafEngine EngineT, ParallelNodeSplitFinder SplitterT>
 class LeafStep<EngineT, SplitterT> : public TreeStep<EngineT>
 {
     using Step = TreeStep<EngineT>;
-    using Step::config_;
-    using Step::ds_;
-    using Step::engine_;
-    using Step::grad_;
-    using Step::hess_;
-    using Step::selected_;
+    using Step::config_, Step::ds_, Step::engine_, Step::grad_, Step::hess_,
+        Step::selected_;
 
   public:
     LeafStep(EngineT &engine, Dataset const &ds, TreeConfig const &config,
