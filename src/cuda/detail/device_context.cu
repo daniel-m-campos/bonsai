@@ -419,18 +419,15 @@ bool CudaDeviceContext::LevelPipeline::stage_find_inputs(
     std::span<SplitInput const> level, TreeConfig const &config, Dataset const &ds)
 {
     size_t const n = level.size();
-    node_sums.host.resize(2 * n);
+    stage_level_sums(level);
     node_bounds.host.resize(2 * n);
     node_screen.host.resize(n);
     for (size_t i = 0; i < n; ++i)
     {
-        node_sums.host[2 * i]         = level[i].sums.sum_grad;
-        node_sums.host[(2 * i) + 1]   = level[i].sums.sum_hess;
         node_bounds.host[2 * i]       = level[i].lo;
         node_bounds.host[(2 * i) + 1] = level[i].hi;
         node_screen.host[i]           = node_screen_of(level[i].sums, config);
     }
-    node_sums.sync();
     node_bounds.sync();
     node_screen.sync();
     bool const any_mask = stage_allowed(level);
