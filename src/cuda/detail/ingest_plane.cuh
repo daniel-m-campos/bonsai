@@ -46,6 +46,30 @@ class CudaIngestPlane final : public IngestPlane
         }
     }
 
+    template <typename Fn> void with_bins(CudaIngestPlane const &other, Fn &&fn) const
+    {
+        if (bins_are_u8)
+        {
+            fn(bins8.data(), other.bins8.data());
+        }
+        else
+        {
+            fn(bins16.data(), other.bins16.data());
+        }
+    }
+
+    void reserve_bins(size_t cells)
+    {
+        if (bins_are_u8)
+        {
+            bins8.reserve(cells);
+        }
+        else
+        {
+            bins16.reserve(cells);
+        }
+    }
+
     void materialize(BinColumns &cols) const override;
 
     std::shared_ptr<IngestPlane const>
