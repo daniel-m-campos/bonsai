@@ -314,7 +314,7 @@ BinMappers mappers_from_json(json const &j)
     for (auto const &m : j)
     {
         auto cuts = m.at("cuts").get<std::vector<float>>();
-        if (cuts.empty() || !std::is_sorted(cuts.begin(), cuts.end()))
+        if (cuts.empty() || !std::ranges::is_sorted(cuts))
         {
             throw std::runtime_error(
                 "model: bin mapper cuts must be a non-empty sorted array");
