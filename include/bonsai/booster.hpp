@@ -66,6 +66,13 @@ struct DevicePlanInput
     std::shared_ptr<std::vector<DenseTree> const> keep_alive;
 };
 
+[[noreturn]] inline void refuse_per_class_probabilities()
+{
+    throw std::logic_error("predict_proba: per-class probabilities are only "
+                           "available for the multiclass (softmax) objective; "
+                           "width-1 objectives expose P via predict()");
+}
+
 // The prediction and introspection surface of a trained model: what a holder
 // that never trains (the Python Model) depends on. Training lives on
 // ITrainableBooster below, so a predict-side client is not coupled to the
@@ -108,9 +115,7 @@ class IBooster
     // so the default throws.
     virtual void predict_proba(features_view /*X*/, std::span<double> /*out*/) const
     {
-        throw std::logic_error("predict_proba: per-class probabilities are only "
-                               "available for the multiclass (softmax) objective; "
-                               "width-1 objectives expose P via predict()");
+        refuse_per_class_probabilities();
     }
 
     // Per-row, per-tree leaf indices (DenseTree node ids / ObliviousTree
@@ -143,9 +148,7 @@ class IBooster
     virtual void predict_proba_binned(Dataset const & /*bins*/,
                                       std::span<double> /*out*/) const
     {
-        throw std::logic_error("predict_proba: per-class probabilities are only "
-                               "available for the multiclass (softmax) objective; "
-                               "width-1 objectives expose P via predict()");
+        refuse_per_class_probabilities();
     }
 
     virtual void pred_contribs_binned(Dataset const &bins, std::span<double> out,
