@@ -1,5 +1,6 @@
 #include "bonsai/registry/make_booster.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <memory>
@@ -84,16 +85,15 @@ std::unique_ptr<ITrainableBooster> make_booster(Config const &config)
     std::string_view const sa     = routed.sampler_name;
     note_leaf_budget_route(config, routed);
 
-    for (Entry const &e : configurations)
+    auto const matches = [&](Entry const &e)
+    { return e.objective_name == obj && e.grower_name == gr && e.sampler_name == sa; };
+    auto const *const entry = std::ranges::find_if(configurations, matches);
+    if (entry == configurations.end())
     {
-        if (e.objective_name == obj && e.grower_name == gr && e.sampler_name == sa)
-        {
-            return e.factory(config);
-        }
+        throw UnknownImplError("make_booster: no impl for (" + std::string{obj} + ", " +
+                               std::string{gr} + ", " + std::string{sa} + ")");
     }
-
-    throw UnknownImplError("make_booster: no impl for (" + std::string{obj} + ", " +
-                           std::string{gr} + ", " + std::string{sa} + ")");
+    return entry->factory(config);
 }
 
 std::vector<AvailableCombo> available_combos()
@@ -109,14 +109,9 @@ std::vector<AvailableCombo> available_combos()
 
 bool grower_runs_on_device(std::string_view grower_name)
 {
-    for (GrowerEntry const &g : growers)
-    {
-        if (g.name == grower_name)
-        {
-            return g.on_device;
-        }
-    }
-    return false;
+    auto const *const grower =
+        std::ranges::find(growers, grower_name, &GrowerEntry::name);
+    return grower != growers.end() && grower->on_device;
 }
 
 void select_device_for(Config const &config)
