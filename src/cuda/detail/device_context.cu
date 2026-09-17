@@ -45,13 +45,11 @@ constexpr uint32_t k_sum_blocks = 64;
 namespace
 {
 
-constexpr uint32_t k_slot_stream_threads = 256;
+constexpr uint32_t k_slot_stream_cap = 256;
 
 dim3 slot_stream_grid(uint32_t slot_cells, uint32_t n_slots)
 {
-    return dim3(std::clamp<uint32_t>((slot_cells + k_slot_stream_threads - 1) /
-                                         k_slot_stream_threads,
-                                     1, 256),
+    return dim3(std::clamp<uint32_t>(covering_blocks(slot_cells), 1, k_slot_stream_cap),
                 n_slots);
 }
 
@@ -288,10 +286,10 @@ CudaIngestPlane::select_columns(std::span<feature_id_t const> keep,
 
     auto const n_dst = static_cast<uint32_t>(out_rows);
     auto const f_dst = static_cast<uint32_t>(keep.size());
-    dim3 const grid((n_dst + 255) / 256, tile_count(f_dst));
+    dim3 const grid(covering_blocks(n_dst), tile_count(f_dst));
     auto const launch = [&](auto const *src, auto *dst)
     {
-        gather_cols_kernel<<<grid, dim3(256)>>>(
+        gather_cols_kernel<<<grid, dim3(k_linear_threads)>>>(
             src, dst, d_keep.data(), map.data(), static_cast<uint32_t>(n_rows),
             static_cast<uint32_t>(n_feats), n_dst, f_dst);
     };
@@ -577,8 +575,8 @@ void CudaDeviceContext::launch_root_sums(float2 const *gh, uint32_t n)
 {
     lvl.sum_partial.reserve(k_sum_blocks);
     lvl.sum_out.reserve(1);
-    sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(gh, n,
-                                                           lvl.sum_partial.data());
+    sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(k_linear_threads)>>>(
+        gh, n, lvl.sum_partial.data());
     check(cudaGetLastError(), "root sum pass1 launch");
     sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(lvl.sum_partial.data(), k_sum_blocks,
                                                lvl.sum_out.data());
@@ -838,7 +836,7 @@ uint32_t CudaDeviceContext::stage_root_rows(SplitInput const &root, bool identit
     }
     if (identity)
     {
-        iota_kernel<<<dim3((n + 255) / 256), dim3(256)>>>(lvl.rows.data(), n);
+        iota_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(lvl.rows.data(), n);
         check(cudaGetLastError(), "iota launch");
     }
     else
@@ -1022,8 +1020,7 @@ void CudaDeviceContext::finalize_tree(std::span<float const> node_values,
     auto const n       = static_cast<uint32_t>(values.size());
     lvl.epi_node_vals.upload(node_values.data(), node_values.size());
     lvl.epi_values.reserve(values.size());
-    dim3 const grid((n + 255) / 256);
-    map_leaf_values_kernel<<<grid, dim3(256)>>>(
+    map_leaf_values_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
         lvl.leaf_by_row.data(), lvl.epi_node_vals.data(),
         static_cast<uint32_t>(node_values.size()), lvl.epi_values.data(), n);
     check(cudaGetLastError(), "epilogue map launch");
@@ -1065,15 +1062,15 @@ void CudaDeviceContext::advance_level(Dataset const                             
     if (!small_stored)
     {
         zero_slots_kernel<<<slot_stream_grid(sd, static_cast<uint32_t>(ops.size())),
-                            dim3(k_slot_stream_threads)>>>(
-            lvl.other().data(), lvl.triples.device() + 1, 3, sd);
+                            dim3(k_linear_threads)>>>(lvl.other().data(),
+                                                      lvl.triples.device() + 1, 3, sd);
     }
     else if (!lvl.row_offsets.empty())
     {
         zero_slots_kernel<<<slot_stream_grid(
                                 sd, static_cast<uint32_t>(lvl.row_offsets.size())),
-                            dim3(k_slot_stream_threads)>>>(lvl.other().data(),
-                                                           lvl.slots.device(), 1, sd);
+                            dim3(k_linear_threads)>>>(lvl.other().data(),
+                                                      lvl.slots.device(), 1, sd);
     }
     check(cudaGetLastError(), "zero level launch");
     lvl.memset_timer.end();
@@ -1469,7 +1466,7 @@ void CudaDeviceContext::leaf_enqueue_fill(Dataset const &ds, bool in_b,
 {
     auto const      sd  = static_cast<uint32_t>(lvl.slot_cells());
     BuildSeg *const seg = leaf.build_seg.data();
-    zero_slots_kernel<<<slot_stream_grid(sd, 1), dim3(k_slot_stream_threads)>>>(
+    zero_slots_kernel<<<slot_stream_grid(sd, 1), dim3(k_linear_threads)>>>(
         leaf.pool.data(), &seg->slot, 1, sd);
     check(cudaGetLastError(), "zero leaf slot launch");
     launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
@@ -1637,11 +1634,10 @@ void CudaDeviceContext::resident_finalize(
     resident.nodes.stage(nodes);
 
     auto const n = static_cast<uint32_t>(resident.rows.n);
-    dim3 const grid((n + 255) / 256);
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            route_add_kernel<<<grid, dim3(256)>>>(
+            route_add_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
                 bins, data.n_bins_ptr(), static_cast<uint32_t>(data.key.n_rows),
                 static_cast<uint32_t>(data.key.n_feats), resident.nodes.ref(),
                 resident.learning_rate, resident.scores.data(), n, resident.rows.data(),
@@ -1782,8 +1778,7 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
     veval.nodes.stage(nodes);
 
     auto const n = static_cast<uint32_t>(veval.rows.n);
-    dim3 const grid((n + 255) / 256);
-    route_add_kernel<<<grid, dim3(256)>>>(
+    route_add_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
         veval.bin_source, veval.n_bins.data(), static_cast<uint32_t>(veval.plane_rows),
         static_cast<uint32_t>(veval.n_feats), veval.nodes.ref(), lr,
         veval.scores.data(), n, veval.rows.data(), nullptr);

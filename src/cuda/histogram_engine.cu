@@ -442,21 +442,21 @@ std::shared_ptr<IngestPlane const> cuda_ingest(features_view     X,
     {
         auto const rows  = std::min(rows_per_chunk, n_rows - row0);
         auto const cells = static_cast<uint32_t>(rows * n_feats);
-        dim3 const grid((cells + 255) / 256);
-        ring.stage(&X[row0, 0], cells,
-                   [&](float const *raw, cudaStream_t stream)
-                   {
-                       plane->with_bins(
-                           [&](auto *bins)
-                           {
-                               bin_rows_kernel<<<grid, dim3(256), 0, stream>>>(
-                                   raw, static_cast<uint32_t>(rows),
-                                   static_cast<uint32_t>(row0),
-                                   static_cast<uint32_t>(n_feats),
-                                   static_cast<uint32_t>(n_rows), table.cuts.data(),
-                                   table.ofs.data(), bins);
-                           });
-                   });
+        dim3 const grid  = covering_grid(cells);
+        ring.stage(
+            &X[row0, 0], cells,
+            [&](float const *raw, cudaStream_t stream)
+            {
+                plane->with_bins(
+                    [&](auto *bins)
+                    {
+                        bin_rows_kernel<<<grid, dim3(k_linear_threads), 0, stream>>>(
+                            raw, static_cast<uint32_t>(rows),
+                            static_cast<uint32_t>(row0), static_cast<uint32_t>(n_feats),
+                            static_cast<uint32_t>(n_rows), table.cuts.data(),
+                            table.ofs.data(), bins);
+                    });
+            });
     }
     check(cudaDeviceSynchronize(), "ingest sync");
     lap(detail::IngestProfiler::instance().dbin_s);
@@ -488,21 +488,21 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
         {
             auto const n =
                 static_cast<uint32_t>(std::min(rows_per_chunk, n_rows - row0));
-            dim3 const grid((n + 255) / 256);
-            ring.stage(batch.features[f].data() + row0, n,
-                       [&](float const *raw, cudaStream_t stream)
-                       {
-                           plane->with_bins(
-                               [&](auto *bins)
-                               {
-                                   bin_col_kernel<<<grid, dim3(256), 0, stream>>>(
-                                       raw, n, static_cast<uint32_t>(row0),
-                                       static_cast<uint32_t>(f),
-                                       static_cast<uint32_t>(n_rows),
-                                       static_cast<uint32_t>(mappers.size()),
-                                       table.cuts.data() + c0, n_cuts, bins);
-                               });
-                       });
+            dim3 const grid = covering_grid(n);
+            ring.stage(
+                batch.features[f].data() + row0, n,
+                [&](float const *raw, cudaStream_t stream)
+                {
+                    plane->with_bins(
+                        [&](auto *bins)
+                        {
+                            bin_col_kernel<<<grid, dim3(k_linear_threads), 0, stream>>>(
+                                raw, n, static_cast<uint32_t>(row0),
+                                static_cast<uint32_t>(f), static_cast<uint32_t>(n_rows),
+                                static_cast<uint32_t>(mappers.size()),
+                                table.cuts.data() + c0, n_cuts, bins);
+                        });
+                });
         }
     }
     check(cudaDeviceSynchronize(), "ingest sync");
@@ -549,11 +549,11 @@ std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
         auto const rows  = std::min(rows_per_chunk, n_rows - row0);
         auto const cells = static_cast<uint32_t>(rows * n_feats);
         auto const chunk = X.data + (row0 * n_feats);
-        dim3 const grid((cells + 255) / 256);
+        dim3 const grid  = covering_grid(cells);
         plane->with_bins(
             [&](auto *bins)
             {
-                bin_rows_kernel<<<grid, dim3(256)>>>(
+                bin_rows_kernel<<<grid, dim3(k_linear_threads)>>>(
                     chunk, static_cast<uint32_t>(rows), static_cast<uint32_t>(row0),
                     static_cast<uint32_t>(n_feats), static_cast<uint32_t>(n_rows),
                     table.cuts.data(), table.ofs.data(), bins);

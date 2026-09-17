@@ -205,10 +205,10 @@ bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t 
         auto const          n = static_cast<uint32_t>(map.n);
         DeviceBuffer<float> scores;
         scores.reserve(map.n);
-        dim3 const grid(static_cast<uint32_t>((map.n + 255) / 256));
+        dim3 const grid   = covering_grid(map.n);
         auto const launch = [&](auto const *bins)
         {
-            predict_walk_kernel<<<grid, dim3(256)>>>(
+            predict_walk_kernel<<<grid, dim3(k_linear_threads)>>>(
                 bins, plan.last_bin.data(), stride, f, plan.roots.data(), k, plan.ref(),
                 plan.learning_rate, plan.init_score, n, map.data(), scores.data());
         };
