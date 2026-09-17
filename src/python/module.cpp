@@ -88,25 +88,23 @@ void place_device_array(Array const &arr, uint32_t device_id, char const *what)
 {
     if (arr.data() == nullptr || arr.size() == 0)
     {
-        throw std::invalid_argument(std::string{what} + " is an empty device array");
+        throw std::invalid_argument(std::format("{} is an empty device array", what));
     }
     if (!bonsai::cuda_available())
     {
-        throw std::invalid_argument(std::string{what} +
-                                    " is device-resident (DLPack), which needs a CUDA "
-                                    "build and a visible device; cuda_available() is "
-                                    "False");
+        throw std::invalid_argument(
+            std::format("{} is device-resident (DLPack), which needs a CUDA build and "
+                        "a visible device; cuda_available() is False",
+                        what));
     }
     bonsai::cuda_select_device(device_id);
     auto const on = static_cast<uint32_t>(arr.device_id());
     if (on != device_id)
     {
-        throw std::invalid_argument(
-            std::string{what} + " is resident on CUDA device " + std::to_string(on) +
-            "; parallel.device_id=" + std::to_string(device_id) +
-            " would train on another device. Train with device_id=" +
-            std::to_string(on) + " or move the array to device " +
-            std::to_string(device_id) + ".");
+        throw std::invalid_argument(std::format(
+            "{} is resident on CUDA device {}; parallel.device_id={} would train on "
+            "another device. Train with device_id={} or move the array to device {}.",
+            what, on, device_id, on, device_id));
     }
 }
 
@@ -184,9 +182,10 @@ VectorArg resolve_vector(nb::handle v, uint32_t device_id, char const *what)
     array_1d host;
     if (!nb::try_cast(v, host))
     {
-        throw std::invalid_argument(std::string{what} +
-                                    " must be a float32 numpy array, or a CUDA array "
-                                    "supporting DLPack (cupy, torch, jax)");
+        throw std::invalid_argument(
+            std::format("{} must be a float32 numpy array, or a CUDA array supporting "
+                        "DLPack (cupy, torch, jax)",
+                        what));
     }
     VectorArg out;
     out.host = host;
@@ -212,13 +211,13 @@ Inputs resolve_inputs(nb::handle X, nb::handle y, nb::handle weight, uint32_t de
     }
     if (in.yarg.size() != in.xarg.n_rows)
     {
-        throw std::invalid_argument(std::string{where} +
-                                    "len(y) must equal the row count");
+        throw std::invalid_argument(
+            std::format("{}len(y) must equal the row count", where));
     }
     if (in.warg && in.warg->size() != in.xarg.n_rows)
     {
-        throw std::invalid_argument(std::string{where} + "len(" + weight_name +
-                                    ") must equal the row count");
+        throw std::invalid_argument(
+            std::format("{}len({}) must equal the row count", where, weight_name));
     }
     return in;
 }
@@ -227,18 +226,18 @@ void check_feature_names(std::vector<std::string> const &names, size_t n_feature
 {
     if (names.size() != n_features)
     {
-        throw std::invalid_argument("feature_names has " +
-                                    std::to_string(names.size()) +
-                                    " entries and X has " + std::to_string(n_features) +
-                                    " columns; one name per column");
+        throw std::invalid_argument(
+            std::format("feature_names has {} entries and X has {} columns; one name "
+                        "per column",
+                        names.size(), n_features));
     }
     std::unordered_set<std::string_view> seen;
     for (auto const &name : names)
     {
         if (!seen.insert(name).second)
         {
-            throw std::invalid_argument("feature_names must be unique; '" + name +
-                                        "' appears more than once");
+            throw std::invalid_argument(std::format(
+                "feature_names must be unique; '{}' appears more than once", name));
         }
     }
 }
@@ -694,13 +693,12 @@ class Dataset
         {
             if (!whole || seen[id])
             {
-                std::string const msg =
-                    "Dataset.reorder(rows=...) takes a permutation of this "
-                    "Dataset's " +
-                    std::to_string(n_rows()) +
-                    " rows: every row exactly once. Use subset(rows=...) "
-                    "to keep only some of them.";
-                throw nb::value_error(msg.c_str());
+                throw nb::value_error(
+                    std::format("Dataset.reorder(rows=...) takes a permutation of this "
+                                "Dataset's {} rows: every row exactly once. Use "
+                                "subset(rows=...) to keep only some of them.",
+                                n_rows())
+                        .c_str());
             }
             seen[id] = true;
         }
@@ -771,10 +769,10 @@ class Dataset
     [[noreturn]] void refuse_view(char const *method, char const *because) const
     {
         throw std::invalid_argument(
-            std::string{"this Dataset is a row view (its .base names the plane it "
-                        "selects from), and "} +
-            method + " " + because +
-            ". Materialize the rows with Dataset(X[idx], y[idx], reference=parent).");
+            std::format("this Dataset is a row view (its .base names the plane it "
+                        "selects from), and {} {}. Materialize the rows with "
+                        "Dataset(X[idx], y[idx], reference=parent).",
+                        method, because));
     }
 
     bonsai::RowView const &row_view() const
@@ -787,11 +785,10 @@ class Dataset
         if (!x_)
         {
             throw std::invalid_argument(
-                std::string{"this Dataset was built from device-resident (DLPack) "
-                            "input and kept no host matrix, but "} +
-                method +
-                " reads raw rows. Pass X as a host array, or build the Dataset "
-                "from one.");
+                std::format("this Dataset was built from device-resident (DLPack) "
+                            "input and kept no host matrix, but {} reads raw rows. "
+                            "Pass X as a host array, or build the Dataset from one.",
+                            method));
         }
         return *x_;
     }
@@ -825,10 +822,10 @@ class Dataset
         if (n_features != reference.n_features_)
         {
             throw std::invalid_argument(
-                "Dataset(reference=...): X has " + std::to_string(n_features) +
-                " columns and the reference has " +
-                std::to_string(reference.n_features_) +
-                "; one set of cuts describes one set of columns");
+                std::format("Dataset(reference=...): X has {} columns and the "
+                            "reference has {}; one set of cuts describes one set of "
+                            "columns",
+                            n_features, reference.n_features_));
         }
     }
 
@@ -945,13 +942,12 @@ class Model
         if (!ds.has_host_matrix())
         {
             throw std::invalid_argument(
-                std::string{"this Dataset was binned with different cut points "
-                            "than this model's and was built from device-resident "
-                            "(DLPack) input, so "} +
-                method +
-                " has neither bins it can route nor raw rows to read. Build the "
-                "Dataset with reference= the training dataset, or pass X as a "
-                "host array.");
+                std::format("this Dataset was binned with different cut points than "
+                            "this model's and was built from device-resident (DLPack) "
+                            "input, so {} has neither bins it can route nor raw rows "
+                            "to read. Build the Dataset with reference= the training "
+                            "dataset, or pass X as a host array.",
+                            method));
         }
         return ds.host_matrix(method);
     }
@@ -1130,9 +1126,10 @@ class Model
         if (booster_->score_width() == 1 && cfg_.dispatch.objective_name != "logloss")
         {
             throw std::invalid_argument(
-                "predict_proba is only defined for classification objectives "
-                "(logloss/softmax); this model was trained with '" +
-                cfg_.dispatch.objective_name + "'");
+                std::format("predict_proba is only defined for classification "
+                            "objectives (logloss/softmax); this model was trained "
+                            "with '{}'",
+                            cfg_.dispatch.objective_name));
         }
     }
 
@@ -1266,12 +1263,12 @@ void check_eval_labels(std::vector<float> const &labels, bonsai::Config const &c
             continue;
         }
         throw std::invalid_argument(
-            "eval_set label " + std::to_string(label) +
-            " is not one of the encoded class ids 0.." + std::to_string(n_classes - 1) +
-            " this objective scores against. A Dataset is built before fit has "
-            "seen the classes, so encode its labels first "
-            "(np.searchsorted(clf.classes_, y_valid)) or pass "
-            "eval_set=(X_valid, y_valid).");
+            std::format("eval_set label {} is not one of the encoded class ids 0..{} "
+                        "this objective scores against. A Dataset is built before "
+                        "fit has seen the classes, so encode its labels first "
+                        "(np.searchsorted(clf.classes_, y_valid)) or pass "
+                        "eval_set=(X_valid, y_valid).",
+                        label, n_classes - 1));
     }
 }
 
@@ -1383,12 +1380,12 @@ ParamItems items_from_params(nb::object params)
     }
     if (!nb::hasattr(params, "items"))
     {
-        std::string const msg =
-            "params must be a bonsai.Params, a mapping of dotted keys, or None; "
-            "got " +
-            nb::cast<std::string>(nb::str(params.type().attr("__name__"))) +
-            ". For legacy (key, value) pairs, pass dict(pairs).";
-        throw nb::type_error(msg.c_str());
+        throw nb::type_error(
+            std::format(
+                "params must be a bonsai.Params, a mapping of dotted keys, or "
+                "None; got {}. For legacy (key, value) pairs, pass dict(pairs).",
+                nb::cast<std::string>(nb::str(params.type().attr("__name__"))))
+                .c_str());
     }
     ParamItems       out;
     nb::object const items = params.attr("items")();
@@ -1398,10 +1395,10 @@ ParamItems items_from_params(nb::object params)
         nb::object const key   = entry[0];
         if (!nb::isinstance<nb::str>(key))
         {
-            std::string const msg =
-                "params keys must be dotted config keys (str); got " +
-                nb::cast<std::string>(nb::str(key.type().attr("__name__")));
-            throw nb::type_error(msg.c_str());
+            throw nb::type_error(
+                std::format("params keys must be dotted config keys (str); got {}",
+                            nb::cast<std::string>(nb::str(key.type().attr("__name__"))))
+                    .c_str());
         }
         out.emplace_back(nb::cast<std::string>(key), nb::object(entry[1]));
     }
@@ -1467,9 +1464,9 @@ std::vector<int> monotone_from_mapping(nb::handle                   mapping,
         nb::object const value = entry[1];
         if (!nb::isinstance<nb::int_>(value) || std::abs(nb::cast<int>(value)) > 1)
         {
-            throw std::invalid_argument(std::string{k_monotone_key} + "['" + name +
-                                        "'] must be the int -1, 0, or 1; got " +
-                                        nb::cast<std::string>(nb::repr(value)));
+            throw std::invalid_argument(std::format(
+                "{}['{}'] must be the int -1, 0, or 1; got {}", k_monotone_key, name,
+                nb::cast<std::string>(nb::repr(value))));
         }
         out[static_cast<size_t>(at - names.begin())] = nb::cast<int>(value);
     }
@@ -1483,9 +1480,9 @@ std::vector<int> monotone_from_mapping(nb::handle                   mapping,
         listed += (listed.empty() ? "'" : ", '") + name + "'";
     }
     throw std::invalid_argument(
-        std::string{k_monotone_key} +
-        " names features the training data does not have: " + listed + ". It carries " +
-        std::to_string(names.size()) + " feature names.");
+        std::format("{} names features the training data does not have: {}. It "
+                    "carries {} feature names.",
+                    k_monotone_key, listed, names.size()));
 }
 
 bool put_monotone(ParamItems &items, nb::handle named,
@@ -1680,11 +1677,11 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
     if (auto const resident = dataset.device_id();
         resident && *resident != cfg.parallel.device_id)
     {
-        throw std::invalid_argument(
-            "this Dataset is binned on CUDA device " + std::to_string(*resident) +
-            "; parallel.device_id=" + std::to_string(cfg.parallel.device_id) +
-            " would train on another device. Train with device_id=" +
-            std::to_string(*resident) + " or rebuild the Dataset on that device.");
+        throw std::invalid_argument(std::format(
+            "this Dataset is binned on CUDA device {}; parallel.device_id={} would "
+            "train on another device. Train with device_id={} or rebuild the Dataset "
+            "on that device.",
+            *resident, cfg.parallel.device_id, *resident));
     }
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
     bonsai::parallel::FitPlace const placed;
@@ -1903,8 +1900,8 @@ NB_MODULE(_bonsai, m)
         .def("__repr__",
              [](Model const &mo)
              {
-                 return "Model(objective='" + mo.objective_name() +
-                        "', n_iters=" + std::to_string(mo.n_iters()) + ")";
+                 return std::format("Model(objective='{}', n_iters={})",
+                                    mo.objective_name(), mo.n_iters());
              });
 
     constexpr bonsai::ParallelConfig k_parallel_defaults{};
@@ -2118,15 +2115,14 @@ NB_MODULE(_bonsai, m)
         .def("__repr__",
              [](Dataset const &d)
              {
-                 std::string out = "Dataset(" + std::to_string(d.n_rows()) + " x " +
-                                   std::to_string(d.n_features()) + ", " + d.device();
-                 if (d.is_view())
-                 {
-                     out += ", view: " + view_shape_phrase(d.row_view()) +
-                            ", density " + two_decimals(d.row_view().density()) +
-                            ", shares parent plane";
-                 }
-                 return out + ")";
+                 std::string const view =
+                     d.is_view()
+                         ? std::format(", view: {}, density {}, shares parent plane",
+                                       view_shape_phrase(d.row_view()),
+                                       two_decimals(d.row_view().density()))
+                         : "";
+                 return std::format("Dataset({} x {}, {}{})", d.n_rows(),
+                                    d.n_features(), d.device(), view);
              });
 
     m.def("train", &train_dataset, nb::arg("params").none(), nb::arg("dataset"),
