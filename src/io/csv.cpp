@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
+#include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/dataset.hpp"
@@ -54,17 +55,6 @@ std::string_view next_line(std::string const &buf, size_t &pos)
         line.remove_suffix(1);
     }
     return line;
-}
-
-std::vector<std::string> numbered_names(size_t n)
-{
-    std::vector<std::string> names;
-    names.reserve(n);
-    for (size_t i = 0; i < n; ++i)
-    {
-        names.emplace_back("f" + std::to_string(i));
-    }
-    return names;
 }
 
 } // namespace
@@ -343,7 +333,7 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
     auto const lines = body_lines(buf, pos);
     if (all_names.empty() && !lines.empty())
     {
-        all_names = numbered_names(field_count(lines.front()));
+        all_names = numbered_feature_names(field_count(lines.front()));
     }
     lap(prof.index_s);
 
@@ -478,7 +468,7 @@ ColumnBatch dense_from_rows(std::vector<SparseRow> const &rows, DataConfig const
             batch.features[f][r] = v;
         }
     }
-    batch.feature_names = numbered_names(n_features);
+    batch.feature_names = numbered_feature_names(n_features);
     return batch;
 }
 
