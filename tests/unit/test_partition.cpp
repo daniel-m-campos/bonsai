@@ -120,10 +120,13 @@ TEST_CASE("partition: an equal-count split gives the fresh slot to the left",
     p.left.rows.assign(4, row_id_t{0});
     p.right.rows.assign(4, row_id_t{0});
     CHECK(&grower_detail::smaller_child(p) == &p.left);
+    CHECK(&grower_detail::larger_child(p) == &p.right);
 
     p.right.rows.assign(3, row_id_t{0});
     CHECK(&grower_detail::smaller_child(p) == &p.right);
+    CHECK(&grower_detail::larger_child(p) == &p.left);
 
     p.right.rows.assign(5, row_id_t{0});
     CHECK(&grower_detail::smaller_child(p) == &p.left);
+    CHECK(&grower_detail::larger_child(p) == &p.right);
 }
