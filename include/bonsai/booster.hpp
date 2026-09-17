@@ -75,8 +75,11 @@ class IBooster
 
     virtual float eval(features_view X, floats_view labels) const = 0;
     // --- prediction
-    virtual void   predict(features_view X, floats_out y_hat) const = 0;
-    virtual size_t n_iters() const                                  = 0;
+    void predict(features_view X, floats_out y_hat) const
+    {
+        predict_at(X, y_hat, 0);
+    }
+    virtual size_t n_iters() const = 0;
 
     // Trees in the ensemble, which is n_iters() only for width-1 objectives:
     // multiclass grows one tree per class per round. Per-tree outputs must be
@@ -88,8 +91,7 @@ class IBooster
     // --- introspection
     virtual std::vector<double> feature_importance(ImportanceType type) const = 0;
 
-    // Predict using only the first n_trees trees (0 = all). The plain
-    // predict(X, out) is predict_at(X, out, 0).
+    // Predict using only the first n_trees trees (0 = all).
     virtual void predict_at(features_view X, floats_out y_hat,
                             size_t n_trees) const = 0;
 
@@ -1125,13 +1127,8 @@ class Booster final : public Ensemble<Gr, Sa>
     float eval(features_view X, floats_view labels) const override
     {
         std::vector<float> scores(X.extent(0));
-        predict(X, scores);
+        this->predict(X, scores);
         return objective_.eval(scores, labels);
-    }
-
-    void predict(features_view X, floats_out scores) const override
-    {
-        predict_at(X, scores, 0);
     }
 
     // DART pre-grow half: pick this round's dropped trees and remove their
