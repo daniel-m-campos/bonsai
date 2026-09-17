@@ -257,7 +257,7 @@ float PoissonObjective::eval(floats_view scores, floats_view targets)
     for (size_t i = 0; i < scores.size(); ++i)
     {
         float const f = std::clamp(scores[i], -k_poisson_max_log, k_poisson_max_log);
-        total += static_cast<double>(clamped_exp(f)) -
+        total += static_cast<double>(std::exp(f)) -
                  (static_cast<double>(targets[i]) * static_cast<double>(f));
     }
     return static_cast<float>(total / static_cast<double>(scores.size()));
