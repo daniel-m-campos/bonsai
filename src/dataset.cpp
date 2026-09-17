@@ -56,6 +56,16 @@ Dataset Dataset::mint(std::shared_ptr<BinStore const> store, std::vector<float> 
     return ds;
 }
 
+template <typename Source>
+Dataset Dataset::mint_binned(size_t n_rows, BinMappers mappers, Source &&source,
+                             floats_view labels, floats_view weights)
+{
+    return mint(std::make_shared<BinStore const>(BinStore::Key{}, n_rows,
+                                                 std::move(mappers),
+                                                 std::forward<Source>(source)),
+                {labels.begin(), labels.end()}, {weights.begin(), weights.end()});
+}
+
 namespace
 {
 
@@ -122,20 +132,15 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
                        "the input to Dataset::bin");
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
     size_t const                                  n = batch.labels.size();
-    std::shared_ptr<BinStore const>               store;
     if (plane)
     {
-        store = std::make_shared<BinStore const>(BinStore::Key{}, n, mappers,
-                                                 std::move(plane));
+        return mint_binned(n, mappers, std::move(plane), batch.labels, batch.weights);
     }
-    else
-    {
-        store = std::make_shared<BinStore const>(
-            BinStore::Key{}, n, mappers,
-            bin_columns(mappers, batch.features.size(), n,
-                        [&](size_t f, size_t r) { return batch.features[f][r]; }));
-    }
-    return mint(std::move(store), batch.labels, batch.weights);
+    return mint_binned(n, mappers,
+                       bin_columns(mappers, batch.features.size(), n,
+                                   [&](size_t f, size_t r)
+                                   { return batch.features[f][r]; }),
+                       batch.labels, batch.weights);
 }
 
 Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mappers,
@@ -150,11 +155,10 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     }
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
     size_t const                                  n = labels.size();
-    return mint(std::make_shared<BinStore const>(BinStore::Key{}, n, mappers,
-                                                 bin_columns(mappers, X.extent(1), n,
-                                                             [&](size_t f, size_t r)
-                                                             { return X[r, f]; })),
-                {labels.begin(), labels.end()}, {weights.begin(), weights.end()});
+    return mint_binned(n, mappers,
+                       bin_columns(mappers, X.extent(1), n,
+                                   [&](size_t f, size_t r) { return X[r, f]; }),
+                       labels, weights);
 }
 
 Dataset Dataset::bin(size_t n_rows, [[maybe_unused]] size_t n_features,
@@ -165,9 +169,7 @@ Dataset Dataset::bin(size_t n_rows, [[maybe_unused]] size_t n_features,
     assert(plane != nullptr);
     require_n_features(n_features, mappers.size(), "the input to Dataset::bin");
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
-    return mint(std::make_shared<BinStore const>(BinStore::Key{}, n_rows, mappers,
-                                                 std::move(plane)),
-                {labels.begin(), labels.end()}, {weights.begin(), weights.end()});
+    return mint_binned(n_rows, mappers, std::move(plane), labels, weights);
 }
 
 Dataset Dataset::from_bins(BinColumns cols, BinMappers mappers, floats_view labels,
@@ -202,9 +204,7 @@ Dataset Dataset::from_bins(BinColumns cols, BinMappers mappers, floats_view labe
             }
         },
         cols);
-    return mint(std::make_shared<BinStore const>(BinStore::Key{}, n_rows,
-                                                 std::move(mappers), std::move(cols)),
-                {labels.begin(), labels.end()}, {weights.begin(), weights.end()});
+    return mint_binned(n_rows, std::move(mappers), std::move(cols), labels, weights);
 }
 
 Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
