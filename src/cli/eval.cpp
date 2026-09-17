@@ -10,8 +10,6 @@
 #include <string_view>
 #include <vector>
 
-#include "bonsai/config/data_config.hpp"
-#include "bonsai/io/model.hpp"
 #include "bonsai/metric.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
 
@@ -20,29 +18,20 @@ namespace bonsai::cli
 
 int run_eval(EvalOpts const &opts)
 {
-    auto cfg = resolve_config(opts.common);
-    if (dump_config(opts.common, cfg))
+    auto const inputs =
+        scoring_inputs(opts.common, opts.model_path, opts.data_path, "eval");
+    if (!inputs)
     {
-        return EXIT_SUCCESS;
+        return inputs.error();
     }
-    auto loaded = io::load_booster(opts.model_path);
+    auto const &objective = inputs->loaded.cfg.dispatch.objective_name;
+    auto        sl        = score_and_label_csv(*inputs->loaded.booster, inputs->path,
+                                                inputs->cfg.data, inputs->loaded.mappers.size());
+    auto        preds     = sl.raw_scores;
+    apply_link_inverse_by_name(objective, preds);
 
-    DataConfig data_cfg = cfg.data;
-    auto const path     = !opts.data_path.empty() ? opts.data_path : data_cfg.test;
-    if (path.empty())
-    {
-        std::println(stderr, "eval: data path is required (--data or [data].test)");
-        return 2;
-    }
-
-    auto sl =
-        score_and_label_csv(*loaded.booster, path, data_cfg, loaded.mappers.size());
-    auto preds = sl.raw_scores;
-    apply_link_inverse_by_name(loaded.cfg.dispatch.objective_name, preds);
-
-    auto const task = task_kind_by_name(loaded.cfg.dispatch.objective_name);
-    auto const names =
-        choose_metric_names(cfg.metrics.eval, loaded.cfg.dispatch.objective_name);
+    auto const task  = task_kind_by_name(objective);
+    auto const names = choose_metric_names(inputs->cfg.metrics.eval, objective);
 
     for (auto const name : names)
     {

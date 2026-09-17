@@ -7,8 +7,6 @@
 #include <memory>
 #include <print>
 
-#include "bonsai/config/data_config.hpp"
-#include "bonsai/io/model.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
 
 namespace bonsai::cli
@@ -16,31 +14,18 @@ namespace bonsai::cli
 
 int run_predict(PredictOpts const &opts)
 {
-    auto cfg = resolve_config(opts.common);
-    if (dump_config(opts.common, cfg))
+    auto const inputs =
+        scoring_inputs(opts.common, opts.model_path, opts.data_path, "predict");
+    if (!inputs)
     {
-        return EXIT_SUCCESS;
+        return inputs.error();
     }
-    auto loaded = io::load_booster(opts.model_path);
-
-    DataConfig data_cfg = cfg.data;
-    if (!opts.data_path.empty())
-    {
-        data_cfg.train = opts.data_path;
-    }
-    auto const path = !opts.data_path.empty() ? opts.data_path : data_cfg.test;
-    if (path.empty())
-    {
-        std::println(stderr, "predict: data path is required (--data or [data].test)");
-        return 2;
-    }
-
-    auto scored = score_csv(*loaded.booster, path, data_cfg, loaded.mappers.size(),
-                            opts.num_iteration);
+    auto scored = score_csv(*inputs->loaded.booster, inputs->path, inputs->cfg.data,
+                            inputs->loaded.mappers.size(), opts.num_iteration);
 
     if (opts.apply_link)
     {
-        apply_link_inverse_by_name(loaded.cfg.dispatch.objective_name,
+        apply_link_inverse_by_name(inputs->loaded.cfg.dispatch.objective_name,
                                    scored.raw_scores);
     }
 
