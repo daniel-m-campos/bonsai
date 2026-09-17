@@ -22,16 +22,9 @@ struct FillBlock
     size_t slice, b0, b1, block;
 };
 
-inline void fill_lone(Dataset const &ds, SplitInput &node,
-                      std::span<feature_id_t const> selected, SelectionPlan const &sp,
-                      ArenaLayout const &carve, NodeHistograms &sibling, size_t ranges,
-                      size_t blocks, GhView const &gh)
+inline std::span<FillBlock const> lone_blocks(SelectionPlan const &sp, size_t n_sel,
+                                              size_t ranges, size_t blocks)
 {
-    size_t const              n         = node.rows.size();
-    size_t const              n_sel     = selected.size();
-    size_t const              row_cells = n_sel * k_feature_stride;
-    std::span<HistCell> const cells     = partials_storage((blocks - 1) * row_cells);
-    PartialsView const        view{cells.data(), blocks - 1, row_cells};
     static thread_local std::vector<FillBlock> work;
     work.clear();
     size_t const width = std::max<size_t>(1, (n_sel + ranges - 1) / ranges);
@@ -49,26 +42,33 @@ inline void fill_lone(Dataset const &ds, SplitInput &node,
             }
         }
     }
+    return work;
+}
+
+inline void fill_lone(Dataset const &ds, SplitInput &node,
+                      std::span<feature_id_t const> selected, SelectionPlan const &sp,
+                      ArenaLayout const &carve, NodeHistograms &sibling, size_t ranges,
+                      size_t blocks, GhView const &gh)
+{
+    size_t const                     n         = node.rows.size();
+    size_t const                     n_sel     = selected.size();
+    size_t const                     row_cells = n_sel * k_feature_stride;
+    std::span<HistCell> const        cells = partials_storage((blocks - 1) * row_cells);
+    PartialsView const               view{cells.data(), blocks - 1, row_cells};
     std::span<uint8_t const> const   rm_all = ds.mirror().bins();
     NodeHistograms                  &hists  = node.hists;
-    std::span<FillBlock const> const items  = work;
+    std::span<FillBlock const> const items  = lone_blocks(sp, n_sel, ranges, blocks);
     parallel::for_each_index_on(
-        static_cast<int>(ranges * blocks), work.size(),
+        static_cast<int>(ranges * blocks), items.size(),
         [&, view, rm_all, selected, items](size_t t)
         {
             FillBlock const   &r         = items[t];
             MirrorSlice const &sl        = sp.slices[r.slice];
             bool const         direct    = r.block == 0;
             bool const         dense_sel = sl.n_selected() == sl.rm_width;
-            MirrorSlice const  sub{.s0       = sl.s0 + r.b0,
-                                   .s1       = sl.s0 + r.b1,
-                                   .rm_base  = sl.rm_base,
-                                   .rm_width = sl.rm_width,
-                                   .cell0    = sl.cell0,
-                                   .cells    = sl.cells,
-                                   .fid0     = sl.fid0 + r.b0};
-            HistCell *const    part    = direct ? nullptr : &view[r.block - 1, 0];
-            auto const         base_of = [&](size_t s)
+            MirrorSlice const  sub       = sl.subrange(r.b0, r.b1);
+            HistCell *const    part      = direct ? nullptr : &view[r.block - 1, 0];
+            auto const         base_of   = [&](size_t s)
             {
                 return direct ? hists[selected[s]].cells().data()
                               : part + (s * k_feature_stride);
