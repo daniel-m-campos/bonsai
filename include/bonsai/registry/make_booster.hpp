@@ -7,6 +7,7 @@
 
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
+#include "bonsai/config/dispatch_config.hpp"
 
 namespace bonsai
 {
@@ -15,6 +16,7 @@ class UnknownImplError : public std::runtime_error
 {
   public:
     using std::runtime_error::runtime_error;
+    UnknownImplError(std::string_view caller, DispatchConfig const &dispatch);
 };
 
 // Look up resolve_dispatch(config) in the compile-time table and return the

@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <format>
 #include <memory>
 #include <print>
-#include <string>
 #include <string_view>
 #include <vector>
 
@@ -90,10 +90,17 @@ std::unique_ptr<ITrainableBooster> make_booster(Config const &config)
     auto const *const entry = std::ranges::find_if(configurations, matches);
     if (entry == configurations.end())
     {
-        throw UnknownImplError("make_booster: no impl for (" + std::string{obj} + ", " +
-                               std::string{gr} + ", " + std::string{sa} + ")");
+        throw UnknownImplError("make_booster", routed);
     }
     return entry->factory(config);
+}
+
+UnknownImplError::UnknownImplError(std::string_view      caller,
+                                   DispatchConfig const &dispatch)
+    : std::runtime_error(std::format("{}: no impl for ({}, {}, {})", caller,
+                                     dispatch.objective_name, dispatch.grower_name,
+                                     dispatch.sampler_name))
+{
 }
 
 std::vector<AvailableCombo> available_combos()
