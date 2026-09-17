@@ -33,7 +33,7 @@ int run_importance(ImportanceOpts const &opts)
     std::println("{:<24} {:>14} {:>8}", "feature", "gain", "split");
     for (size_t const f : order)
     {
-        std::println("{:<24} {:>14.2f} {:>8.0f}", internal::feature_label(names, f),
+        std::println("{:<24} {:>14.2f} {:>8.0f}", detail::feature_label(names, f),
                      gain[f], split[f]);
     }
     return EXIT_SUCCESS;

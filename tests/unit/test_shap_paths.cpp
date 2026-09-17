@@ -624,7 +624,7 @@ TEST_CASE("Shap paths: oblivious densified booster matches pred_contribs_binned"
 
     std::vector<double> contribs(eval.plane_n_rows() * 4);
     b.pred_contribs_binned(eval, contribs, 3);
-    auto const                 dense = internal::densify(b.trees());
+    auto const                 dense = detail::densify(b.trees());
     std::array<float, 1> const init{b.init_score()};
     check_booster(dense, mappers, eval, contribs, 3, 1,
                   cfg.booster_config.learning_rate, init);
@@ -651,7 +651,7 @@ TEST_CASE("Shap paths: a densified oblivious tree packs a head per slot",
         b.update_one_iter(train);
     }
 
-    auto const dense = internal::densify(b.trees());
+    auto const dense = detail::densify(b.trees());
     auto const paths = pack_shap_paths(dense, mappers, 1);
 
     size_t leaves = 0;

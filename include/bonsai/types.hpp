@@ -18,6 +18,13 @@ using floats_out     = std::span<float>;
 using row_index_view = std::span<row_id_t const>;
 using row_index_out  = std::span<row_id_t>;
 
+// How an importance total counts a split: once, or by the gain it bought.
+enum class ImportanceType : uint8_t
+{
+    split,
+    gain,
+};
+
 using features_view = std::mdspan<float const, std::dextents<size_t, 2>>;
 
 } // namespace bonsai
