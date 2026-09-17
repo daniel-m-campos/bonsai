@@ -107,7 +107,7 @@ inline SplitInput &smaller_child(PendingSplit &p)
 
 inline SplitInput &larger_child(PendingSplit &p)
 {
-    return &smaller_child(p) == &p.left ? p.right : p.left;
+    return p.left.rows.size() <= p.right.rows.size() ? p.right : p.left;
 }
 
 inline void adopt_parent_histograms(PendingSplit &p)
