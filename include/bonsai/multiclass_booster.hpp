@@ -111,11 +111,6 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
     }
 
     // Argmax class id per row.
-    void predict(features_view X, floats_out y_hat) const override
-    {
-        predict_at(X, y_hat, 0);
-    }
-
     void predict_at(features_view X, floats_out y_hat, size_t n_rounds) const override
     {
         assert(y_hat.size() == X.extent(0));
