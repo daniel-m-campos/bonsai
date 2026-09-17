@@ -398,11 +398,11 @@ std::string view_shape_phrase(bonsai::RowView const &view)
     case bonsai::RowView::Form::Range:
         return "1 range";
     case bonsai::RowView::Form::Segments:
-        return std::to_string(view.n_runs()) + " segments";
+        return std::format("{} segments", view.n_runs());
     case bonsai::RowView::Form::Gather:
         break;
     }
-    return std::to_string(view.size()) + " gathered rows";
+    return std::format("{} gathered rows", view.size());
 }
 
 struct IndexAxis
