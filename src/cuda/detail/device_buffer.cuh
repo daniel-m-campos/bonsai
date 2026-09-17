@@ -13,7 +13,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -51,15 +50,11 @@ inline size_t device_shared_ceiling()
 // memory: the default release threshold of 0 returns every free to the OS
 // at the next sync, and on GeForce drivers the resulting cudaMalloc/cudaFree
 // churn synchronizes the whole process (the 5090's ~11-14s per-fit
-// overhead). BONSAI_CUDA_SYNC_ALLOC=1 restores plain cudaMalloc.
+// overhead). Devices without memory pools keep plain cudaMalloc.
 inline bool use_async_alloc()
 {
     static bool const enabled = []
     {
-        if (std::getenv("BONSAI_CUDA_SYNC_ALLOC") != nullptr)
-        {
-            return false;
-        }
         int dev = 0;
         if (cudaGetDevice(&dev) != cudaSuccess)
         {
