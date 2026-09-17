@@ -22,7 +22,7 @@ std::string_view task_kind_name(TaskKind kind);
 
 // External trait, specialized per impl in BOTH the Objectives and Metrics
 // typelists. An objective and a metric belong together when their task_of<T>
-// agree. Specialize alongside the impl's other traits (impl_name<T>, etc.).
+// agree. Specialize alongside the impl's other traits (name_of<T>, etc.).
 template <typename T> struct task_of;
 
 template <typename T>
