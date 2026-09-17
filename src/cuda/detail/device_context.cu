@@ -39,13 +39,12 @@ namespace bonsai
 namespace cuda_detail
 {
 
-constexpr uint32_t k_sum_blocks = 64;
-
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
 
 namespace
 {
 
+constexpr uint32_t k_sum_blocks      = 64;
 constexpr uint32_t k_slot_stream_cap = 256;
 
 dim3 slot_stream_grid(uint32_t slot_cells, uint32_t n_slots)
