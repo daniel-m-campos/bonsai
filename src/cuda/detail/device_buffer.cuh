@@ -493,6 +493,16 @@ template <typename T> struct Staged
     {
         dev.upload(host.data(), host.size());
     }
+    void assign(std::span<T const> values)
+    {
+        host.assign(values.begin(), values.end());
+        sync();
+    }
+    void assign_one(T const &value)
+    {
+        host.assign(1, value);
+        sync();
+    }
     void fetch(size_t n)
     {
         host.resize(n);
