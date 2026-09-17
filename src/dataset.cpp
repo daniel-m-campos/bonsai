@@ -75,8 +75,8 @@ namespace
 // ~25x line amplification at 100 features). 64 u8 rows = one cache line per
 // column, so tiles never share one.
 template <typename BinT, typename Read>
-void fill_columns(std::vector<std::vector<BinT>> &out, size_t n_features, size_t n_rows,
-                  BinMappers const &mappers, Read read)
+void bin_into_columns(std::vector<std::vector<BinT>> &out, size_t n_features,
+                      size_t n_rows, BinMappers const &mappers, Read read)
 {
     out.resize(n_features);
     parallel::for_each_index(n_features, [&](size_t f) { out[f].resize(n_rows); });
@@ -105,8 +105,8 @@ BinColumns bin_columns(BinMappers const &mappers, size_t n_features, size_t n_ro
 {
     BinColumns cols =
         mappers.all_fit_u8() ? BinColumns{U8Columns{}} : BinColumns{U16Columns{}};
-    std::visit([&](auto &out) { fill_columns(out, n_features, n_rows, mappers, read); },
-               cols);
+    std::visit([&](auto &out)
+               { bin_into_columns(out, n_features, n_rows, mappers, read); }, cols);
     return cols;
 }
 
