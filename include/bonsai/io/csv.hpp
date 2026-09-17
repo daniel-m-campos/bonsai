@@ -2,20 +2,8 @@
 
 #include <string>
 
-#include "bonsai/bin_mappers.hpp"
-#include "bonsai/config/config.hpp"
-#include "bonsai/dataset.hpp"
+#include "bonsai/config/data_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
-
-namespace bonsai::io
-{
-
-Dataset read_csv(std::string const &path, DataConfig const &cfg,
-                 BinMappers const &mappers);
-
-BinMappers fit_from_csv(std::string const &path, Config const &cfg);
-
-} // namespace bonsai::io
 
 namespace bonsai::detail::csv
 {

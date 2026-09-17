@@ -108,6 +108,8 @@ No `Reader` concept, no abstract base, no template plumbing. File loading is onc
 
 Rejected: `Reader` concept + `Reader auto&` template params for `fit` and `bin`. Over-engineered for once-per-program file loading. Free functions are the simpler shape.
 
+*Status 2026-09-17: `read_csv` and `fit_from_csv` were deleted; the CLI parses through `detail::parse_input` (csv or libsvm) and bins through `Dataset::bin` itself (`src/cli/pipeline.cpp`), the Python module never reads a file, and no Reader layer exists; parquet never shipped.*
+
 ---
 
 ## 7. Determinism contract: fixed thread count, not cross-thread

@@ -104,12 +104,13 @@ TEST_CASE("Csv: an empty field is a parse error naming its position",
     std::filesystem::remove(path);
 }
 
-TEST_CASE("Csv: read_csv pipes through fit_from_csv to a usable Dataset",
+TEST_CASE("Csv: a parsed batch fits mappers and bins into a usable Dataset",
           "[csv][fit][smoke]")
 {
-    auto       cfg     = base_config();
-    auto const mappers = bonsai::io::fit_from_csv(tiny_csv(), cfg);
-    auto const dataset = bonsai::io::read_csv(tiny_csv(), cfg.data, mappers);
+    auto const cfg     = base_config();
+    auto const batch   = bonsai::detail::csv::parse(tiny_csv(), cfg.data);
+    auto const mappers = bonsai::BinMappers::fit(batch, cfg.bin_mapper);
+    auto const dataset = bonsai::Dataset::bin(batch, mappers, cfg.data);
 
     REQUIRE(dataset.plane_n_rows() == 4);
     REQUIRE(dataset.n_features() == 3);
