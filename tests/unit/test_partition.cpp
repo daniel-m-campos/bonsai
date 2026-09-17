@@ -64,20 +64,27 @@ TEST_CASE("the blocked partition is the serial order at every decomposition",
     s.bin_id       = static_cast<bin_id_t>(ds.n_bins(0) / 2);
     s.default_left = true;
 
-    SplitInput parent;
-    parent.rows                = rows;
-    gd::PendingSplit const ref = gd::partition_rows(ds, std::move(parent), s, 1, 2);
-    REQUIRE(!ref.left.rows.empty());
-    REQUIRE(!ref.right.rows.empty());
+    auto const            last_bin = static_cast<bin_id_t>(ds.n_bins(0) - 1);
+    std::vector<row_id_t> left;
+    std::vector<row_id_t> right;
+    for (row_id_t const r : rows)
+    {
+        bool const goes_left =
+            routes_left(ds.bin_at(0, r), last_bin, s.bin_id, s.default_left);
+        (goes_left ? left : right).push_back(r);
+    }
+    REQUIRE(!left.empty());
+    REQUIRE(!right.empty());
 
     // Decomposition is a scheduling choice, never an output: one worker per
-    // block, several blocks per worker, and a single block all agree.
+    // block, several blocks per worker, and a single block all agree with
+    // the row-order scan above.
     for (auto const [block_rows, workers] :
          {std::pair<size_t, int>{5000, 1}, {2500, 2}, {625, 8}, {97, 4}, {1, 3}})
     {
         gd::PendingSplit const got = blocked(ds, rows, s, block_rows, workers);
-        REQUIRE(got.left.rows == ref.left.rows);
-        REQUIRE(got.right.rows == ref.right.rows);
+        REQUIRE(got.left.rows == left);
+        REQUIRE(got.right.rows == right);
     }
     parallel::set_n_threads(0);
 }
