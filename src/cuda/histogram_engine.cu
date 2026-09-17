@@ -11,6 +11,7 @@
 #include "bonsai/types.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -356,12 +357,12 @@ class IngestRing
   public:
     IngestRing(size_t cells_per_chunk, size_t raw_bytes)
         : pinned_(raw_bytes > k_ingest_ring_min_bytes ||
-                  std::getenv("BONSAI_CUDA_INGEST_RING") != nullptr)
+                  std::getenv("BONSAI_CUDA_INGEST_RING") != nullptr),
+          n_slots_(pinned_ ? k_ingest_ring_slots : 1)
     {
-        size_t const n_slots = pinned_ ? k_ingest_ring_slots : 1;
-        for (size_t i = 0; i < n_slots; ++i)
+        for (size_t i = 0; i < n_slots_; ++i)
         {
-            slots_.push_back(std::make_unique<IngestSlot>(cells_per_chunk, pinned_));
+            slots_[i].emplace(cells_per_chunk, pinned_);
         }
         if (!detail::IngestProfiler::instance().enabled)
         {
@@ -372,7 +373,7 @@ class IngestRing
             std::println(stderr,
                          "bonsai: device ingest stages chunks of {} cells through {} "
                          "pinned slots, copy and bin overlapped",
-                         cells_per_chunk, n_slots);
+                         cells_per_chunk, n_slots_);
         }
         else
         {
@@ -387,7 +388,7 @@ class IngestRing
     void stage(float const *src, size_t cells, Launch &&launch)
     {
         IngestSlot &slot = *slots_[next_];
-        next_            = (next_ + 1) % slots_.size();
+        next_            = (next_ + 1) % n_slots_;
         if (!pinned_)
         {
             check(cudaMemcpy(slot.dev.data(), src, cells * sizeof(float),
@@ -412,9 +413,10 @@ class IngestRing
     }
 
   private:
-    bool                                     pinned_;
-    std::vector<std::unique_ptr<IngestSlot>> slots_;
-    size_t                                   next_ = 0;
+    bool                                                       pinned_;
+    size_t                                                     n_slots_;
+    std::array<std::optional<IngestSlot>, k_ingest_ring_slots> slots_;
+    size_t                                                     next_ = 0;
 };
 
 } // namespace
