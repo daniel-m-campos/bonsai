@@ -71,15 +71,11 @@ constexpr float k_nan = std::numeric_limits<float>::quiet_NaN();
 
 std::string_view trim(std::string_view s)
 {
-    if (!s.empty() && s.back() == '\r')
-    {
-        s.remove_suffix(1);
-    }
     while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
     {
         s.remove_prefix(1);
     }
-    while (!s.empty() && (s.back() == ' ' || s.back() == '\t'))
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
     {
         s.remove_suffix(1);
     }
