@@ -102,19 +102,15 @@ class LevelStep : public TreeStep<EngineT>
     }
 
     void finalize_leaves(std::vector<SplitInput> const &frontier,
-                         std::vector<float> const      &leaf_table,
-                         train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
-                         row_index_view /*row_indices*/,
-                         std::span<ObliviousTree::LevelSplit const> /*level_splits*/,
-                         std::span<bin_id_t const> /*level_bins*/)
+                         std::vector<float> const &leaf_table, LeafFinalize const &fin)
     {
         parallel::for_each_index(frontier.size(),
                                  [&](size_t li)
                                  {
                                      for (row_id_t const r : frontier[li].rows)
                                      {
-                                         values[r]   = leaf_table[li];
-                                         leaf_ids[r] = static_cast<node_id_t>(li);
+                                         fin.values[r]   = leaf_table[li];
+                                         fin.leaf_ids[r] = static_cast<node_id_t>(li);
                                      }
                                  });
     }
@@ -238,29 +234,25 @@ class LevelStep<EngineT, SplitterT> : public TreeStep<EngineT>
     }
 
     void finalize_leaves(std::vector<SplitInput> const &frontier,
-                         std::vector<float> const      &leaf_table,
-                         train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
-                         row_index_view /*row_indices*/,
-                         std::span<ObliviousTree::LevelSplit const> level_splits,
-                         std::span<bin_id_t const>                  level_bins)
+                         std::vector<float> const &leaf_table, LeafFinalize const &fin)
     {
         if (engine_.resident_armed())
         {
             engine_.resident_finalize(
                 grower_detail::perfect_tree_table<typename EngineT::ResidentNode>(
-                    level_splits.size(),
+                    fin.level_splits.size(),
                     [&](size_t lvl)
                     {
                         return grower_detail::LevelSplitBins{
-                            level_splits[lvl].feature_id, level_bins[lvl],
-                            level_splits[lvl].default_left};
+                            fin.level_splits[lvl].feature_id, fin.level_bins[lvl],
+                            fin.level_splits[lvl].default_left};
                     },
                     leaf_table));
             return;
         }
         engine_.stamp_leaves(leaf_stamps<typename EngineT::LeafStamp>(
             frontier.size(), [](uint32_t i) { return static_cast<node_id_t>(i); }));
-        engine_.finalize_tree(leaf_table, values, leaf_ids);
+        engine_.finalize_tree(leaf_table, fin.values, fin.leaf_ids);
     }
 };
 

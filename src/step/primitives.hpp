@@ -492,6 +492,15 @@ struct LevelOutputs
     std::vector<NodeTotals>  child_sums;
 };
 
+struct LeafFinalize
+{
+    train_leaf_values                         &values;
+    std::vector<node_id_t>                    &leaf_ids;
+    row_index_view                             row_indices;
+    std::span<ObliviousTree::LevelSplit const> level_splits;
+    std::span<bin_id_t const>                  level_bins;
+};
+
 template <typename ResidentNodeT>
 std::vector<ResidentNodeT> resident_node_table(DenseTree::Nodes const &nodes,
                                                Dataset const          &ds)
