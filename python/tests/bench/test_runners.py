@@ -61,6 +61,34 @@ def test_data_cache():
         assert second[0].dtype == np.float32
 
 
+def test_a_cache_miss_holds_the_cell_once():
+    """The run that fills the cache must not hold the cell twice. A worker's
+    peak RSS is ru_maxrss, a high-water mark, so a transient second copy on
+    the miss is what gets published for whichever arm runs first on a cell:
+    the extreme cell read 132GB for its first arm against 66.9GB for the
+    arms after it, whose loads were cache hits."""
+    import tracemalloc
+
+    from bonsai.bench import runners
+
+    cell = {"rows": 200_000, "cols": 32, "seed": 7, "n_test": 20_000, "informative": 5}
+    size = (cell["rows"] + cell["n_test"]) * (cell["cols"] + 1) * 4
+    with tempfile.TemporaryDirectory() as td:
+        tracemalloc.start()
+        miss = runners.cached_gen_data(cell, td)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        hit = runners.cached_gen_data(cell, td)
+        for a, b in zip(miss, hit):
+            np.testing.assert_array_equal(a, b)
+        # the miss hands fit() the arrays it drew, which the decline path
+        # already does: owned float32 rows, never a memmap
+        assert not isinstance(miss[0], np.memmap)
+        assert miss[0].flags["C_CONTIGUOUS"]
+        assert miss[0].dtype == np.float32
+    assert peak < 1.5 * size, f"a cache miss peaked at {peak / size:.2f}x the cell"
+
+
 def test_binary_task_runners():
     """The shared runners serve binary suites: task="binary" in the cell
     selects the logloss objective and AUC scoring, and the SCALING knob set
