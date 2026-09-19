@@ -515,7 +515,8 @@ def cache_fits(cell: dict, headroom: float = 0.6) -> bool:
 
 
 def cached_gen_data(cell: dict, cache_dir: str):
-    """gen_data memoized to .npy files, loaded back as ordinary arrays.
+    """gen_data memoized to .npy files: a hit loads them back as ordinary
+    arrays, a miss returns the arrays it drew.
 
     gen_data is byte-stable in its arguments (guard-tested), so the key is
     the argument tuple; every regeneration a cache hit removes is the whole
@@ -532,6 +533,14 @@ def cached_gen_data(cell: dict, cache_dir: str):
     kept the pod script from exporting a cache directory. A full read
     completes before worker() opens its first timer and hands fit() memory
     indistinguishable from freshly drawn arrays. Decision 113.
+
+    A miss writes the files and returns the arrays it drew rather than
+    reading them back, because reading them back holds the cell twice at
+    once, and the worker's peak RSS is ru_maxrss, a high-water mark: that
+    transient second copy is what got published for whichever arm filled
+    the cache, 132GB against 66.9GB for the arms after it on the extreme
+    cell. The drawn arrays are what the decline path below already hands
+    the fit, and they are byte-equal to a hit's load.
 
     A cell too large to hold twice declines to the generator: the cache is
     an optimization and never a reason to run out of memory.
@@ -555,6 +564,7 @@ def cached_gen_data(cell: dict, cache_dir: str):
             tmp = p.with_name(p.name + ".tmp.npy")
             np.save(tmp, a)
             os.replace(tmp, p)
+        return arrays
     return tuple(np.load(p) for p in paths)
 
 
