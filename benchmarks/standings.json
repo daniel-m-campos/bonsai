@@ -7,7 +7,7 @@
     "date": "2026-09-19",
     "plane": "gpu",
     "refreshed_for": "2.4.0",
-    "as_of_decision": 142,
+    "as_of_decision": 146,
     "companion": "parity-2026-09.jsonl",
     "hash_set": "6a0a3202be235257",
     "refs": {
@@ -54,7 +54,7 @@
     "date": "2026-09-19",
     "plane": "cpu",
     "refreshed_for": "2.4.0",
-    "as_of_decision": 142,
+    "as_of_decision": 146,
     "hash_set": "9715ea12d27a52b4",
     "refs": {
       "xgboost": "3.3.0",
@@ -140,10 +140,10 @@
   },
   "code": {
     "file": "code-metrics-2026-09.jsonl",
-    "sha": "0ea5b77d1896175ec016ff3065587bde56aa81fd",
+    "sha": "0b0cf45af7eb38f61da444721d53e61241b8ff8b",
     "host": null,
     "date": null,
-    "refreshed_for": "2.3.0",
+    "refreshed_for": "2.4.0",
     "as_of_decision": 92,
     "sha_partial": true
   },
