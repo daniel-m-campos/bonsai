@@ -78,7 +78,7 @@ Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bon
 
 ### Perf
 
-On GPU at the tall scenario, fit totals run depthwise 3.2s vs XGBoost 28.7s; leafwise 3.2s vs LightGBM 30.7s; levelwise 3.0s vs CatBoost 19.4s. On CPU at the tall scenario: depthwise 11.3s vs XGBoost 19.5s; leafwise 11.6s vs LightGBM 31.8s; levelwise 10.4s vs CatBoost 15.6s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
+On GPU at the tall scenario, fit totals run depthwise 3.3s vs XGBoost 27.9s; leafwise 3.3s vs LightGBM 30.0s; levelwise 3.2s vs CatBoost 19.1s. On CPU at the tall scenario: depthwise 11.0s vs XGBoost 18.7s; leafwise 12.1s vs LightGBM 32.2s; levelwise 10.7s vs CatBoost 17.9s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
 
 The panels, and the closed campaigns behind them, are in [the ledger](https://daniel-m-campos.github.io/bonsai/results/results/).
 
