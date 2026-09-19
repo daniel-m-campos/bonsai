@@ -149,7 +149,7 @@
   },
   "gpu-shap": {
     "file": "gpu-shap-2026-09.jsonl",
-    "sha": "28806ff566c05fdee900d90bd3ee864e991d7f45",
+    "sha": "e857c1884682d1c9ec1565d2e600de2f1a40c4bc",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
     "date": "2026-09-19",
     "plane": "gpu",
