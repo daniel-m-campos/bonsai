@@ -2,9 +2,9 @@
   "_": "The standings registry, v2 (results-lifecycle policy, decision 92; scenario redesign, decision 103). One entry per published perf/quality axis: the current-standings file (null until the axis has been measured), the single sha its rows were measured at, the release it was refreshed for, and `plane` (cpu or gpu), the source set whose digest decides whether the axis is still current. Every axis also carries hash_set (its plane's digest at refresh time) and refs (reference-library versions measured against), which let scripts/check_standings.py's release gate skip a refresh when neither has moved, and let `--stale` tell the refresh driver which axes a session must actually measure. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
   "gpu-tall": {
     "file": "gpu-tall-2026-09.jsonl",
-    "sha": "28806ff566c05fdee900d90bd3ee864e991d7f45",
+    "sha": "a6892532919e8ead6f25e3c1f91452fe6daed9c4",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-09-18",
+    "date": "2026-09-19",
     "plane": "gpu",
     "refreshed_for": "2.4.0",
     "as_of_decision": 142,
@@ -49,9 +49,9 @@
   },
   "cpu-tall": {
     "file": "cpu-tall-2026-09.jsonl",
-    "sha": "28806ff566c05fdee900d90bd3ee864e991d7f45",
+    "sha": "a6892532919e8ead6f25e3c1f91452fe6daed9c4",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-09-18",
+    "date": "2026-09-19",
     "plane": "cpu",
     "refreshed_for": "2.4.0",
     "as_of_decision": 142,
