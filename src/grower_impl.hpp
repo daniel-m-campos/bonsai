@@ -10,6 +10,7 @@
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
+#include "fill/plan.hpp"
 #include "level_step.hpp"
 #include <algorithm>
 #include <chrono>
@@ -673,19 +674,10 @@ constexpr size_t k_level_plane_arena_bytes = size_t{2} << 20U;
 template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
 size_t LeafwiseGrower<EngineT, SplitterT>::node_arena_bytes(Dataset const &ds)
 {
-    size_t cells = 0;
-    if (ds.bins_are_u8())
-    {
-        cells = ds.n_features() * k_feature_stride;
-    }
-    else
-    {
-        for (size_t f = 0; f < ds.n_features(); ++f)
-        {
-            cells += ds.n_bins(f);
-        }
-    }
-    return cells * sizeof(HistCell);
+    std::vector<feature_id_t> every(ds.n_features());
+    std::iota(every.begin(), every.end(), feature_id_t{0});
+    auto const bins = fill_detail::selected_bins(ds, every);
+    return ArenaLayout(bins, ds.bins_are_u8()).total_cells() * sizeof(HistCell);
 }
 
 template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
