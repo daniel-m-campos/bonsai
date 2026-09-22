@@ -248,47 +248,49 @@ TEMPLATE_LIST_TEST_CASE("make_booster: parity with direct instantiation",
     }
 }
 
-TEST_CASE("Registry: a leaf budget that cannot bind takes the depthwise grower",
+TEST_CASE("Registry: a CUDA leaf budget that cannot bind takes the depthwise grower",
           "[registry][make_booster][edge]")
 {
     // INVARIANT: leaf-budget-route-keeps-the-name
     // The routed triple is what the table is searched with; cfg.dispatch is
-    // what the user wrote and what a saved model carries.
+    // what the user wrote and what a saved model carries. Only the device
+    // routes: the host leaf plane keeps its grower at every budget.
     Config cfg                = tiny_cfg();
     cfg.tree_config.max_depth = 6;
-    cfg.dispatch.grower_name  = "leafwise";
+    cfg.dispatch.grower_name  = "cuda_leafwise";
     auto const routed_to      = [&](uint32_t max_leaves)
     {
         cfg.tree_config.max_leaves = max_leaves;
         return resolve_dispatch(cfg).grower_name;
     };
 
-    CHECK(routed_to(0) == "depthwise");
-    CHECK(routed_to(64) == "depthwise");
-    CHECK(routed_to(65) == "depthwise");
-    CHECK(routed_to(63) == "leafwise");
-    CHECK(routed_to(31) == "leafwise");
-
-    cfg.dispatch.grower_name = "cuda_leafwise";
+    CHECK(routed_to(0) == "cuda_depthwise");
     CHECK(routed_to(64) == "cuda_depthwise");
+    CHECK(routed_to(65) == "cuda_depthwise");
     CHECK(routed_to(63) == "cuda_leafwise");
+    CHECK(routed_to(31) == "cuda_leafwise");
+
+    cfg.dispatch.grower_name = "leafwise";
+    CHECK(routed_to(0) == "leafwise");
+    CHECK(routed_to(64) == "leafwise");
+    CHECK(routed_to(63) == "leafwise");
 
     cfg.dispatch.grower_name = "levelwise";
     CHECK(routed_to(64) == "levelwise");
     cfg.dispatch.grower_name = "depthwise";
     CHECK(routed_to(0) == "depthwise");
 
-    cfg.dispatch.grower_name  = "leafwise";
+    cfg.dispatch.grower_name  = "cuda_leafwise";
     cfg.tree_config.max_depth = 40;
-    CHECK(routed_to(1U << 31U) == "leafwise");
-    CHECK(routed_to(0) == "depthwise");
+    CHECK(routed_to(1U << 31U) == "cuda_leafwise");
+    CHECK(routed_to(0) == "cuda_depthwise");
 
+    cfg.dispatch.grower_name   = "leafwise";
     cfg.tree_config.max_depth  = 6;
     cfg.tree_config.max_leaves = 64;
     auto const booster         = make_booster(cfg);
-    using Routed =
-        BoosterFor<TypeList<MSEObjective, DepthwiseGrower<>, AllRowsSampler>>;
-    CHECK(dynamic_cast<Routed const *>(booster.get()) != nullptr);
-    CHECK(resolve_dispatch(cfg).objective_name == cfg.dispatch.objective_name);
-    CHECK(resolve_dispatch(cfg).sampler_name == cfg.dispatch.sampler_name);
+    using HostLeaf =
+        BoosterFor<TypeList<MSEObjective, LeafwiseGrower<>, AllRowsSampler>>;
+    CHECK(dynamic_cast<HostLeaf const *>(booster.get()) != nullptr);
+    CHECK(resolve_dispatch(cfg) == cfg.dispatch);
 }

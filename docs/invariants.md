@@ -112,15 +112,21 @@ A depth-D tree has at most 2^D leaves, so a budget of 0 or of 2^D and above neve
 
 ### leaf-budget-route-keeps-the-name
 
-The routed triple is what the table is searched with; cfg.dispatch is what the user wrote and what a saved model carries.
+The routed triple is what the table is searched with; cfg.dispatch is what the user wrote and what a saved model carries. Only the device routes: the host leaf plane keeps its grower at every budget.
 
 - enforced by: `../tests/unit/test_make_booster.cpp`
 
 ### leaf-budget-route-round-trips
 
-The saved config carries "leafwise" as written; the load searches the table with the same routed name the save did, so the bytes round-trip and the loaded booster continues on the same plane.
+The saved config carries "leafwise" as written; the load resolves the same triple the save did (the host leaf plane, or the device's depthwise one on CUDA), so the bytes round-trip and the loaded booster continues on the same plane.
 
 - enforced by: `../tests/unit/test_model_io.cpp`
+
+### leaf-plane-hands-small-arenas-to-the-level-plane
+
+The plane is picked per fit from the node arena's size: below k_level_plane_arena_bytes the level plane's eight rounds beat the leaf plane's one round per leaf, above it the leaf plane's cache-resident fill wins. A binding budget never hands over.
+
+- enforced by: `../tests/unit/test_leafwise_grower.cpp`
 
 ### levelwise-monotone-holds
 

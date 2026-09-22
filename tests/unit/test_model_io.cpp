@@ -538,13 +538,14 @@ TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
     }
 }
 
-TEST_CASE("ModelIo: a routed leaf budget saves, loads and keeps training",
+TEST_CASE("ModelIo: a leaf budget that cannot bind saves, loads and keeps training",
           "[model_io][edge]")
 {
     // INVARIANT: leaf-budget-route-round-trips
-    // The saved config carries "leafwise" as written; the load searches the
-    // table with the same routed name the save did, so the bytes round-trip
-    // and the loaded booster continues on the same plane.
+    // The saved config carries "leafwise" as written; the load resolves the
+    // same triple the save did (the host leaf plane, or the device's
+    // depthwise one on CUDA), so the bytes round-trip and the loaded booster
+    // continues on the same plane.
     auto const        batch   = batch_for<MSEObjective>();
     BinMappers const  mappers = BinMappers::fit(batch, {});
     Dataset const     train   = Dataset::bin(batch, mappers, {});

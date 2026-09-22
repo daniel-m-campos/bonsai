@@ -4,6 +4,9 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### Changed
+- **A leafwise budget that cannot bind stays on the host leaf plane; only CUDA routes it to depthwise.** Decision 132 routed `max_leaves` of 0 or 2^max_depth and above to the depthwise grower of the same engine, measured on the device, and on the host the route reversed its sign at the wide cell: a 16k x 16384 node histogram is 33 MB and a level holds 128 of them, so filling one and reading it while it is cache-resident beats streaming the level's arena. Same-pod on a `cpu5g` host the leaf plane trains cpu-wide in 56.9 s against the routed row's 93.5 s, with peak RSS 7.5 to 5.9 GB, and pays 15% at cpu-tall (11.0 to 12.7 s), where a level fits the cache and 255 per-leaf rounds cost more than eight level rounds; the depthwise control is unchanged on both cells and every model hash holds (decision 147).
+
 ## [2.4.0] - 2026-09-18
 
 The CPU plane takes its crown. The host growers stop filling histograms for children that become leaves, and a fit places its own threads on one package for the length of the call. The release A/B reads the pair at 11 to 12% under the 2.3.0 wheel on a single-socket pod, where placement has little to do; on the two-socket standings host class, where it does, the two put the cpu-tall train 36% under the code before them (decision 144), and bonsai holds the top three places on the tall CPU cell, ahead of XGBoost 3.3.0, CatBoost and LightGBM 4.7.0 (decision 146). A repo-wide design review lands beside it as ninety-one commits, one finding each, and the model hash holds on all six growers, so the refactor is free to take. The documentation site reorganizes into three doors with a reference page generated from the docstrings, and the Python tree is formatted and type-checked as gates. One packaging change needs a line in a hand-assembled environment: `typing_extensions` is a runtime dependency now.

@@ -26,6 +26,18 @@ struct TreeConfig
     // every group can only split alone. Empty = unconstrained.
     std::vector<std::string> interaction_constraints = {};
 
+    // A depth-D tree has at most 2^D leaves, so a budget of 0 or of 2^D and
+    // above never stops an expansion (invariants:
+    // leaf-budget-cannot-bind-is-depthwise).
+    bool leaves_bounded() const
+    {
+        if (max_leaves == 0)
+        {
+            return false;
+        }
+        return max_depth >= 32 || max_leaves < (uint32_t{1} << max_depth);
+    }
+
     bool operator==(TreeConfig const &) const = default;
 };
 

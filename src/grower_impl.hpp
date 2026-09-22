@@ -650,11 +650,77 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
 LeafwiseGrower<EngineT, SplitterT>::LeafwiseGrower(TreeConfig const &cfg)
     : Host(cfg), interaction_groups_(grower_detail::parse_interaction_groups(cfg))
 {
+    if constexpr (!ResidentTreeEngine<EngineT>)
+    {
+        level_plane_.emplace(cfg);
+    }
+}
+
+namespace grower_detail
+{
+
+// perf: the leaf plane fills one node's arena and reads it while it is
+// cache-resident; the level plane fills every node's before it reads any, and
+// its eight rounds beat the leaf plane's 255 only while the arena is small.
+// Same-pod min over reps, a budget that cannot bind at depth 8 over 2^28
+// cells, leaf plane against level plane: 128 features (256 KiB per node)
+// +15%, 512 (1 MiB) +3%, 2048 (4 MiB) -10%, 4096 (8 MiB) -22%, 8192 (16 MiB)
+// -31%, 16384 (32 MiB) -39%.
+constexpr size_t k_level_plane_arena_bytes = size_t{2} << 20U;
+
+} // namespace grower_detail
+
+template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
+size_t LeafwiseGrower<EngineT, SplitterT>::node_arena_bytes(Dataset const &ds)
+{
+    size_t cells = 0;
+    if (ds.bins_are_u8())
+    {
+        cells = ds.n_features() * k_feature_stride;
+    }
+    else
+    {
+        for (size_t f = 0; f < ds.n_features(); ++f)
+        {
+            cells += ds.n_bins(f);
+        }
+    }
+    return cells * sizeof(HistCell);
+}
+
+template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
+bool LeafwiseGrower<EngineT, SplitterT>::on_level_plane(Dataset const &ds)
+{
+    return node_arena_bytes(ds) < grower_detail::k_level_plane_arena_bytes;
 }
 
 template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
 auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
                                               floats_view hess, RowSelection selection)
+    -> GrowResult<Tree>
+{
+    if (!level_plane_ || config().leaves_bounded() || !on_level_plane(ds))
+    {
+        return grow_leaves(ds, grad, hess, selection);
+    }
+    if (grower_detail::GrowProfiler::instance().enabled && !level_plane_noted_)
+    {
+        level_plane_noted_ = true;
+        std::println(stderr,
+                     "bonsai: a leaf budget of {} under depth {} cannot bind; the leaf "
+                     "plane hands {} features ({} KiB per node) to the level plane",
+                     config().max_leaves, unsigned{config().max_depth}, ds.n_features(),
+                     node_arena_bytes(ds) >> 10U);
+    }
+    RecycledOutputs out = begin_grow(ds);
+    level_plane_->recycle(std::move(out.values), std::move(out.leaf_ids));
+    return level_plane_->grow(ds, grad, hess, selection);
+}
+
+template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
+auto LeafwiseGrower<EngineT, SplitterT>::grow_leaves(Dataset const &ds,
+                                                     floats_view grad, floats_view hess,
+                                                     RowSelection selection)
     -> GrowResult<Tree>
 {
     namespace gd                   = grower_detail;
