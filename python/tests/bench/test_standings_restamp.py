@@ -401,9 +401,11 @@ def test_tolerance_refuses_a_zero_noise_floor(monkeypatch, tmp_path):
 # this is provenance machinery, so "the entry looks right" is not the
 # contract. The exact text is.
 
-INSTALLED_REFS = {"xgboost": "3.3.0"}
-LEDGER_REFS = {"xgboost": "3.2.0", "lightgbm": "4.6.0", "catboost": "1.2.10"}
-STAMPED_REFS = {"xgboost": "3.3.0", "lightgbm": "4.6.0", "catboost": "1.2.10"}
+# The checking machine lags the pods, as a laptop's bench extras do; a stamp
+# that read it would record a version no row ever ran.
+INSTALLED_REFS = {"xgboost": "3.1.0", "lightgbm": "4.5.0"}
+LEDGER_REFS = {"xgboost": "3.3.0", "lightgbm": "4.6.0", "catboost": "1.2.10"}
+STAMPED_REFS = LEDGER_REFS
 
 
 def _pin_environment(monkeypatch, tmp_path) -> pathlib.Path:
@@ -515,7 +517,7 @@ def test_supersede_deletes_the_file_it_replaces_and_stamps_the_gate(monkeypatch,
     """The whole write on the ordinary path: the superseded file is deleted
     (git history is the archive), the note that described it goes with it,
     the newest row's date wins, and a planed axis regains its skip gate from
-    the current sources and the installed reference libraries."""
+    the current sources and the ledger's reference versions."""
     registry = _measured_axis(
         monkeypatch,
         tmp_path,
@@ -583,7 +585,7 @@ def test_supersede_deletes_the_file_it_replaces_and_stamps_the_gate(monkeypatch,
 def test_supersede_stamps_the_reference_versions_the_rows_measured(monkeypatch, tmp_path):
     """The refs answer which reference versions the numbers were measured
     against, so the rows are the witness: a version they record beats the
-    checking machine's installed copy and the ledger, which only complete
+    ledger and the checking machine's installed copy, which only complete
     the block for a library no row exercised. The ledger learns what the
     rows saw."""
     registry = _measured_axis(
@@ -631,6 +633,91 @@ def test_supersede_stamps_the_reference_versions_the_rows_measured(monkeypatch, 
         "_": "doc",
         "xgboost": "3.3.0",
         "lightgbm": "4.7.0",
+        "catboost": "1.2.10",
+    }
+
+
+def test_supersede_completes_an_unmeasured_library_from_the_ledger(monkeypatch, tmp_path):
+    """The gpu-extreme sweep has no XGBoost row (it runs out of memory there),
+    and the 2.4.0 stamp recorded the laptop's 3.2.0 where every pod ran
+    3.3.0. A library no row exercised takes the ledger's version, the last
+    one a sweep saw, and the checking machine is consulted only when the
+    ledger has none."""
+    registry = _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-extreme",
+        {"file": "gpu-extreme-2026-08.jsonl", "sha": MEASURED_SHA, "plane": "gpu"},
+    )
+    ledger = tmp_path / "reference_versions.json"
+    ledger.write_text(
+        json.dumps({"_": "doc", "xgboost": "3.3.0", "catboost": "1.2.10"}, indent=2) + "\n"
+    )
+    _results(
+        monkeypatch,
+        tmp_path,
+        {
+            "gpu-extreme-2026-09.jsonl": _rows(
+                dict(_row(), host={"name": "pod-blackwell", "libs": {"catboost": "1.2.10"}})
+            )
+        },
+    )
+
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-extreme",
+            "--file",
+            "gpu-extreme-2026-09.jsonl",
+            "--version",
+            "2.4.0",
+        )
+        == 0
+    )
+
+    entry = json.loads(registry.read_text())["gpu-extreme"]
+    assert entry["refs"] == {"xgboost": "3.3.0", "lightgbm": "4.5.0", "catboost": "1.2.10"}
+
+
+def test_supersede_folds_only_measured_versions_into_the_ledger(monkeypatch, tmp_path):
+    """A fallback that completed the refs block is not evidence; writing it
+    back would let the checking machine's install overwrite what the last
+    sweep saw, and the next axis without that library would inherit it."""
+    _measured_axis(
+        monkeypatch,
+        tmp_path,
+        "gpu-extreme",
+        {"file": "gpu-extreme-2026-08.jsonl", "sha": MEASURED_SHA, "plane": "gpu"},
+    )
+    ledger = tmp_path / "reference_versions.json"
+    ledger.write_text(json.dumps({"_": "doc", "xgboost": "3.3.0"}, indent=2) + "\n")
+    _results(
+        monkeypatch,
+        tmp_path,
+        {
+            "gpu-extreme-2026-09.jsonl": _rows(
+                dict(_row(), host={"name": "pod-blackwell", "libs": {"catboost": "1.2.10"}})
+            )
+        },
+    )
+
+    assert (
+        _run(
+            monkeypatch,
+            "--axis",
+            "gpu-extreme",
+            "--file",
+            "gpu-extreme-2026-09.jsonl",
+            "--version",
+            "2.4.0",
+        )
+        == 0
+    )
+
+    assert json.loads(ledger.read_text()) == {
+        "_": "doc",
+        "xgboost": "3.3.0",
         "catboost": "1.2.10",
     }
 
