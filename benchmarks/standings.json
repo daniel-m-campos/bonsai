@@ -42,7 +42,7 @@
     "as_of_decision": 104,
     "hash_set": "6a0a3202be235257",
     "refs": {
-      "xgboost": "3.2.0",
+      "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
     }
@@ -133,7 +133,7 @@
     "refreshed_for": "2.4.0",
     "hash_set": "6a0a3202be235257",
     "refs": {
-      "xgboost": "3.2.0",
+      "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
     }
