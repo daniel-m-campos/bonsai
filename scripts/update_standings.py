@@ -63,23 +63,26 @@ def stamp_skip_gate(entry: dict, rows: list[dict]) -> None:
     entry["hash_set"] = check_standings.plane_digest(
         entry.get("plane") or check_standings.PLANE_GPU
     )
-    ref_versions = current_ref_versions(measured_ref_versions(rows)[0])
-    entry["refs"] = ref_versions
-    refresh_ref_ledger(ref_versions)
+    measured = measured_ref_versions(rows)[0]
+    entry["refs"] = current_ref_versions(measured)
+    refresh_ref_ledger(measured)
 
 
 def current_ref_versions(measured: dict) -> dict:
     """The measured reference versions, completed for the gate.
 
-    A library no row exercised falls back to the checking environment's
-    installed version, then to the ledger, so the gate still has a major to
-    compare against.
+    A library no row exercised falls back to the ledger, the last version a
+    sweep recorded, and only then to the checking environment's installed
+    copy, so the gate still has a major to compare against. The order
+    matters: the checking machine is usually a laptop whose bench extras
+    lag the pods, and a stamp that read it first recorded a version no row
+    ever ran.
     """
     recorded = check_standings.recorded_ref_versions()
     return {
         name: measured.get(name)
-        or check_standings.installed_ref_version(name)
         or recorded.get(name)
+        or check_standings.installed_ref_version(name)
         for name in REF_LIBRARIES
     }
 
@@ -105,7 +108,12 @@ def measured_ref_versions(rows: list[dict]) -> tuple[dict, str | None]:
 
 
 def refresh_ref_ledger(ref_versions: dict) -> None:
-    """Fold newly seen reference-library versions into the recorded ledger."""
+    """Fold the reference-library versions the rows measured into the ledger.
+
+    Only measured versions are folded: a fallback that completed the refs
+    block came from the ledger or the checking machine, and writing it back
+    would let a laptop's install overwrite what the last sweep saw.
+    """
     ledger = json.loads(check_standings.REF_VERSIONS.read_text())
     ledger.update({name: v for name, v in ref_versions.items() if v})
     check_standings.REF_VERSIONS.write_text(json.dumps(ledger, indent=2) + "\n")
