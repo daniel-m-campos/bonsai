@@ -1,11 +1,14 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cstddef>
+#include <numeric>
 #include <utility>
 #include <vector>
 
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/histogram.hpp"
 #include "bonsai/types.hpp"
 #include "test_grower_helpers.hpp"
 
@@ -289,17 +292,22 @@ TEST_CASE("LeafwiseGrower: empty row_indices yields zero-valued single leaf",
 namespace
 {
 
-ScenarioInputs regression_4096()
+ScenarioInputs regression(size_t rows, size_t features)
 {
-    auto const     batch = random_batch(4096, 6, 19);
+    auto const     batch = random_batch(rows, features, 19);
     size_t const   n     = batch.labels.size();
     ScenarioInputs in{.built = build(batch),
                       .grad  = std::vector<float>(n),
                       .hess  = std::vector<float>(n, 1.0F),
                       .rows  = iota_rows(n)};
+    // The label is a feature-weighted sum whose mean grows with the feature
+    // count, so the gradient is centred and scaled the way a base score
+    // would, or a wide draw's split gains cancel in float.
+    float const mean = std::accumulate(batch.labels.begin(), batch.labels.end(), 0.0F) /
+                       static_cast<float>(n);
     for (size_t r = 0; r < n; ++r)
     {
-        in.grad[r] = -batch.labels[r];
+        in.grad[r] = -(batch.labels[r] - mean) / static_cast<float>(features);
     }
     return in;
 }
@@ -324,7 +332,8 @@ TEST_CASE("LeafwiseGrower: a leaf budget that cannot bind grows the depthwise tr
     // above never stops an expansion: every leaf with positive gain splits,
     // the same set depthwise splits. Sibling histograms are paired by
     // subtraction in both growers, so leaf values agree to float rounding.
-    auto in = regression_4096();
+    size_t const features_at_threshold = 1024;
+    auto         in                    = regression(1024, features_at_threshold);
 
     TreeConfig cfg{.min_child_hess   = 0.0F,
                    .lambda_l2        = 1.0F,
@@ -371,10 +380,39 @@ TEST_CASE("LeafwiseGrower: a leaf budget that cannot bind grows the depthwise tr
     }
 }
 
+TEST_CASE("LeafwiseGrower: a small node arena hands a budget that cannot bind to the "
+          "level plane",
+          "[grower][leafwise][fit]")
+{
+    // INVARIANT: leaf-plane-hands-small-arenas-to-the-level-plane
+    // The plane is picked per fit from the node arena's size: below
+    // k_level_plane_arena_bytes the level plane's eight rounds beat the leaf
+    // plane's one round per leaf, above it the leaf plane's cache-resident
+    // fill wins. A binding budget never hands over.
+    auto const narrow = regression(64, 6);
+    auto const wide   = regression(64, 1024);
+    CHECK(LeafwiseGrower<>::node_arena_bytes(narrow.built.ds) ==
+          6 * k_feature_stride * sizeof(HistCell));
+    CHECK(LeafwiseGrower<>::node_arena_bytes(wide.built.ds) ==
+          1024 * k_feature_stride * sizeof(HistCell));
+    CHECK(LeafwiseGrower<>::on_level_plane(narrow.built.ds));
+    CHECK_FALSE(LeafwiseGrower<>::on_level_plane(wide.built.ds));
+
+    TreeConfig cfg{.max_depth = 5, .max_leaves = 32};
+    CHECK_FALSE(cfg.leaves_bounded());
+    cfg.max_leaves = 31;
+    CHECK(cfg.leaves_bounded());
+    cfg.max_leaves = 0;
+    CHECK_FALSE(cfg.leaves_bounded());
+    cfg.max_depth  = 40;
+    cfg.max_leaves = 1U << 31U;
+    CHECK(cfg.leaves_bounded());
+}
+
 TEST_CASE("LeafwiseGrower: a budget one under 2^depth binds",
           "[grower][leafwise][edge]")
 {
-    auto              in = regression_4096();
+    auto              in = regression(4096, 6);
     TreeConfig        cfg{.min_child_hess   = 0.0F,
                           .lambda_l2        = 1.0F,
                           .max_depth        = 4,

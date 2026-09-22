@@ -479,10 +479,19 @@ class LeafwiseGrower : public GrowerHost<EngineT>
     {
         return seam().begin_leaf(ds, config(), kind, scores, learning_rate);
     }
+    // The plane a budget that cannot bind is grown on: the level plane while
+    // one node's arena is under the pinned threshold, else this one
+    // (invariants: leaf-plane-hands-small-arenas-to-the-level-plane).
+    static bool   on_level_plane(Dataset const &ds);
+    static size_t node_arena_bytes(Dataset const &ds);
 
   private:
     using Host::begin_grow, Host::config, Host::feature_sample, Host::seam;
-    std::vector<std::vector<feature_id_t>> interaction_groups_;
+    GrowResult<Tree> grow_leaves(Dataset const &ds, floats_view grad, floats_view hess,
+                                 RowSelection selection);
+    std::vector<std::vector<feature_id_t>>  interaction_groups_;
+    std::optional<DepthwiseGrower<EngineT>> level_plane_;
+    bool                                    level_plane_noted_ = false;
 };
 
 } // namespace bonsai

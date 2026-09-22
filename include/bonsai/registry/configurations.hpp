@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cstdint>
-
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/dispatch_config.hpp"
@@ -38,25 +36,16 @@ template <typename G, typename Sa> struct booster_for<TypeList<SoftmaxObjective,
 
 template <typename Combo> using BoosterFor = typename detail::booster_for<Combo>::type;
 
-// The triple the table is searched with: a leafwise budget of 0 or of
-// 2^max_depth and above cannot bind, so that grower becomes its engine's
-// depthwise one; cfg.dispatch stays put (invariants: leaf-budget-route-keeps-the-name).
+// The triple the table is searched with: a CUDA leafwise budget that cannot
+// bind makes that grower cuda_depthwise. The host leaf plane keeps its grower
+// and picks its plane per fit, once it can see the node arena's size
+// (LeafwiseGrower::grow). cfg.dispatch stays put (invariants:
+// leaf-budget-route-keeps-the-name).
 inline DispatchConfig resolve_dispatch(Config const &cfg)
 {
-    TreeConfig const &tree        = cfg.tree_config;
-    bool const        budget_free = tree.max_leaves == 0;
-    bool const        budget_over =
-        tree.max_depth < 32 && tree.max_leaves >= (uint32_t{1} << tree.max_depth);
     DispatchConfig disp = cfg.dispatch;
-    if (!budget_free && !budget_over)
-    {
-        return disp;
-    }
-    if (disp.grower_name == impl_name<LeafwiseGrower<CpuHistogramEngine>>::value)
-    {
-        disp.grower_name = impl_name<DepthwiseGrower<CpuHistogramEngine>>::value;
-    }
-    else if (disp.grower_name == impl_name<CudaLeafwiseGrower>::value)
+    if (!cfg.tree_config.leaves_bounded() &&
+        disp.grower_name == impl_name<CudaLeafwiseGrower>::value)
     {
         disp.grower_name = impl_name<CudaDepthwiseGrower>::value;
     }
