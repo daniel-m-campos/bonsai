@@ -308,16 +308,9 @@ def run_jobs(
     sink = _Sink(out_path=out_path, suite=suite, knobs=knobs, host=host, run_label=run_label)
     done = resume_keys(resume_path) if resume_path else set()
     for job in jobs:
-        cell, variant, threads = (
-            job[runlog.Row.CELL],
-            job[runlog.Row.VARIANT],
-            job[runlog.Row.THREADS],
-        )
+        cell, variant = job[runlog.Row.CELL], job[runlog.Row.VARIANT]
         v = resolve(variant)
-        # CatBoost-GPU caps borders at 254 inside catboost_core; the row must
-        # record the bins that actually ran (protocol: bins_effective).
-        if v.lib == Lib.CATBOOST and v.device == Device.CUDA and cell["bins"] > 255:
-            cell = dict(cell, bins_effective=255)
+        cell = _bins_effective(cell, v)
         skip = skip_reason(job, host, gates)
         if skip:
             _handle_skip(sink, job, cell, skip, dry_run=dry_run, done=done)
@@ -327,26 +320,15 @@ def run_jobs(
         if dry_run:
             _print_dry_plan(sink, job, cell, timeout, done)
             continue
-        sample = mem_sampler and v.device == Device.CUDA
-        for rep in range(job["repeats"]):
-            if _job_key(job, rep, sink.host_name, run_label) in done:
-                print(
-                    f"  {variant:>24} t={threads:<3} {cell['rows']}x"
-                    f"{cell['cols']}x{cell['bins']} rep={rep} -> resume-skip"
-                )
-                continue
-            child = {
-                runlog.Row.CELL: cell,
-                runlog.Row.VARIANT: variant,
-                runlog.Row.THREADS: threads,
-            }
-            sink.emit(
-                cell,
-                variant,
-                threads,
-                rep,
-                run_one(child, timeout, sampler=sample, data_cache=data_cache),
-            )
+        _run_repeats(
+            sink,
+            job,
+            cell,
+            timeout,
+            done=done,
+            sampler=mem_sampler and v.device == Device.CUDA,
+            data_cache=data_cache,
+        )
     return 0
 
 
@@ -594,6 +576,50 @@ def _handle_skip(
         )
         return
     print(f"  {variant:>24} {cell['rows']}x{cell['cols']}x{cell['bins']} -> {skip[0]}: {skip[1]}")
+
+
+def _bins_effective(cell: dict, v) -> dict:
+    """The cell with the bins that will actually run.
+
+    CatBoost-GPU caps borders at 254 inside catboost_core; the row must
+    record the bins that actually ran (protocol: bins_effective).
+    """
+    if v.lib == Lib.CATBOOST and v.device == Device.CUDA and cell["bins"] > 255:
+        return dict(cell, bins_effective=255)
+    return cell
+
+
+def _run_repeats(
+    sink: _Sink,
+    job: dict,
+    cell: dict,
+    timeout: int,
+    *,
+    done: set[tuple],
+    sampler: bool,
+    data_cache: str | None,
+):
+    """Fit every repeat of one job not already in the resume set, one row each."""
+    variant, threads = job[runlog.Row.VARIANT], job[runlog.Row.THREADS]
+    for rep in range(job["repeats"]):
+        if _job_key(job, rep, sink.host_name, sink.run_label) in done:
+            print(
+                f"  {variant:>24} t={threads:<3} {cell['rows']}x"
+                f"{cell['cols']}x{cell['bins']} rep={rep} -> resume-skip"
+            )
+            continue
+        child = {
+            runlog.Row.CELL: cell,
+            runlog.Row.VARIANT: variant,
+            runlog.Row.THREADS: threads,
+        }
+        sink.emit(
+            cell,
+            variant,
+            threads,
+            rep,
+            run_one(child, timeout, sampler=sampler, data_cache=data_cache),
+        )
 
 
 def _print_dry_plan(sink: _Sink, job: dict, cell: dict, timeout: int, done: set[tuple]):
