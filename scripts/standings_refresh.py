@@ -301,37 +301,13 @@ def measure(args: argparse.Namespace) -> int:
         return 1
     axes = _requested_axes(args.axes)
     if args.only_stale:
-        stale = stale_axes()
-        current = [a for a in axes if a not in stale]
-        axes = [a for a in axes if a in stale]
-        if current:
-            print(
-                f"--only-stale: {', '.join(current)} unchanged since their last refresh, skipping"
-            )
+        axes = _requested_stale(axes)
         if not axes:
             print("every requested axis is current; nothing to measure")
             return 0
     sessions = _sessions(axes, args.cpu_plane_host)
-    cpu_session = next((sax for plane, sax in sessions if plane == PLANE_CPU), None)
-    if cpu_session is not None:
-        # One vCPU per thread is the whole sizing rule for a cpu pod: it
-        # enforces the purchase as a cpuset, so a thread that spins at a
-        # barrier burns only the core it already owns.
-        needed = max(spec_threads(axis) for axis in cpu_session or [AB_AXES[PLANE_CPU]])
-        what = ", ".join(cpu_session) or "the cpu A/B"
-        print(
-            f"cpu plane: {what} at {needed}t need >= {needed} vCPU (one "
-            f"per thread, because a cpu pod caps by cpuset); renting "
-            f"{args.cpu_vcpu} x {CPU_FLAVOR}"
-        )
-        if args.cpu_vcpu < needed:
-            print(
-                f"ERROR: --cpu-vcpu {args.cpu_vcpu} is below the {needed} "
-                "the sizing rule requires; the fit would run more threads "
-                "than the cpuset has cpus",
-                file=sys.stderr,
-            )
-            return 1
+    if not _cpu_pod_sized(sessions, args.cpu_vcpu):
+        return 1
     key = os.environ.get("RUNPOD_API_KEY")
     gpus = (args.gpu_type,) if args.gpu_type else GPUS
     if args.dry_run:
@@ -358,6 +334,60 @@ def measure(args: argparse.Namespace) -> int:
             pubkey=pubkey,
             gpus=gpus,
         )
+    if not _delivered(out_dir, axes):
+        return 1
+    print(
+        f"results in {out_dir}/; next:\n"
+        f"  python3 scripts/standings_refresh.py supersede "
+        f"--results-dir {out_dir}"
+    )
+    return 0
+
+
+def _requested_stale(axes: list[str]) -> list[str]:
+    """The requested axes whose inputs moved since their last refresh, the rest named."""
+    stale = stale_axes()
+    current = [a for a in axes if a not in stale]
+    if current:
+        print(f"--only-stale: {', '.join(current)} unchanged since their last refresh, skipping")
+    return [a for a in axes if a in stale]
+
+
+def _cpu_pod_sized(sessions: list[tuple[str, list[str]]], cpu_vcpu: int) -> bool:
+    """Whether the CPU rental holds the threads its session runs.
+
+    One vCPU per thread is the whole sizing rule for a cpu pod: it
+    enforces the purchase as a cpuset, so a thread that spins at a
+    barrier burns only the core it already owns.
+    """
+    cpu_session = next((sax for plane, sax in sessions if plane == PLANE_CPU), None)
+    if cpu_session is None:
+        return True
+    needed = max(spec_threads(axis) for axis in cpu_session or [AB_AXES[PLANE_CPU]])
+    what = ", ".join(cpu_session) or "the cpu A/B"
+    print(
+        f"cpu plane: {what} at {needed}t need >= {needed} vCPU (one "
+        f"per thread, because a cpu pod caps by cpuset); renting "
+        f"{cpu_vcpu} x {CPU_FLAVOR}"
+    )
+    if cpu_vcpu < needed:
+        print(
+            f"ERROR: --cpu-vcpu {cpu_vcpu} is below the {needed} "
+            "the sizing rule requires; the fit would run more threads "
+            "than the cpuset has cpus",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def _delivered(out_dir: pathlib.Path, axes: list[str]) -> bool:
+    """Whether every requested axis landed rows and no gate failed one.
+
+    DONE only means the pod script ran to its last line; an axis its RAM
+    guard skipped ends there with no rows and no failure count, so the
+    delivery is verified file by file rather than trusted from the marker.
+    """
     quota_fail = out_dir / QUOTA_FAIL
     if quota_fail.exists():
         print(
@@ -365,9 +395,6 @@ def measure(args: argparse.Namespace) -> int:
             "QUOTAFAIL-* and must not be superseded:\n" + quota_fail.read_text().rstrip(),
             file=sys.stderr,
         )
-    # DONE only means the pod script ran to its last line; an axis its RAM
-    # guard skipped ends there with no rows and no failure count, so the
-    # delivery is verified file by file rather than trusted from the marker.
     missing = [
         a
         for a in axes
@@ -380,14 +407,7 @@ def measure(args: argparse.Namespace) -> int:
             "Re-run these axes on a host that can take them.",
             file=sys.stderr,
         )
-    if quota_fail.exists() or missing:
-        return 1
-    print(
-        f"results in {out_dir}/; next:\n"
-        f"  python3 scripts/standings_refresh.py supersede "
-        f"--results-dir {out_dir}"
-    )
-    return 0
+    return not (quota_fail.exists() or missing)
 
 
 def _sessions(axes: list[str], cpu_plane_host: str) -> list[tuple[str, list[str]]]:

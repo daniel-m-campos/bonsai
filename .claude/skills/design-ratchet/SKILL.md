@@ -41,7 +41,7 @@ Four ratchet rounds settled what this skill is for. `clone_windows` fell from 43
 | the split touches training or serialization | `scripts/model_hash.py` unchanged | the commit's `Ran:` line |
 | the split is inside a kernel or fill loop | a SASS diff or a same-pod min before merge, else leave it whole and say so | the perf ledger |
 
-Pin before moving, always. The pin is the durable output: the rounds gave `standings_refresh.py` its first 17 tests and `comment_lint.py` its first 18, and the greedy cut walk's exact-cut pin caught its own first draft copying from a dangling span. Targets come from reading the diff, not from the scoreboard: the exact-window clone measure misses a copy whose lines drifted, and it does not see complexity at all. Reasons a function stays whole are few and named: a hot loop, a constructor whose width is the design, a body with no injection seam (`standings_refresh.measure` rents a pod).
+Pin before moving, always. The pin is the durable output: the rounds gave `standings_refresh.py` its first 17 tests and `comment_lint.py` its first 18, and the greedy cut walk's exact-cut pin caught its own first draft copying from a dangling span. Targets come from reading the diff, not from the scoreboard: the exact-window clone measure misses a copy whose lines drifted, and it does not see complexity at all. Reasons a function stays whole are few and named: a hot loop, a constructor whose width is the design, a body with no injection seam (the rental loop in `standings_refresh.measure`; the checks around it split once `_run_session` was stubbed).
 
 Only a feature or fix PR can score on the ledger below. A ratchet PR farms the metric it is meant to test.
 
