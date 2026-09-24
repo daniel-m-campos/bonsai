@@ -344,13 +344,9 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     )
 
 
-def run_lightgbm(train_df, test_df, hp: HP, valid_df=None) -> Result:
-    """The lightgbm reference arm at mapped knobs."""
-    import lightgbm as lgb
-
-    feature_cols = [c for c in train_df.columns if c != LABEL_COL]
-    dtrain = lgb.Dataset(train_df[feature_cols], label=train_df[LABEL_COL])
-    params = {
+def _lgbm_params(hp: HP, n_features: int) -> dict:
+    """The lightgbm params dict for one arm, the mapped knobs and nothing else."""
+    return {
         "objective": LGBM_OBJECTIVE[hp.objective],
         **({"num_class": hp.n_classes} if hp.objective == "softmax" else {}),
         **({"alpha": hp.huber_delta} if hp.objective == "huber" else {}),
@@ -371,7 +367,7 @@ def run_lightgbm(train_df, test_df, hp: HP, valid_df=None) -> Result:
         "feature_fraction": hp.feature_fraction,
         **({"boosting": "dart", "drop_rate": hp.dart_drop_rate} if hp.dart_drop_rate > 0 else {}),
         **(
-            {"monotone_constraints": padded_constraints(hp, len(feature_cols))}
+            {"monotone_constraints": padded_constraints(hp, n_features)}
             if hp.monotone_constraints
             else {}
         ),
@@ -381,6 +377,15 @@ def run_lightgbm(train_df, test_df, hp: HP, valid_df=None) -> Result:
             else {}
         ),
     }
+
+
+def run_lightgbm(train_df, test_df, hp: HP, valid_df=None) -> Result:
+    """The lightgbm reference arm at mapped knobs."""
+    import lightgbm as lgb
+
+    feature_cols = [c for c in train_df.columns if c != LABEL_COL]
+    dtrain = lgb.Dataset(train_df[feature_cols], label=train_df[LABEL_COL])
+    params = _lgbm_params(hp, len(feature_cols))
     fit_kwargs = {}
     if valid_df is not None and hp.early_stopping_rounds > 0:
         dvalid = lgb.Dataset(valid_df[feature_cols], label=valid_df[LABEL_COL], reference=dtrain)
