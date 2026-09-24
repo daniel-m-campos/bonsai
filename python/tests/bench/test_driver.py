@@ -498,3 +498,68 @@ def test_timeout_and_sampler_resilience():
         _time.sleep(0.1)
     got = sm.result()
     assert got["samples"] == 2 and got.get("stopped_early") is True
+
+
+def test_dry_run_plans_the_capped_timeout_and_the_resume_skips(monkeypatch, capsys):
+    """A dry run prints one plan line per job: the timeout is the cell's own
+    capped by --timeout-cap, the repeats already in the resume file are
+    counted, nothing is written and no output directory appears."""
+    import pathlib
+
+    from bonsai.bench import driver
+
+    host = {
+        "name": "h",
+        "gpu": None,
+        "gpu_vram_gb": None,
+        "cpu_model": "t",
+        "n_vcpu": 8,
+        "ram_gb": 64.0,
+        "os": "t",
+        "python": "3",
+        "libs": {},
+    }
+    cell = {
+        "axis": "cell",
+        "rows": 1000,
+        "cols": 10,
+        "bins": 255,
+        "depth": 8,
+        "iters": 100,
+        "lr": 0.1,
+        "informative": 5,
+        "n_test": 200,
+        "seed": 42,
+        "timeout_s": 9999,
+    }
+    job = {"cell": cell, "variant": "bonsai_depthwise", "threads": 4, "repeats": 2}
+    monkeypatch.setattr(driver, "run_one", lambda *a, **kw: pytest.fail("a dry run fits nothing"))
+    with tempfile.TemporaryDirectory() as td:
+        prior = pathlib.Path(td) / "prior.jsonl"
+        prior.write_text(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "variant": "bonsai_depthwise",
+                    "threads": 4,
+                    "repeat": 0,
+                    "host": {"name": "h"},
+                    "cell": cell,
+                }
+            )
+            + "\n"
+        )
+        out = pathlib.Path(td) / "new" / "o.jsonl"
+        rc = driver.run_jobs(
+            [job],
+            out=str(out),
+            suite="test",
+            knobs={},
+            host=host,
+            dry_run=True,
+            resume_path=str(prior),
+            timeout_cap=600,
+        )
+        assert rc == 0 and not out.parent.exists()
+    line = capsys.readouterr().out.strip()
+    assert line.endswith("1000x10x255 timeout=600s repeats=2 resume-skip=1/2"), line
