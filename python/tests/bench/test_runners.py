@@ -786,3 +786,118 @@ def test_variant_canonicalization():
     s = {"name": "t", "cells": [{"rows": 1000, "cols": 8}], "variants": ["bonsai_dw", "xgb"]}
     jobs = spec_mod.expand(s)
     assert [j["variant"] for j in jobs] == ["bonsai_depthwise", "xgb_hist"]
+
+
+def test_bonsai_fused_contribs_explains_from_the_raw_matrix(monkeypatch):
+    """The fused arm built no train Dataset, so pred_contribs takes the raw
+    test matrix and bins it on the host; the row reports the ingest/train
+    split as None because the one-call form has none."""
+    import bonsai
+    from bonsai.bench import runners
+
+    explained = []
+    real_train = bonsai.train
+
+    class _Spy:
+        def __init__(self, model):
+            self._model = model
+
+        def pred_contribs(self, data):
+            explained.append(data)
+            return self._model.pred_contribs(data)
+
+        def __getattr__(self, name):
+            return getattr(self._model, name)
+
+    monkeypatch.setattr(bonsai, "train", lambda *a, **kw: _Spy(real_train(*a, **kw)))
+    rng = np.random.default_rng(0)
+    X = rng.random((600, 6), dtype=np.float32)
+    y = X[:, :3].sum(axis=1).astype(np.float32)
+    cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5, "contribs": True}
+    Xte = X[500:]
+    out = runners.run_bonsai(
+        {"cell": cell, "variant": "bonsai_depthwise", "threads": 1, "fused": True},
+        X[:500],
+        y[:500],
+        Xte,
+        y[500:],
+    )
+    assert len(explained) == 1 and explained[0] is Xte
+    assert out["ingest_s"] is None and out["train_s"] is None, out
+    assert out["contribs_additivity"] < 1e-6, out
+
+
+def test_bonsai_contribs_refuses_a_non_identity_link():
+    """Additivity is checked against predict()'s output, which is the raw
+    margin only under mse; a binary cell asking for contribs is a spec error."""
+    from bonsai.bench import runners
+
+    rng = np.random.default_rng(1)
+    X = rng.random((300, 4), dtype=np.float32)
+    y = (X[:, 0] > 0.5).astype(np.float32)
+    cell = {
+        "lr": 0.1,
+        "depth": 3,
+        "bins": 63,
+        "seed": 1,
+        "iters": 3,
+        "task": "binary",
+        "contribs": True,
+    }
+    with pytest.raises(RuntimeError, match="contribs additivity"):
+        runners.run_bonsai(
+            {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
+            X[:250],
+            y[:250],
+            X[250:],
+            y[250:],
+        )
+
+
+def test_worker_rates_and_rounding_are_exact(monkeypatch):
+    """The child's payload is the row: rates are charged against the rows
+    actually fit (an eval cell carves some off), seconds round to 3 places,
+    additivity to 8, R2 to 4, and the key order is what the parent folds."""
+    from bonsai.bench import runners
+    from bonsai.bench.variants import Lib
+
+    monkeypatch.delenv("BONSAI_BENCH_DATA_CACHE", raising=False)
+    timed = {
+        "fit_s": 2.0004,
+        "ingest_s": 0.50006,
+        "train_s": 1.50034,
+        "predict_s": 0.25,
+        "contribs_s": 0.125,
+        "contribs_additivity": 1.23456789e-7,
+        "r2_train": 0.987654321,
+        "r2_test": 0.876543219,
+    }
+    monkeypatch.setitem(runners.RUNNERS, Lib.BONSAI, lambda spec, X, y, Xte, yte: dict(timed))
+    monkeypatch.setattr(runners.runlog, "peak_rss_gb", lambda: 0.5)
+    monkeypatch.setattr(runners.runlog, "lib_versions", lambda: {"bonsai": "0"})
+    cell = {
+        "rows": 1000,
+        "cols": 4,
+        "seed": 3,
+        "n_test": 100,
+        "informative": 2,
+        "eval_mode": "eval",
+        "eval_frac": 0.2,
+        "contribs": True,
+    }
+    out = runners.worker({"cell": cell, "variant": "bonsai_depthwise", "threads": 1})
+    assert list(out.items()) == [
+        ("fit_s", 2.0),
+        ("ingest_s", 0.5),
+        ("train_s", 1.5),
+        ("predict_s", 0.25),
+        ("contribs_s", 0.125),
+        ("contribs_additivity", 1.2e-07),
+        ("r2_train", 0.9877),
+        ("r2_test", 0.8765),
+        ("peak_rss_gb", 0.5),
+        ("fit_rows_per_s", 400),
+        ("predict_rows_per_s", 400),
+        ("contribs_rows_per_s", 800),
+        ("libs", {"bonsai": "0"}),
+    ]
