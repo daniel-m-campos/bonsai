@@ -783,15 +783,7 @@ def fused_anchor_line() -> str:
     name = _STANDINGS_REG[Axis.GPU_TALL].get("companion")
     if not name or not (RESULTS / name).exists():
         return ""
-    rows = [r for r in load_jsonl(name) if not r.get("skipped")]
-    fused = [r[K.FIT_S] for r in rows if r.get("arm") == "fused" and r.get(K.FIT_S) is not None]
-    split = [
-        r[K.INGEST_S] + r[K.TRAIN_S]
-        for r in rows
-        if r.get("arm") == "two_step"
-        and r.get(K.INGEST_S) is not None
-        and r.get(K.TRAIN_S) is not None
-    ]
+    fused, split = _parity_arms([r for r in load_jsonl(name) if not r.get("skipped")])
     if not fused or not split:
         return ""
     return (
@@ -802,6 +794,19 @@ def fused_anchor_line() -> str:
         f"interleaved parity arm, which is what makes reporting the "
         f"seam honest.\n"
     )
+
+
+def _parity_arms(rows: list[dict]) -> tuple[list[float], list[float]]:
+    """The fused fit totals and the two-step ingest+train totals of a parity run."""
+    fused = [r[K.FIT_S] for r in rows if r.get("arm") == "fused" and r.get(K.FIT_S) is not None]
+    split = [
+        r[K.INGEST_S] + r[K.TRAIN_S]
+        for r in rows
+        if r.get("arm") == "two_step"
+        and r.get(K.INGEST_S) is not None
+        and r.get(K.TRAIN_S) is not None
+    ]
+    return fused, split
 
 
 def ab_section() -> str:
@@ -897,13 +902,7 @@ def shap_section() -> str:
     fid_body: list[list[str]] = []
     for key in cells:
         label = f"{key[0]:,} x {key[1]}, depth {key[2]}"
-        times = [stat(v, key, K.CONTRIBS_S, min) for v, _ in arms]
-        finite = [t for t in times if t is not None]
-        lo = min(finite) if finite else None
-        time_body.append(
-            [label]
-            + ["-" if t is None else (f"**{t:.2f}**" if t == lo else f"{t:.2f}") for t in times]
-        )
+        time_body.append([label, *_time_cells([stat(v, key, K.CONTRIBS_S, min) for v, _ in arms])])
         fid_body.append(
             [label]
             + [
@@ -924,6 +923,13 @@ One `pred_contribs` call over the full matrix, seconds, best repeat, bold best p
 
 
 # Perf: private panel helpers ======================================================================
+
+
+def _time_cells(times: list[float | None]) -> list[str]:
+    """One row of seconds, the best bolded, a missing arm as a dash."""
+    finite = [t for t in times if t is not None]
+    lo = min(finite) if finite else None
+    return ["-" if t is None else _bold(f"{t:.2f}", t == lo) for t in times]
 
 
 def _arm_cells(r: dict | None, columns: tuple[str, ...]) -> dict[str, tuple[str, float | None]]:
@@ -1184,7 +1190,29 @@ def code_metrics_section() -> str:
     offenders = [r for r in rows if r["kind"] == "offender"]
     s = next(r for r in rows if r["kind"] == "surface")
 
-    plane_table = md_table(
+    plane_table = _plane_table(planes)
+    offender_table = _offender_table(offenders)
+    surface_line = _surface_line(s)
+
+    return f"""## The code division
+
+Self-measurement of the bonsai tree, no comparison: line counts and lizard complexity per plane at one SHA. LOC is `wc -l`; NLOC is lizard's non-blank, non-comment count; CCN is cyclomatic complexity (independent paths through a function). The plane map and the non-claims: [the benchmark protocol](benchmark-protocol.md#the-code-division).
+
+{plane_table}
+
+The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
+
+{offender_table}
+
+{surface_line}
+
+{provenance([standings_file(Axis.CODE)], f"lizard {meta['tool_version']} (`{meta['tool_pin']}`) at `{meta['git_sha'][:12]}`, {meta['date']}; regenerate with [scripts/measure_complexity.py](../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).")}
+"""
+
+
+def _plane_table(planes: list[dict]) -> str:
+    """Per-plane line and complexity counts, with a totals row."""
+    return md_table(
         ["plane", "files", "LOC", "NLOC", "functions", "mean CCN", "max CCN"],
         [
             [
@@ -1208,7 +1236,10 @@ def code_metrics_section() -> str:
         ],
     )
 
-    offender_table = md_table(
+
+def _offender_table(offenders: list[dict]) -> str:
+    """The highest-CCN functions by name."""
+    return md_table(
         ["function", "file", "CCN", "NLOC"],
         [
             [f"`{o['function']}`", f"`{o['file']}`", str(o["ccn"]), str(o["nloc"])]
@@ -1216,9 +1247,12 @@ def code_metrics_section() -> str:
         ],
     )
 
+
+def _surface_line(s: dict) -> str:
+    """The surface counts and the dependency rule in one sentence."""
     d = s["dispatch_factors"]
     py_dep = "dependency" if s["python_runtime_deps"] == 1 else "dependencies"
-    surface_line = (
+    return (
         f"Surface counts: {s['parameters']} config parameters, "
         f"{s['dispatch_combinations']} registered dispatch combinations "
         f"({d['objectives']} objectives x {d['growers']} growers x {d['samplers']} samplers), "
@@ -1228,21 +1262,6 @@ def code_metrics_section() -> str:
         f"compiled-in C++ libraries ({', '.join(s['cpp_compiled_dep_names'])}), "
         f"the rule stated in the protocol."
     )
-
-    return f"""## The code division
-
-Self-measurement of the bonsai tree, no comparison: line counts and lizard complexity per plane at one SHA. LOC is `wc -l`; NLOC is lizard's non-blank, non-comment count; CCN is cyclomatic complexity (independent paths through a function). The plane map and the non-claims: [the benchmark protocol](benchmark-protocol.md#the-code-division).
-
-{plane_table}
-
-The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
-
-{offender_table}
-
-{surface_line}
-
-{provenance([standings_file(Axis.CODE)], f"lizard {meta['tool_version']} (`{meta['tool_pin']}`) at `{meta['git_sha'][:12]}`, {meta['date']}; regenerate with [scripts/measure_complexity.py](../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).")}
-"""
 
 
 # assembly =========================================================================================
