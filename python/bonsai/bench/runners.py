@@ -186,20 +186,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     with _phase(timed, runlog.Row.PREDICT_S):
         pred_te = np.asarray(model.predict(Xte))
     if c.get("contribs"):
-        if task != "reg":
-            raise RuntimeError(
-                "unsupported: contribs additivity is only valid under mse's "
-                "identity link, where pred_te is the raw pre-link margin"
-            )
-        # reference=ds inherits ds's cut points AND device, so on a cuda
-        # arm ds_test routes pred_contribs through the device kernel
-        # exactly as reference=ds already routes predict; the fused arm
-        # built no train Dataset and falls back to the raw matrix, which
-        # pred_contribs bins on the host.
-        ds_test = bonsai.Dataset(Xte, yte, reference=ds) if ds is not None else None
-        with _phase(timed, runlog.Row.CONTRIBS_S):
-            phi = np.asarray(model.pred_contribs(ds_test if ds_test is not None else Xte))
-        timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, pred_te)
+        _contribs_phase(model, ds, task, Xte, yte, pred_te, timed)
     return _score(
         task,
         timed,
@@ -610,19 +597,7 @@ def worker(spec: dict) -> dict:
         run(micro, X[:8192], y[:8192], Xte[:1024], yte[:1024])
     out = run(spec, X, y, Xte, yte)
     out[runlog.Row.PEAK_RSS_GB] = runlog.peak_rss_gb()
-    # An eval-mode cell fits fewer rows than it names: the rate is charged
-    # against the rows that were actually fit, not the cell's nominal count.
-    fit_rows = c["rows"] - eval_rows(c, c["rows"])
-    out["fit_rows_per_s"] = (
-        round(fit_rows / out[runlog.Row.FIT_S]) if out[runlog.Row.FIT_S] else None
-    )
-    out["predict_rows_per_s"] = (
-        round(c["n_test"] / out[runlog.Row.PREDICT_S]) if out[runlog.Row.PREDICT_S] else None
-    )
-    if runlog.Row.CONTRIBS_S in out:
-        out[runlog.Row.CONTRIBS_ROWS_PER_S] = (
-            round(c["n_test"] / out[runlog.Row.CONTRIBS_S]) if out[runlog.Row.CONTRIBS_S] else None
-        )
+    _rates(out, c)
     for k in (runlog.Row.FIT_S, runlog.Row.INGEST_S, runlog.Row.TRAIN_S, runlog.Row.PREDICT_S):
         out[k] = round(out[k], 3) if out[k] is not None else None
     if runlog.Row.CONTRIBS_S in out:
@@ -651,6 +626,48 @@ def _phase(timed: dict, name: str):
     t0 = time.perf_counter()
     yield
     timed[name] = time.perf_counter() - t0
+
+
+def _contribs_phase(model, ds, task: str, Xte, yte, pred_te: np.ndarray, timed: dict) -> None:
+    """Time one pred_contribs call over the test rows and record its additivity.
+
+    reference=ds inherits ds's cut points AND device, so on a cuda arm
+    ds_test routes pred_contribs through the device kernel exactly as
+    reference=ds already routes predict; the fused arm built no train
+    Dataset and falls back to the raw matrix, which pred_contribs bins on
+    the host. Additivity is checked against pred_te, which is the raw
+    margin only under mse's identity link.
+    """
+    import bonsai
+
+    if task != "reg":
+        raise RuntimeError(
+            "unsupported: contribs additivity is only valid under mse's "
+            "identity link, where pred_te is the raw pre-link margin"
+        )
+    ds_test = bonsai.Dataset(Xte, yte, reference=ds) if ds is not None else None
+    with _phase(timed, runlog.Row.CONTRIBS_S):
+        phi = np.asarray(model.pred_contribs(ds_test if ds_test is not None else Xte))
+    timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, pred_te)
+
+
+def _rates(out: dict, c: dict) -> None:
+    """Add the rows-per-second rates, from the unrounded seconds.
+
+    An eval-mode cell fits fewer rows than it names: the rate is charged
+    against the rows that were actually fit, not the cell's nominal count.
+    """
+    fit_rows = c["rows"] - eval_rows(c, c["rows"])
+    out["fit_rows_per_s"] = (
+        round(fit_rows / out[runlog.Row.FIT_S]) if out[runlog.Row.FIT_S] else None
+    )
+    out["predict_rows_per_s"] = (
+        round(c["n_test"] / out[runlog.Row.PREDICT_S]) if out[runlog.Row.PREDICT_S] else None
+    )
+    if runlog.Row.CONTRIBS_S in out:
+        out[runlog.Row.CONTRIBS_ROWS_PER_S] = (
+            round(c["n_test"] / out[runlog.Row.CONTRIBS_S]) if out[runlog.Row.CONTRIBS_S] else None
+        )
 
 
 def _score(
