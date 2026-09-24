@@ -65,31 +65,40 @@ def scan_tests() -> list[dict]:
                 m = MARKER.match(line)
                 if not m:
                     continue
-                claim: list[str] = []
-                j = i + 1
-                while j < len(lines):
-                    comment = COMMENT.match(lines[j])
-                    if not comment:
-                        break
-                    body = comment.group(1).strip()
-                    if body:
-                        claim.append(body)
-                    j += 1
-                name = ""
-                for k in range(j, min(j + 4, len(lines))):
-                    hit = CPP_CASE.match(lines[k]) or PY_DEF.match(lines[k])
-                    if hit:
-                        name = hit.group(1)
-                        break
+                claim, after_claim = _claim(lines, i + 1)
                 found.append(
                     {
                         "id": m.group(1),
-                        "claim": " ".join(claim),
-                        "test": name,
+                        "claim": claim,
+                        "test": _test_name(lines, after_claim),
                         "path": path.relative_to(REPO).as_posix(),
                     }
                 )
     return found
+
+
+def _claim(lines: list[str], start: int) -> tuple[str, int]:
+    """The comment block below a marker, joined, and the index of the line after it."""
+    claim: list[str] = []
+    j = start
+    while j < len(lines):
+        comment = COMMENT.match(lines[j])
+        if not comment:
+            break
+        body = comment.group(1).strip()
+        if body:
+            claim.append(body)
+        j += 1
+    return " ".join(claim), j
+
+
+def _test_name(lines: list[str], start: int) -> str:
+    """The test declared within four lines of a claim, or empty."""
+    for k in range(start, min(start + 4, len(lines))):
+        hit = CPP_CASE.match(lines[k]) or PY_DEF.match(lines[k])
+        if hit:
+            return hit.group(1)
+    return ""
 
 
 def render(entries: list[dict], residue: str) -> str:
