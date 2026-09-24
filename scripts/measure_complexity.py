@@ -279,6 +279,66 @@ def out_path() -> pathlib.Path:
     return OUT_DIR / f"code-metrics-{ym}.jsonl"
 
 
+def plane_rows(
+    planes: dict[str, list[str]], functions: list[dict], nloc: dict[str, int]
+) -> list[dict]:
+    """One row per plane: file, line and function counts with mean and max CCN."""
+    rows: list[dict] = []
+    for name in PLANE_MAP:
+        files = planes[name]
+        fns = [f for f in functions if f["file"] in set(files)]
+        loc = sum((REPO / f).read_bytes().count(b"\n") for f in files)
+        rows.append(
+            {
+                "kind": "plane",
+                "plane": name,
+                "files": len(files),
+                "loc": loc,
+                "nloc": sum(nloc[f] for f in files),
+                "functions": len(fns),
+                "ccn_mean": round(sum(f["ccn"] for f in fns) / len(fns), 2),
+                "ccn_max": max(f["ccn"] for f in fns),
+            }
+        )
+    return rows
+
+
+def offender_rows(planes: dict[str, list[str]], functions: list[dict]) -> list[dict]:
+    """The five highest-CCN functions across the core headers and engine impl."""
+    core = {f for n in (Planes.CORE_HEADERS, Planes.ENGINE_IMPL) for f in planes[n]}
+    offenders = sorted(
+        (f for f in functions if f["file"] in core),
+        key=lambda f: (-f["ccn"], f["file"], f["start"]),
+    )
+    return [
+        {
+            "kind": "offender",
+            "rank": rank,
+            "function": f["name"],
+            "file": f["file"],
+            "ccn": f["ccn"],
+            "nloc": f["nloc"],
+        }
+        for rank, f in enumerate(offenders[:5], 1)
+    ]
+
+
+def surface_row() -> dict:
+    """The parameter, dispatch, public-API and dependency counts."""
+    factors = dispatch_factors()
+    combos = 1
+    for n in factors.values():
+        combos *= n
+    return {
+        "kind": "surface",
+        "parameters": parameter_count(),
+        "dispatch_combinations": combos,
+        "dispatch_factors": factors,
+        "python_public_api": python_public_api(),
+        **runtime_deps(),
+    }
+
+
 def main() -> int:
     version = run_lizard([], "--version").strip()
     planes = plane_files()
@@ -306,54 +366,9 @@ def main() -> int:
         }
     ]
 
-    for name in PLANE_MAP:
-        files = planes[name]
-        fns = [f for f in functions if f["file"] in set(files)]
-        loc = sum((REPO / f).read_bytes().count(b"\n") for f in files)
-        rows.append(
-            {
-                "kind": "plane",
-                "plane": name,
-                "files": len(files),
-                "loc": loc,
-                "nloc": sum(nloc[f] for f in files),
-                "functions": len(fns),
-                "ccn_mean": round(sum(f["ccn"] for f in fns) / len(fns), 2),
-                "ccn_max": max(f["ccn"] for f in fns),
-            }
-        )
-
-    core = {f for n in (Planes.CORE_HEADERS, Planes.ENGINE_IMPL) for f in planes[n]}
-    offenders = sorted(
-        (f for f in functions if f["file"] in core),
-        key=lambda f: (-f["ccn"], f["file"], f["start"]),
-    )
-    for rank, f in enumerate(offenders[:5], 1):
-        rows.append(
-            {
-                "kind": "offender",
-                "rank": rank,
-                "function": f["name"],
-                "file": f["file"],
-                "ccn": f["ccn"],
-                "nloc": f["nloc"],
-            }
-        )
-
-    factors = dispatch_factors()
-    combos = 1
-    for n in factors.values():
-        combos *= n
-    rows.append(
-        {
-            "kind": "surface",
-            "parameters": parameter_count(),
-            "dispatch_combinations": combos,
-            "dispatch_factors": factors,
-            "python_public_api": python_public_api(),
-            **runtime_deps(),
-        }
-    )
+    rows.extend(plane_rows(planes, functions, nloc))
+    rows.extend(offender_rows(planes, functions))
+    rows.append(surface_row())
 
     out = out_path()
     out.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
