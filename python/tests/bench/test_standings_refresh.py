@@ -369,6 +369,68 @@ def test_the_ab_only_cpu_pod_is_sized_by_the_ab_cell(monkeypatch, capsys):
     assert "--cpu-vcpu 4 is below the 12" in err
 
 
+def _measure_args(**over) -> argparse.Namespace:
+    base = dict(
+        axes="gpu-tall",
+        only_stale=False,
+        prev_version="",
+        out_dir="",
+        keep_pod=False,
+        cpu_plane_host="gpu",
+        cpu_vcpu=16,
+        gpu_type="",
+        dry_run=False,
+    )
+    return argparse.Namespace(**{**base, **over})
+
+
+def test_only_stale_measures_nothing_when_every_axis_is_current(monkeypatch, capsys):
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    monkeypatch.setattr(standings_refresh, "stale_axes", lambda: set())
+    assert standings_refresh.measure(_measure_args(only_stale=True)) == 0
+    out = capsys.readouterr().out
+    assert "--only-stale: gpu-tall unchanged since their last refresh, skipping" in out
+    assert "every requested axis is current; nothing to measure" in out
+
+
+def test_a_dry_run_rents_nothing_and_says_so(monkeypatch, capsys):
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    monkeypatch.setattr(standings_refresh, "_run_session", lambda *a, **kw: pytest.fail("rented"))
+    monkeypatch.setattr(standings_refresh, "_dry_run_datacenters", lambda *a, **kw: None)
+    assert standings_refresh.measure(_measure_args(dry_run=True)) == 0
+    assert "--dry-run: nothing rented" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("delivered", "rc", "said"),
+    [
+        (None, 1, "delivered no rows for gpu-tall"),
+        ("quota-fail.txt", 1, "gate failed an axis"),
+        ("gpu-tall-x.jsonl", 0, "results in"),
+    ],
+)
+def test_a_session_is_verified_file_by_file(monkeypatch, tmp_path, capsys, delivered, rc, said):
+    """DONE only means the pod script ran to its last line: an axis whose rows
+    never landed, or a gate that failed one, is a failed measurement."""
+    monkeypatch.setenv("RUNPOD_API_KEY", "k")
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    out_dir = tmp_path / "session"
+    rented = []
+
+    def run_session(key, args, **kw):
+        rented.append(kw["plane"])
+        if delivered:
+            (kw["out_dir"] / delivered).write_text("failed: gpu-tall\n")
+
+    monkeypatch.setattr(standings_refresh, "_run_session", run_session)
+    assert standings_refresh.measure(_measure_args(out_dir=str(out_dir))) == rc
+    assert rented == ["gpu", "cpu"], "a GPU-only refresh still rents the CPU pod for its A/B"
+    captured = capsys.readouterr()
+    assert said in captured.out + captured.err
+
+
 # Supersession =====================================================================================
 
 STUB_UPDATE = """import json, pathlib, sys
