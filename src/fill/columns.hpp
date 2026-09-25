@@ -116,7 +116,8 @@ inline bool node_fills_from_runs(SplitInput const &node)
 }
 
 inline void fill_columns(Dataset const &ds, floats_view grad, floats_view hess,
-                         SplitInput &node, std::span<feature_id_t const> selected)
+                         SplitInput &node, std::span<feature_id_t const> selected,
+                         ArenaLayout const &carve)
 {
     GhView const gh = node_gh(ds, node, grad, hess);
     if (node_fills_from_runs(node))
@@ -124,6 +125,7 @@ inline void fill_columns(Dataset const &ds, floats_view grad, floats_view hess,
         parallel::for_each_index(selected.size(),
                                  [&](size_t s)
                                  {
+                                     node.hists.carve_run(carve, selected, s);
                                      feature_id_t const fid = selected[s];
                                      fill_column_runs(ds, fid, node.hists[fid],
                                                       node.shape.runs, gh);
@@ -133,6 +135,7 @@ inline void fill_columns(Dataset const &ds, floats_view grad, floats_view hess,
     parallel::for_each_index(selected.size(),
                              [&](size_t s)
                              {
+                                 node.hists.carve_run(carve, selected, s);
                                  feature_id_t const fid = selected[s];
                                  fill_column(ds, fid, node.hists[fid], node.rows,
                                              node.shape.identity, gh);

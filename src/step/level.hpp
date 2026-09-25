@@ -86,8 +86,7 @@ class LevelStep : public TreeStep<EngineT>
                 return;
             }
         }
-        populate_nodes(ds_, grad_, hess_, smalls, selected_, engine_);
-        subtract_level(plan.splits, ds_.n_features());
+        populate_level(ds_, grad_, hess_, plan.splits, selected_, engine_);
     }
 
     void end_tree(std::vector<SplitInput> const &current, DenseBuild &build,

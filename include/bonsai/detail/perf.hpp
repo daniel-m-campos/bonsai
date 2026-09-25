@@ -153,8 +153,8 @@ struct GrowProfiler : Profiler<GrowProfiler>
     // Conservation buckets: everything grow spends outside the phase laps
     // above, so the laps and these three sum to grow's wall clock.
     double setup_s = 0, commit_s = 0, assemble_s = 0;
-    // Inside populate on the host level plane: arena zeroing, row scatter,
-    // sibling subtraction. The leaf plane fuses the three per worker, no laps.
+    // Inside populate on the host level plane: arena zeroing, row scatter, and
+    // a sibling subtraction run apart from the fill (the CPU plane fuses it).
     double carve_s = 0, fill_s = 0, subtract_s = 0;
 
     static constexpr std::array fields = {

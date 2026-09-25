@@ -26,6 +26,8 @@ namespace bonsai
 
 // A tree level's worth of nodes handed to a HistogramEngine in one call.
 using split_input_refs = std::span<std::reference_wrapper<SplitInput> const>;
+// Each node's larger sibling, holding the parent's histograms, in node order.
+using sibling_refs = std::span<std::reference_wrapper<NodeHistograms> const>;
 
 using train_leaf_values = std::vector<float>;
 
@@ -205,6 +207,12 @@ struct CpuHistogramEngine
     // populate() is the one-node case.
     void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
                        split_input_refs nodes, std::span<feature_id_t const> selected);
+    // The level's populate_lone: `siblings[i]` is node i's larger sibling
+    // holding the parent's histograms, and the worker that finishes a feature
+    // run of node i subtracts it there (invariants: level-fill-matches-lone-nodes).
+    void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
+                       split_input_refs nodes, std::span<feature_id_t const> selected,
+                       sibling_refs siblings);
     // The fill for children that become leaves: only `feature`, the one
     // SplitInput::totals() reads, is carved and filled; the other histograms
     // stay empty and must not be read (invariants: totals-fill-matches-full-fill).
