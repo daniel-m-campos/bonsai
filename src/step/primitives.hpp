@@ -257,6 +257,7 @@ struct LevelPlan
 
 inline void subtract_level(std::span<DeferredSplit> splits, size_t n_features)
 {
+    GrowProfiler::Lap lap;
     for (DeferredSplit &d : splits)
     {
         adopt_parent_histograms(d.p);
@@ -272,6 +273,7 @@ inline void subtract_level(std::span<DeferredSplit> splits, size_t n_features)
     {
         settle_split(d.p);
     }
+    lap(GrowProfiler::instance().subtract_s);
 }
 
 inline constexpr size_t partition_block_rows = 65536;
