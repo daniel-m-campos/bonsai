@@ -82,9 +82,9 @@ def _lgbm(monkeypatch, hp: compare.HP, valid_df=None, n_classes: int = 1) -> dic
     rec = _Recorder(n_classes)
     monkeypatch.setitem(sys.modules, "lightgbm", rec)
     train_df, test_df = _frames()
-    compare.run_lightgbm(train_df, test_df, hp, valid_df=valid_df)
+    result = compare.run_lightgbm(train_df, test_df, hp, valid_df=valid_df)
     assert len(rec.train_calls) == 1
-    return {"call": rec.train_calls[0], "rec": rec}
+    return {"call": rec.train_calls[0], "rec": rec, "result": result}
 
 
 def test_lightgbm_params_are_the_mapped_knobs_and_nothing_else(monkeypatch):
@@ -146,3 +146,26 @@ def test_lightgbm_early_stops_only_with_a_valid_frame_and_rounds(monkeypatch):
     assert rec.datasets[1]["reference"] == ("dataset", 1)
     without = _lgbm(monkeypatch, _hp(early_stopping_rounds=0), valid_df=train_df)["call"]
     assert "valid_sets" not in without
+
+
+def test_lightgbm_scores_the_arm_with_the_shared_metric_wrappers(monkeypatch):
+    """The Result every arm returns is the six wrappers over (pred, y) plus the
+    two timers; a softmax arm scores the argmax label and reports accuracy."""
+    got = _lgbm(monkeypatch, _hp())
+    _, test_df = _frames()
+    y = test_df[compare.LABEL_COL].to_numpy()
+    zeros = np.zeros(len(y))
+    res = got["result"]
+    assert (res.rmse, res.mae, res.r2, res.auc, res.acc) == pytest.approx(
+        (
+            compare.rmse(zeros, y),
+            compare.mae(zeros, y),
+            compare.r2(zeros, y),
+            compare.maybe_auc(zeros, y),
+            compare.maybe_acc(zeros, y, False),
+        ),
+        nan_ok=True,
+    )
+    assert res.fit_seconds >= 0 and res.predict_seconds >= 0
+    softmax = _lgbm(monkeypatch, _hp(objective="softmax", n_classes=3), n_classes=3)["result"]
+    assert softmax.acc == pytest.approx(compare.maybe_acc(zeros, y, True))
