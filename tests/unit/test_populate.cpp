@@ -16,6 +16,7 @@
 #include "bonsai/parallel.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
+#include "step/primitives.hpp"
 #include "test_grower_helpers.hpp"
 
 using namespace bonsai; // NOLINT
@@ -627,6 +628,123 @@ TEST_CASE("wide single-block fill with a selection spanning the block boundary "
         auto const cells = node.hists[fx.selected[s]].all_cells();
         REQUIRE(std::memcmp(cells.data(), ref[s].data(),
                             cells.size() * sizeof(HistCell)) == 0);
+    }
+    parallel::set_n_threads(0);
+}
+
+// INVARIANT: level-fill-matches-lone-nodes
+// The level plane fills a level's smaller children in one call and derives
+// each larger child by subtracting its sibling from the parent's histograms.
+// Whatever order the level fill zeroes, scatters and subtracts in, every
+// small child's cells equal the node filled alone (bit for bit at one thread,
+// where no partial arenas exist), a child with no rows holds zeros, and every
+// large child's cell is the parent's cell minus the small child's cell in
+// float, once per cell.
+TEST_CASE("CpuHistogramEngine: the level fill matches the nodes filled alone",
+          "[populate][invariant]")
+{
+    // 2048 + 64 features span two mirror slices; the first child clears the
+    // column route's density gate (rows * 4 >= n_rows), the others take the
+    // row-chunk fill at one, two and several chunks of grain 1024, and the
+    // last has no rows.
+    auto const fx = make_fixture(8192, 2112, BinMapperConfig{.max_bin = 16});
+    REQUIRE(fx.ds.bins_are_u8());
+    REQUIRE(fx.ds.n_features() > Dataset::mirror_tile_width());
+    size_t const n = fx.ds.plane_n_rows();
+
+    auto const every_kth = [&](row_id_t first, row_id_t step, size_t count)
+    {
+        std::vector<row_id_t> rows;
+        for (row_id_t r = first; r < n && rows.size() < count; r += step)
+        {
+            rows.push_back(r);
+        }
+        return rows;
+    };
+    std::vector<std::vector<row_id_t>> const smalls_rows = {
+        test::iota_rows(n / 4),
+        every_kth(1, 3, 2500),
+        every_kth(2, 5, 1200),
+        every_kth(3, 7, 100),
+        {},
+    };
+    auto const cells_of = [](NodeHistograms const &hists, feature_id_t f)
+    {
+        auto const c = hists[f].all_cells();
+        return std::vector<HistCell>(c.begin(), c.end());
+    };
+
+    for (int const threads : {1, 4})
+    {
+        parallel::set_n_threads(threads);
+        CpuHistogramEngine engine;
+        engine.begin_tree(fx.ds, fx.grad, fx.hess);
+
+        std::vector<grower_detail::DeferredSplit>       splits(smalls_rows.size());
+        std::vector<std::vector<std::vector<HistCell>>> parents(smalls_rows.size());
+        for (size_t i = 0; i < splits.size(); ++i)
+        {
+            SplitInput parent;
+            parent.rows           = test::iota_rows(n);
+            parent.shape.identity = true;
+            engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
+            for (feature_id_t const f : fx.selected)
+            {
+                parents[i].push_back(cells_of(parent.hists, f));
+            }
+            grower_detail::PendingSplit &p = splits[i].p;
+            p.left.rows                    = smalls_rows[i];
+            p.left.shape.identity          = rows_are_identity(p.left.rows, n);
+            p.right.rows                   = test::iota_rows(n);
+            p.right.shape.identity         = true;
+            p.parent_hists                 = std::move(parent.hists);
+            REQUIRE(&grower_detail::smaller_child(p) == &p.left);
+        }
+        std::vector<std::reference_wrapper<SplitInput>> smalls;
+        for (auto &d : splits)
+        {
+            smalls.emplace_back(grower_detail::smaller_child(d.p));
+        }
+        grower_detail::populate_nodes(fx.ds, fx.grad, fx.hess, smalls, fx.selected,
+                                      engine);
+        grower_detail::subtract_level(splits, fx.ds.n_features());
+
+        for (size_t i = 0; i < splits.size(); ++i)
+        {
+            SplitInput const &small = splits[i].p.left;
+            SplitInput const &large = splits[i].p.right;
+            SplitInput const  alone = populate_node(fx, smalls_rows[i]);
+            for (size_t s = 0; s < fx.selected.size(); s += 97)
+            {
+                feature_id_t const f     = fx.selected[s];
+                auto const         got   = cells_of(small.hists, f);
+                auto const         want  = cells_of(alone.hists, f);
+                auto const         big   = cells_of(large.hists, f);
+                auto const        &above = parents[i][s];
+                REQUIRE(got.size() == want.size());
+                REQUIRE(big.size() == above.size());
+                for (size_t b = 0; b < got.size(); ++b)
+                {
+                    if (threads == 1 || smalls_rows[i].empty())
+                    {
+                        REQUIRE(got[b].sum_grad == want[b].sum_grad);
+                        REQUIRE(got[b].sum_hess == want[b].sum_hess);
+                    }
+                    else
+                    {
+                        CHECK(got[b].sum_grad ==
+                              Catch::Approx(want[b].sum_grad).margin(1e-2));
+                        CHECK(got[b].sum_hess ==
+                              Catch::Approx(want[b].sum_hess).margin(1e-2));
+                    }
+                    REQUIRE(big[b].sum_grad == above[b].sum_grad - got[b].sum_grad);
+                    REQUIRE(big[b].sum_hess == above[b].sum_hess - got[b].sum_hess);
+                }
+            }
+            REQUIRE(small.sums.sum_hess == small.totals().sum_hess);
+            REQUIRE(small.row_count == smalls_rows[i].size());
+            REQUIRE(large.row_count == n);
+        }
     }
     parallel::set_n_threads(0);
 }

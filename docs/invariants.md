@@ -128,6 +128,12 @@ The plane is picked per fit from the node arena's size: below k_level_plane_aren
 
 - enforced by: `../tests/unit/test_leafwise_grower.cpp`
 
+### level-fill-matches-lone-nodes
+
+The level plane fills a level's smaller children in one call and derives each larger child by subtracting its sibling from the parent's histograms. Whatever order the level fill zeroes, scatters and subtracts in, every small child's cells equal the node filled alone (bit for bit at one thread, where no partial arenas exist), a child with no rows holds zeros, and every large child's cell is the parent's cell minus the small child's cell in float, once per cell.
+
+- enforced by: [`CpuHistogramEngine: the level fill matches the nodes filled alone`](../tests/unit/test_populate.cpp)
+
 ### levelwise-monotone-holds
 
 A levelwise fit under a monotone constraint produces predictions ordered by that feature, on both the CPU and CUDA engines. The mechanism is a projection of the finished leaf table onto the monotone cone (project_monotone), not a veto during growth, so the tree's structure is whatever the unconstrained search would have chosen.
