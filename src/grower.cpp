@@ -38,10 +38,12 @@ void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
                     split_input_refs nodes, std::span<feature_id_t const> selected,
                     fd::SelectionPlan const &sp)
 {
-    bool const alone = nodes.size() == 1;
+    grower_detail::GrowProfiler::Lap lap;
+    bool const                       alone = nodes.size() == 1;
     parallel::for_each_index(
         nodes.size(), [&](size_t i)
         { nodes[i].get().hists.carve(sp.layout, selected, ds.n_features(), alone); });
+    lap(grower_detail::GrowProfiler::instance().carve_s);
     if (selected.empty())
     {
         return;
@@ -63,6 +65,7 @@ void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
     {
         fd::fill_sparse(ds, grad, hess, sparse_nodes, selected, sp);
     }
+    lap(grower_detail::GrowProfiler::instance().fill_s);
 }
 
 void fill_lone_routed(Dataset const &ds, floats_view grad, floats_view hess,
