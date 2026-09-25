@@ -14,6 +14,13 @@ import pytest
 from bonsai.bench import synth
 
 
+def _regression(rows: int, cols: int) -> tuple[np.ndarray, np.ndarray]:
+    """A float32 regression draw whose label is the sum of the first three columns."""
+    rng = np.random.default_rng(0)
+    X = rng.random((rows, cols), dtype=np.float32)
+    return X, X[:, :3].sum(axis=1).astype(np.float32)
+
+
 def test_a_cell_too_large_to_hold_twice_declines_to_the_generator(monkeypatch):
     """The cache is an optimization, never a reason to run out of memory: it
     is resident twice while it loads, once on the ram disk and once in the
@@ -148,9 +155,7 @@ def test_bonsai_cuda_runner_prebins_with_a_device_hint(monkeypatch):
 
     monkeypatch.setattr(bonsai, "Dataset", spy)
     monkeypatch.setattr(bonsai, "cuda_available", lambda: True)
-    rng = np.random.default_rng(0)
-    X = rng.random((2000, 8), dtype=np.float32)
-    y = (X[:, :3].sum(axis=1)).astype(np.float32)
+    X, y = _regression(2000, 8)
     cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5}
     try:
         # The fit itself is not the subject and cannot run here (no device),
@@ -200,9 +205,7 @@ def test_xgb_runner_never_builds_plain_dmatrix(monkeypatch):
         )
 
     monkeypatch.setattr(xgb, "DMatrix", refuse)
-    rng = np.random.default_rng(0)
-    X = rng.random((2000, 8), dtype=np.float32)
-    y = (X[:, :3].sum(axis=1)).astype(np.float32)
+    X, y = _regression(2000, 8)
     cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
     out = runners.run_xgb(
         {"cell": cell, "variant": "xgb_hist", "threads": 1}, X[:1500], y[:1500], X[1500:], y[1500:]
@@ -233,9 +236,7 @@ def test_xgb_runner_fails_a_silent_cpu_fallback(monkeypatch):
         return booster
 
     monkeypatch.setattr(xgb, "train", fell_back_to_cpu)
-    rng = np.random.default_rng(0)
-    X = rng.random((1500, 8), dtype=np.float32)
-    y = X[:, :3].sum(axis=1).astype(np.float32)
+    X, y = _regression(1500, 8)
     cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
     with pytest.raises(RuntimeError, match="fell back to CPU"):
         runners.run_xgb(
@@ -267,9 +268,7 @@ def test_xgb_runner_accepts_a_genuine_gpu_placement(monkeypatch):
         return booster
 
     monkeypatch.setattr(xgb, "train", landed_on_gpu)
-    rng = np.random.default_rng(0)
-    X = rng.random((1500, 8), dtype=np.float32)
-    y = X[:, :3].sum(axis=1).astype(np.float32)
+    X, y = _regression(1500, 8)
     cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
     out = runners.run_xgb(
         {"cell": cell, "variant": "xgb_cuda", "threads": 1}, X[:1000], y[:1000], X[1000:], y[1000:]
@@ -317,9 +316,7 @@ def test_lgbm_runner_freezes_binning_knobs_and_constructs_in_ingest(monkeypatch)
             return super().construct(*args, **kwargs)
 
     monkeypatch.setattr(lgb, "Dataset", GuardedDataset)
-    rng = np.random.default_rng(0)
-    X = rng.random((2000, 8), dtype=np.float32)
-    y = (X[:, :3].sum(axis=1)).astype(np.float32)
+    X, y = _regression(2000, 8)
     cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
     out = runners.run_lgbm(
         {"cell": cell, "variant": "lgbm_cpu", "threads": 1}, X[:1500], y[:1500], X[1500:], y[1500:]
@@ -358,9 +355,7 @@ def test_catboost_runner_builds_pool_outside_fit_timer(monkeypatch):
 
     monkeypatch.setattr(catboost, "Pool", tracking_pool)
     monkeypatch.setattr(catboost.CatBoostRegressor, "fit", tracking_fit)
-    rng = np.random.default_rng(0)
-    X = rng.random((2000, 8), dtype=np.float32)
-    y = (X[:, :3].sum(axis=1)).astype(np.float32)
+    X, y = _regression(2000, 8)
     cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
     out = runners.run_catboost(
         {"cell": cell, "variant": "catboost_cpu", "threads": 1},
@@ -592,9 +587,7 @@ def test_runners_arm_early_stopping_on_the_stop_arm_only(probe_of, monkeypatch):
     patience, or it stops before the fixed cap it exists to price.
     """
     p = probe_of(monkeypatch)
-    rng = np.random.default_rng(0)
-    X = rng.random((2000, 8), dtype=np.float32)
-    y = X[:, :3].sum(axis=1).astype(np.float32)
+    X, y = _regression(2000, 8)
 
     for mode, armed in (("off", False), ("eval", False), ("stop", True)):
         p.reset()
@@ -622,9 +615,7 @@ def test_bonsai_contribs_phase_is_additive():
     """
     from bonsai.bench import runners
 
-    rng = np.random.default_rng(0)
-    X = rng.random((600, 6), dtype=np.float32)
-    y = X[:, :3].sum(axis=1).astype(np.float32)
+    X, y = _regression(600, 6)
     cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5, "contribs": True}
     out = runners.run_bonsai(
         {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
@@ -652,9 +643,7 @@ def test_bonsai_contribs_off_by_default_carries_no_extra_fields():
     (the same additive-schema rule eval_mode already follows)."""
     from bonsai.bench import runners
 
-    rng = np.random.default_rng(0)
-    X = rng.random((600, 6), dtype=np.float32)
-    y = X[:, :3].sum(axis=1).astype(np.float32)
+    X, y = _regression(600, 6)
     cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5}
     out = runners.run_bonsai(
         {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
@@ -674,9 +663,7 @@ def test_legacy_cells_carry_no_eval_fields():
     """
     from bonsai.bench import runners
 
-    rng = np.random.default_rng(0)
-    X = rng.random((2000, 8), dtype=np.float32)
-    y = X[:, :3].sum(axis=1).astype(np.float32)
+    X, y = _regression(2000, 8)
     cell = {"lr": 0.1, "depth": 4, "bins": 63, "bins_effective": 63, "seed": 42, "iters": 5}
     out = runners.run_bonsai(
         {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
@@ -810,9 +797,7 @@ def test_bonsai_fused_contribs_explains_from_the_raw_matrix(monkeypatch):
             return getattr(self._model, name)
 
     monkeypatch.setattr(bonsai, "train", lambda *a, **kw: _Spy(real_train(*a, **kw)))
-    rng = np.random.default_rng(0)
-    X = rng.random((600, 6), dtype=np.float32)
-    y = X[:, :3].sum(axis=1).astype(np.float32)
+    X, y = _regression(600, 6)
     cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5, "contribs": True}
     Xte = X[500:]
     out = runners.run_bonsai(

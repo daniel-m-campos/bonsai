@@ -286,7 +286,8 @@ def plane_rows(
     rows: list[dict] = []
     for name in PLANE_MAP:
         files = planes[name]
-        fns = [f for f in functions if f["file"] in set(files)]
+        own = set(files)
+        fns = [f for f in functions if f["file"] in own]
         loc = sum((REPO / f).read_bytes().count(b"\n") for f in files)
         rows.append(
             {
