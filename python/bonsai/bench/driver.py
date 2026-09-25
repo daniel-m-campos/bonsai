@@ -589,6 +589,15 @@ def _bins_effective(cell: dict, v) -> dict:
     return cell
 
 
+def _resumed(sink: _Sink, job: dict, done: set[tuple]) -> set[int]:
+    """The repeats of one job the resume file already holds for this sink's host and label."""
+    return {
+        rep
+        for rep in range(job["repeats"])
+        if _job_key(job, rep, sink.host_name, sink.run_label) in done
+    }
+
+
 def _run_repeats(
     sink: _Sink,
     job: dict,
@@ -601,8 +610,9 @@ def _run_repeats(
 ):
     """Fit every repeat of one job not already in the resume set, one row each."""
     variant, threads = job[runlog.Row.VARIANT], job[runlog.Row.THREADS]
+    resumed = _resumed(sink, job, done)
     for rep in range(job["repeats"]):
-        if _job_key(job, rep, sink.host_name, sink.run_label) in done:
+        if rep in resumed:
             print(
                 f"  {variant:>24} t={threads:<3} {cell['rows']}x"
                 f"{cell['cols']}x{cell['bins']} rep={rep} -> resume-skip"
@@ -625,11 +635,7 @@ def _run_repeats(
 def _print_dry_plan(sink: _Sink, job: dict, cell: dict, timeout: int, done: set[tuple]):
     """The dry-run line for one job, with its resume-skip count."""
     variant, threads = job[runlog.Row.VARIANT], job[runlog.Row.THREADS]
-    already = sum(
-        1
-        for rep in range(job["repeats"])
-        if _job_key(job, rep, sink.host_name, sink.run_label) in done
-    )
+    already = len(_resumed(sink, job, done))
     print(
         f"  {variant:>24} t={threads:<3} {cell['rows']}x"
         f"{cell['cols']}x{cell['bins']} timeout={timeout}s "

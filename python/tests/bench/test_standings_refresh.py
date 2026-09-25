@@ -348,27 +348,6 @@ def test_cpupod_moves_the_cpu_axes_and_their_ab_together():
     assert standings_refresh._sessions(["gpu-tall"], "cpupod") == [("gpu", ["gpu-tall"])]
 
 
-def test_the_ab_only_cpu_pod_is_sized_by_the_ab_cell(monkeypatch, capsys):
-    """A CPU pod with no axes still runs cpu-tall's threads, so the sizing
-    rule reads that spec rather than passing an empty session."""
-    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
-    args = argparse.Namespace(
-        axes="gpu-tall",
-        only_stale=False,
-        prev_version="",
-        out_dir="",
-        keep_pod=False,
-        cpu_plane_host="gpu",
-        cpu_vcpu=4,
-        gpu_type="",
-        dry_run=True,
-    )
-
-    assert standings_refresh.measure(args) == 1
-    err = capsys.readouterr().err
-    assert "--cpu-vcpu 4 is below the 12" in err
-
-
 def _measure_args(**over) -> argparse.Namespace:
     base = dict(
         axes="gpu-tall",
@@ -382,6 +361,15 @@ def _measure_args(**over) -> argparse.Namespace:
         dry_run=False,
     )
     return argparse.Namespace(**{**base, **over})
+
+
+def test_the_ab_only_cpu_pod_is_sized_by_the_ab_cell(monkeypatch, capsys):
+    """A CPU pod with no axes still runs cpu-tall's threads, so the sizing
+    rule reads that spec rather than passing an empty session."""
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    assert standings_refresh.measure(_measure_args(cpu_vcpu=4, dry_run=True)) == 1
+    err = capsys.readouterr().err
+    assert "--cpu-vcpu 4 is below the 12" in err
 
 
 def test_only_stale_measures_nothing_when_every_axis_is_current(monkeypatch, capsys):

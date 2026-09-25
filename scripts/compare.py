@@ -260,16 +260,7 @@ def run_bonsai(
     pred_df = pd.read_csv(preds)
     pred = pred_df["prediction"].to_numpy()
 
-    mc = hp.objective == "softmax"
-    return Result(
-        rmse=rmse(pred, y_test),
-        mae=mae(pred, y_test),
-        r2=r2(pred, y_test),
-        auc=maybe_auc(pred, y_test),
-        acc=maybe_acc(pred, y_test, mc),
-        fit_seconds=fit_s,
-        predict_seconds=pred_s,
-    )
+    return _scored(pred, y_test, hp, fit_s, pred_s)
 
 
 def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
@@ -332,16 +323,7 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     pred = booster.predict(dtest)  # uses best_iteration when early-stopped
     pred_s = time.perf_counter() - t1
     y = test_df[LABEL_COL].to_numpy()
-    mc = hp.objective == "softmax"
-    return Result(
-        rmse=rmse(pred, y),
-        mae=mae(pred, y),
-        r2=r2(pred, y),
-        auc=maybe_auc(pred, y),
-        acc=maybe_acc(pred, y, mc),
-        fit_seconds=fit_s,
-        predict_seconds=pred_s,
-    )
+    return _scored(pred, y, hp, fit_s, pred_s)
 
 
 def _lgbm_params(hp: HP, n_features: int) -> dict:
@@ -403,16 +385,7 @@ def run_lightgbm(train_df, test_df, hp: HP, valid_df=None) -> Result:
         pred = np.argmax(pred, axis=1).astype(float)
     pred_s = time.perf_counter() - t1
     y = test_df[LABEL_COL].to_numpy()
-    mc = hp.objective == "softmax"
-    return Result(
-        rmse=rmse(pred, y),
-        mae=mae(pred, y),
-        r2=r2(pred, y),
-        auc=maybe_auc(pred, y),
-        acc=maybe_acc(pred, y, mc),
-        fit_seconds=fit_s,
-        predict_seconds=pred_s,
-    )
+    return _scored(pred, y, hp, fit_s, pred_s)
 
 
 def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
@@ -462,13 +435,17 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
         pred = np.asarray(model.predict(test_df[feature_cols])).reshape(-1).astype(float)
     pred_s = time.perf_counter() - t1
     y = test_df[LABEL_COL].to_numpy()
-    mc = hp.objective == "softmax"
+    return _scored(pred, y, hp, fit_s, pred_s)
+
+
+def _scored(pred: np.ndarray, y: np.ndarray, hp: HP, fit_s: float, pred_s: float) -> Result:
+    """One arm's Result: the metric wrappers over (pred, y) and its two timers."""
     return Result(
         rmse=rmse(pred, y),
         mae=mae(pred, y),
         r2=r2(pred, y),
         auc=maybe_auc(pred, y),
-        acc=maybe_acc(pred, y, mc),
+        acc=maybe_acc(pred, y, hp.objective == "softmax"),
         fit_seconds=fit_s,
         predict_seconds=pred_s,
     )
