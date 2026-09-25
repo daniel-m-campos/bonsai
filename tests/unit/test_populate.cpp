@@ -700,14 +700,8 @@ TEST_CASE("CpuHistogramEngine: the level fill matches the nodes filled alone",
             p.parent_hists                 = std::move(parent.hists);
             REQUIRE(&grower_detail::smaller_child(p) == &p.left);
         }
-        std::vector<std::reference_wrapper<SplitInput>> smalls;
-        for (auto &d : splits)
-        {
-            smalls.emplace_back(grower_detail::smaller_child(d.p));
-        }
-        grower_detail::populate_nodes(fx.ds, fx.grad, fx.hess, smalls, fx.selected,
+        grower_detail::populate_level(fx.ds, fx.grad, fx.hess, splits, fx.selected,
                                       engine);
-        grower_detail::subtract_level(splits, fx.ds.n_features());
 
         for (size_t i = 0; i < splits.size(); ++i)
         {

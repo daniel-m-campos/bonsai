@@ -36,36 +36,67 @@ bool fills_by_column(Dataset const &ds, SplitInput const &node)
 
 void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
                     split_input_refs nodes, std::span<feature_id_t const> selected,
-                    fd::SelectionPlan const &sp)
+                    fd::SelectionPlan const &sp, sibling_refs siblings = {})
 {
+    assert(siblings.empty() || siblings.size() == nodes.size());
     grower_detail::GrowProfiler::Lap lap;
     bool const                       alone = nodes.size() == 1;
     parallel::for_each_index(
-        nodes.size(), [&](size_t i)
-        { nodes[i].get().hists.carve(sp.layout, selected, ds.n_features(), alone); });
+        nodes.size(),
+        [&](size_t i)
+        {
+            SplitInput &node = nodes[i];
+            if (node.rows.empty() || selected.empty())
+            {
+                node.hists.carve(sp.layout, selected, ds.n_features(), alone);
+            }
+            else
+            {
+                node.hists.carve_storage(sp.layout, ds.n_features());
+            }
+        });
     lap(grower_detail::GrowProfiler::instance().carve_s);
     if (selected.empty())
     {
         return;
     }
     static thread_local std::vector<std::reference_wrapper<SplitInput>> sparse_nodes;
+    static thread_local std::vector<std::reference_wrapper<NodeHistograms>> sparse_sibs;
     sparse_nodes.clear();
-    for (SplitInput &node : nodes)
+    sparse_sibs.clear();
+    for (size_t i = 0; i < nodes.size(); ++i)
     {
-        if (fills_by_column(ds, node))
+        SplitInput &node = nodes[i];
+        if (node.rows.empty())
         {
-            fd::fill_columns(ds, grad, hess, node, selected);
+            continue;
+        }
+        if (!fills_by_column(ds, node))
+        {
+            sparse_nodes.emplace_back(node);
+            if (!siblings.empty())
+            {
+                sparse_sibs.emplace_back(siblings[i]);
+            }
+        }
+        else if (siblings.empty())
+        {
+            fd::fill_columns(ds, grad, hess, node, selected, sp.layout);
         }
         else
         {
-            sparse_nodes.emplace_back(node);
+            fd::fill_columns_lone(ds, grad, hess, node, selected, sp.layout,
+                                  siblings[i]);
         }
     }
     if (!sparse_nodes.empty())
     {
-        fd::fill_sparse(ds, grad, hess, sparse_nodes, selected, sp);
+        fd::fill_sparse(ds, grad, hess, sparse_nodes, selected, sp, sparse_sibs);
     }
     lap(grower_detail::GrowProfiler::instance().fill_s);
+    assert(std::ranges::all_of(
+        nodes, [&](SplitInput const &node)
+        { return node.hists.all_runs_carved(sp.layout, selected); }));
 }
 
 void fill_lone_routed(Dataset const &ds, floats_view grad, floats_view hess,
@@ -133,6 +164,15 @@ void CpuHistogramEngine::populate_lone_totals(Dataset const &ds, floats_view gra
     }
     fill_lone_routed(ds, grad, hess, split_input, one, fd::totals_plan(ds, feature),
                      fd::selection_plan(ds, selected), sibling);
+}
+
+void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
+                                       floats_view hess, split_input_refs nodes,
+                                       std::span<feature_id_t const> selected,
+                                       sibling_refs                  siblings)
+{
+    carve_and_fill(ds, grad, fd::fill_hess(hess), nodes, selected,
+                   fd::selection_plan(ds, selected), siblings);
 }
 
 void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,

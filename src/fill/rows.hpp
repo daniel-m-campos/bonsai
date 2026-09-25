@@ -217,6 +217,7 @@ inline ReducePlan const &plan_reduce(split_input_refs nodes, size_t grain)
 struct SlicePartials
 {
     MirrorSlice const      &slice;
+    ArenaLayout const      &layout;
     Partials                parts;
     std::span<size_t const> offsets;
     size_t                  row_cells;
@@ -241,6 +242,7 @@ inline SlicePartials slice_partials(ReducePlan const &plan, Dataset const &ds,
     touched.assign(plan.n_slots, 0);
     PartialsView const view{cells.data(), plan.n_slots, row_cells};
     return {.slice     = sl,
+            .layout    = sp.layout,
             .parts     = {.cells = view, .used = touched},
             .offsets   = sp.offsets,
             .row_cells = row_cells,
@@ -250,9 +252,37 @@ inline SlicePartials slice_partials(ReducePlan const &plan, Dataset const &ds,
                                              : CellMode::gathered};
 }
 
+inline void subtract_slice_run(NodeHistograms &sibling, NodeHistograms const &hists,
+                               MirrorSlice const            &sl,
+                               std::span<feature_id_t const> selected)
+{
+    for (size_t s = sl.s0; s < sl.s1; ++s)
+    {
+        sibling[selected[s]] -= hists[selected[s]];
+    }
+}
+
+inline void enter_node(SplitInput &node, bool direct, size_t slot,
+                       SlicePartials const          &partials,
+                       std::span<feature_id_t const> selected,
+                       std::span<HistCell *>         bases)
+{
+    MirrorSlice const &sl = partials.slice;
+    for (size_t s = sl.s0; s < sl.s1; ++s)
+    {
+        if (direct)
+        {
+            node.hists.carve_run(partials.layout, selected, s);
+        }
+        bases[s - sl.s0] = direct ? node.hists[selected[s]].cells().data()
+                                  : &partials.parts.cells[slot, partials.cell_of(s)];
+    }
+}
+
 inline void fill_partials(ReducePlan const &plan, SlicePartials const &partials,
                           split_input_refs nodes, Dataset const &ds, floats_view grad,
-                          floats_view hess, std::span<feature_id_t const> selected)
+                          floats_view hess, std::span<feature_id_t const> selected,
+                          sibling_refs siblings)
 {
     MirrorSlice const                &sl        = partials.slice;
     Partials const                    parts     = partials.parts;
@@ -262,6 +292,13 @@ inline void fill_partials(ReducePlan const &plan, SlicePartials const &partials,
     std::span<uint8_t const> const    rm     = ds.mirror().bins().subspan(sl.rm_base);
     std::span<RowChunk const> const   chunks = plan.chunks;
     std::span<ReduceNode const> const rns    = plan.nodes;
+    auto const own_fill_done                 = [&, siblings, rns, nodes](size_t node)
+    {
+        if (!siblings.empty() && rns[node].first_thread == rns[node].last_thread)
+        {
+            subtract_slice_run(siblings[node], nodes[node].get().hists, sl, selected);
+        }
+    };
     parallel::for_each_index(
         plan.n_threads,
         [&, parts, selected, rm, chunks, rns, nodes](size_t t)
@@ -282,13 +319,12 @@ inline void fill_partials(ReducePlan const &plan, SlicePartials const &partials,
                 }
                 if (chunk.node != last_node)
                 {
-                    SplitInput &node = nodes[chunk.node];
-                    for (size_t s = sl.s0; s < sl.s1; ++s)
+                    if (last_node != nodes.size())
                     {
-                        bases[s - sl.s0] =
-                            direct ? node.hists[selected[s]].cells().data()
-                                   : &parts.cells[slot, partials.cell_of(s)];
+                        own_fill_done(last_node);
                     }
+                    enter_node(nodes[chunk.node], direct, slot, partials, selected,
+                               bases);
                     last_node = chunk.node;
                 }
                 FillTarget const target{.slice    = sl,
@@ -299,12 +335,17 @@ inline void fill_partials(ReducePlan const &plan, SlicePartials const &partials,
                 fill_rows(nodes[chunk.node], chunk.first, chunk.last, grad, hess,
                           target);
             }
+            if (last_node != nodes.size())
+            {
+                own_fill_done(last_node);
+            }
         });
 }
 
 inline void reduce_partials(ReducePlan const &plan, SlicePartials const &partials,
                             split_input_refs              nodes,
-                            std::span<feature_id_t const> selected)
+                            std::span<feature_id_t const> selected,
+                            sibling_refs                  siblings)
 {
     MirrorSlice const                &sl      = partials.slice;
     Partials const                    parts   = partials.parts;
@@ -313,7 +354,7 @@ inline void reduce_partials(ReducePlan const &plan, SlicePartials const &partial
     std::span<size_t const> const     reds    = plan.reduce_nodes;
     parallel::for_each_index(
         plan.reduce_nodes.size() * n_sel_b,
-        [&, parts, selected, rns, nodes, reds](size_t j)
+        [&, parts, selected, rns, nodes, reds, siblings](size_t j)
         {
             size_t const      ni   = reds[j / n_sel_b];
             ReduceNode const &rn   = rns[ni];
@@ -328,17 +369,22 @@ inline void reduce_partials(ReducePlan const &plan, SlicePartials const &partial
                     h.add_cells({&parts.cells[slot, cell], h.size()});
                 }
             }
+            if (!siblings.empty())
+            {
+                siblings[ni].get()[selected[s]] -= h;
+            }
         });
 }
 
 inline void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes,
                             Dataset const &ds, floats_view grad, floats_view hess,
                             std::span<feature_id_t const> selected,
-                            SelectionPlan const &sp, MirrorSlice const &sl)
+                            SelectionPlan const &sp, MirrorSlice const &sl,
+                            sibling_refs siblings)
 {
     SlicePartials const partials = slice_partials(plan, ds, sp, sl);
-    fill_partials(plan, partials, nodes, ds, grad, hess, selected);
-    reduce_partials(plan, partials, nodes, selected);
+    fill_partials(plan, partials, nodes, ds, grad, hess, selected, siblings);
+    reduce_partials(plan, partials, nodes, selected, siblings);
 }
 
 // perf: Rows per chunk in the partition; measured, not tunable.
@@ -346,12 +392,12 @@ inline constexpr size_t k_reduce_grain = 1024;
 
 inline void fill_sparse(Dataset const &ds, floats_view grad, floats_view hess,
                         split_input_refs nodes, std::span<feature_id_t const> selected,
-                        SelectionPlan const &sp)
+                        SelectionPlan const &sp, sibling_refs siblings = {})
 {
     ReducePlan const &plan = plan_reduce(nodes, k_reduce_grain);
     for (MirrorSlice const &sl : sp.slices)
     {
-        run_fill_reduce(plan, nodes, ds, grad, hess, selected, sp, sl);
+        run_fill_reduce(plan, nodes, ds, grad, hess, selected, sp, sl, siblings);
     }
 }
 

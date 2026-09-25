@@ -276,6 +276,43 @@ inline void subtract_level(std::span<DeferredSplit> splits, size_t n_features)
     lap(GrowProfiler::instance().subtract_s);
 }
 
+template <HistogramEngine EngineT>
+inline void populate_level(Dataset const &ds, floats_view grad, floats_view hess,
+                           std::span<DeferredSplit> splits, feature_view selected,
+                           EngineT &engine)
+{
+    static thread_local std::vector<std::reference_wrapper<SplitInput>>     smalls;
+    static thread_local std::vector<std::reference_wrapper<NodeHistograms>> siblings;
+    smalls.clear();
+    siblings.clear();
+    for (DeferredSplit &d : splits)
+    {
+        smalls.emplace_back(smaller_child(d.p));
+    }
+    if constexpr (requires {
+                      engine.populate_many(ds, grad, hess, smalls, selected,
+                                           sibling_refs{siblings});
+                  })
+    {
+        for (DeferredSplit &d : splits)
+        {
+            adopt_parent_histograms(d.p);
+            siblings.emplace_back(larger_child(d.p).hists);
+        }
+        engine.populate_many(ds, grad, hess, smalls, selected, sibling_refs{siblings});
+        for (DeferredSplit &d : splits)
+        {
+            settle_split(d.p);
+        }
+        return;
+    }
+    else
+    {
+        populate_nodes(ds, grad, hess, smalls, selected, engine);
+        subtract_level(splits, ds.n_features());
+    }
+}
+
 inline constexpr size_t partition_block_rows = 65536;
 
 // perf: Rows one partition worker must own to earn its share of the region entry:
