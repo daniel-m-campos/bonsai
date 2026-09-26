@@ -6,13 +6,13 @@ Self-measurement of the bonsai tree, no comparison: line counts and lizard compl
 
 | plane | files | LOC | NLOC | functions | mean CCN | max CCN |
 |---|---|---|---|---|---|---|
-| core_headers | 64 | 7543 | 5225 | 372 | 1.79 | 11 |
-| engine_impl | 31 | 7390 | 6596 | 348 | 2.85 | 12 |
+| core_headers | 64 | 7567 | 5235 | 373 | 1.79 | 11 |
+| engine_impl | 31 | 7578 | 6767 | 355 | 2.88 | 12 |
 | cuda_plane | 22 | 8340 | 7307 | 427 | 2.67 | 17 |
 | bindings_cli | 22 | 6295 | 4590 | 269 | 2.56 | 12 |
-| bench_tooling | 36 | 10921 | 6960 | 419 | 4.28 | 28 |
-| tests | 81 | 25784 | 19852 | 1215 | 1.74 | 12 |
-| all | 256 | 66273 | 50530 | 3050 | - | - |
+| bench_tooling | 36 | 11024 | 6987 | 439 | 4.13 | 12 |
+| tests | 82 | 26410 | 20356 | 1244 | 1.74 | 12 |
+| all | 257 | 67214 | 51242 | 3107 | - | - |
 
 The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
 
@@ -22,8 +22,8 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 | `bonsai::Booster::try_resident_round` | `include/bonsai/booster.hpp` | 11 | 30 |
 | `bonsai::BinStore::select_columns` | `src/bin_store.cpp` | 11 | 60 |
 | `bonsai::fill_detail::fill_rows` | `src/fill/rows.hpp` | 11 | 63 |
-| `bonsai::recurse` | `src/shap.cpp` | 11 | 50 |
+| `bonsai::carve_and_fill` | `src/grower.cpp` | 11 | 64 |
 
 Surface counts: 43 config parameters, 126 registered dispatch combinations (7 objectives x 6 growers x 3 samplers), and 11 public Python names. Dependencies: 2 Python runtime dependencies (numpy, typing_extensions) and 3 compiled-in C++ libraries (CLI11, nlohmann_json, tomlplusplus), the rule stated in the protocol.
 
-*Source: [`code-metrics-2026-09.jsonl`](../../../benchmarks/results/code-metrics-2026-09.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `bb011c7d7381`, 2026-09-18; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
+*Source: [`code-metrics-2026-09.jsonl`](../../../benchmarks/results/code-metrics-2026-09.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `2c93386313f5`, 2026-09-26; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
