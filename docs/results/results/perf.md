@@ -134,13 +134,13 @@ Each plane's tall cell, three wheels interleaved on the pod that measured the pl
 
 *Source: [`ab-gpu-2026-09.jsonl`](../../../benchmarks/results/ab-gpu-2026-09.jsonl). Min over the session's interleaved repeats per arm, fit seconds and peak host RSS; the gpu-tall standings were measured in the same session.*
 
-### CPU plane (anchor 1.15.0, old 2.3.0, new 2.4.0+source)
+### CPU plane (anchor 1.15.0, old 2.4.0, new 2.5.0+source)
 
 | cell | grower | anchor | old | new | vs old | vs anchor | old RSS | new RSS | RSS delta |
 |---|---|--:|--:|--:|--:|--:|--:|--:|--:|
-| 2097152x128 | depthwise | 13.39s | 13.26s | 11.77s | -11.2% **moved** | -12.1% **moved** | 1.86GB | 1.83GB | -1.6% |
-| 2097152x128 | leafwise | 13.75s | 13.32s | 11.80s | -11.4% **moved** | -14.2% **moved** | 1.86GB | 1.83GB | -1.6% |
-| 2097152x128 | levelwise | 11.90s | 11.77s | 10.40s | -11.6% **moved** | -12.6% **moved** | 1.87GB | 1.84GB | -1.6% |
+| 2097152x128 | depthwise | 18.66s | 16.20s | 16.02s | -1.1% | -14.1% **moved** | 1.84GB | 1.83GB | -0.5% |
+| 2097152x128 | leafwise | 19.21s | 16.63s | 16.00s | -3.8% | -16.7% **moved** | 1.83GB | 1.84GB | +0.5% |
+| 2097152x128 | levelwise | 16.86s | 15.11s | 14.68s | -2.8% | -13.0% **moved** | 1.84GB | 1.84GB | +0.0% |
 
 *Source: [`ab-cpu-2026-09.jsonl`](../../../benchmarks/results/ab-cpu-2026-09.jsonl). Min over the session's interleaved repeats per arm, fit seconds and peak host RSS; the cpu-tall standings were measured in the same session.*
 
