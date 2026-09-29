@@ -154,7 +154,7 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
                            split_input_refs nodes, feature_view selected,
                            EngineT &engine)
 {
-    if constexpr (requires { engine.populate_many(ds, grad, hess, nodes, selected); })
+    if constexpr (LevelFillEngine<EngineT>)
     {
         engine.populate_many(ds, grad, hess, nodes, selected);
         return;
@@ -255,13 +255,48 @@ struct LevelPlan
     std::vector<SlotLeaf>      leaves;
 };
 
-inline void subtract_level(std::span<DeferredSplit> splits, size_t n_features)
+inline split_input_refs smaller_children(std::span<DeferredSplit> splits)
 {
-    GrowProfiler::Lap lap;
+    static thread_local std::vector<std::reference_wrapper<SplitInput>> smalls;
+    smalls.clear();
+    for (DeferredSplit &d : splits)
+    {
+        smalls.emplace_back(smaller_child(d.p));
+    }
+    return smalls;
+}
+
+inline sibling_refs larger_siblings(std::span<DeferredSplit> splits)
+{
+    static thread_local std::vector<std::reference_wrapper<NodeHistograms>> siblings;
+    siblings.clear();
+    for (DeferredSplit &d : splits)
+    {
+        siblings.emplace_back(larger_child(d.p).hists);
+    }
+    return siblings;
+}
+
+inline void adopt_parents(std::span<DeferredSplit> splits)
+{
     for (DeferredSplit &d : splits)
     {
         adopt_parent_histograms(d.p);
     }
+}
+
+inline void settle_splits(std::span<DeferredSplit> splits)
+{
+    for (DeferredSplit &d : splits)
+    {
+        settle_split(d.p);
+    }
+}
+
+inline void subtract_level(std::span<DeferredSplit> splits, size_t n_features)
+{
+    GrowProfiler::Lap lap;
+    adopt_parents(splits);
     parallel::for_each_index(splits.size() * n_features,
                              [&, n_features](size_t j)
                              {
@@ -269,10 +304,7 @@ inline void subtract_level(std::span<DeferredSplit> splits, size_t n_features)
                                  size_t const  f = j % n_features;
                                  larger_child(p).hists[f] -= smaller_child(p).hists[f];
                              });
-    for (DeferredSplit &d : splits)
-    {
-        settle_split(d.p);
-    }
+    settle_splits(splits);
     lap(GrowProfiler::instance().subtract_s);
 }
 
@@ -281,34 +313,16 @@ inline void populate_level(Dataset const &ds, floats_view grad, floats_view hess
                            std::span<DeferredSplit> splits, feature_view selected,
                            EngineT &engine)
 {
-    static thread_local std::vector<std::reference_wrapper<SplitInput>>     smalls;
-    static thread_local std::vector<std::reference_wrapper<NodeHistograms>> siblings;
-    smalls.clear();
-    siblings.clear();
-    for (DeferredSplit &d : splits)
+    if constexpr (LoneLevelEngine<EngineT>)
     {
-        smalls.emplace_back(smaller_child(d.p));
-    }
-    if constexpr (requires {
-                      engine.populate_many(ds, grad, hess, smalls, selected,
-                                           sibling_refs{siblings});
-                  })
-    {
-        for (DeferredSplit &d : splits)
-        {
-            adopt_parent_histograms(d.p);
-            siblings.emplace_back(larger_child(d.p).hists);
-        }
-        engine.populate_many(ds, grad, hess, smalls, selected, sibling_refs{siblings});
-        for (DeferredSplit &d : splits)
-        {
-            settle_split(d.p);
-        }
-        return;
+        adopt_parents(splits);
+        engine.populate_many(ds, grad, hess, smaller_children(splits), selected,
+                             larger_siblings(splits));
+        settle_splits(splits);
     }
     else
     {
-        populate_nodes(ds, grad, hess, smalls, selected, engine);
+        populate_nodes(ds, grad, hess, smaller_children(splits), selected, engine);
         subtract_level(splits, ds.n_features());
     }
 }

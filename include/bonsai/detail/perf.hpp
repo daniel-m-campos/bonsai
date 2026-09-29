@@ -154,7 +154,7 @@ struct GrowProfiler : Profiler<GrowProfiler>
     // above, so the laps and these three sum to grow's wall clock.
     double setup_s = 0, commit_s = 0, assemble_s = 0;
     // Inside populate on the host level plane: arena zeroing, row scatter, and
-    // a sibling subtraction run apart from the fill (the CPU plane fuses it).
+    // a sibling subtraction run apart from the fill (zero under the lone fill).
     double carve_s = 0, fill_s = 0, subtract_s = 0;
 
     static constexpr std::array fields = {
