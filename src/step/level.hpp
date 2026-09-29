@@ -63,22 +63,14 @@ class LevelStep : public TreeStep<EngineT>
 
     void build_children(LevelPlan &plan, bool last = false)
     {
-        Phase<&GrowProfiler::populate_s>                phase;
-        std::vector<std::reference_wrapper<SplitInput>> smalls;
-        smalls.reserve(plan.splits.size());
-        for (auto &d : plan.splits)
-        {
-            smalls.emplace_back(smaller_child(d.p));
-        }
+        Phase<&GrowProfiler::populate_s> phase;
         if (last && !selected_.empty())
         {
-            if constexpr (requires {
-                              engine_.populate_totals(ds_, grad_, hess_, smalls,
-                                                      feature_id_t{});
-                          })
+            if constexpr (TotalsEngine<EngineT>)
             {
                 feature_id_t const feature = SplitInput::totals_feature(selected_);
-                engine_.populate_totals(ds_, grad_, hess_, smalls, feature);
+                engine_.populate_totals(ds_, grad_, hess_,
+                                        smaller_children(plan.splits), feature);
                 for (auto &d : plan.splits)
                 {
                     finish_split_totals(d.p, feature);

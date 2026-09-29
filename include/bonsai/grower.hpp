@@ -115,6 +115,31 @@ concept HistogramEngine =
         b.populate(ds, grad, hess, split_input, selected);
     };
 
+template <typename T>
+concept LevelFillEngine =
+    HistogramEngine<T> &&
+    requires(T b, Dataset const &ds, floats_view grad, floats_view hess,
+             split_input_refs nodes, std::span<feature_id_t const> selected) {
+        b.populate_many(ds, grad, hess, nodes, selected);
+    };
+
+template <typename T>
+concept LoneLevelEngine =
+    LevelFillEngine<T> &&
+    requires(T b, Dataset const &ds, floats_view grad, floats_view hess,
+             split_input_refs nodes, std::span<feature_id_t const> selected,
+             sibling_refs siblings) {
+        b.populate_many(ds, grad, hess, nodes, selected, siblings);
+    };
+
+template <typename T>
+concept TotalsEngine =
+    HistogramEngine<T> &&
+    requires(T b, Dataset const &ds, floats_view grad, floats_view hess,
+             split_input_refs nodes, feature_id_t feature) {
+        b.populate_totals(ds, grad, hess, nodes, feature);
+    };
+
 // What both GPU planes share: the tree's device finalize and the resident
 // objective's arm, finalize and end; each plane adds its own growth calls.
 // A step constrains on a plane, never on this concept alone, so a plane is
@@ -207,9 +232,9 @@ struct CpuHistogramEngine
     // populate() is the one-node case.
     void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
                        split_input_refs nodes, std::span<feature_id_t const> selected);
-    // The level's populate_lone: `siblings[i]` is node i's larger sibling
-    // holding the parent's histograms, and the worker that finishes a feature
-    // run of node i subtracts it there (invariants: level-fill-matches-lone-nodes).
+    // LoneLevelEngine's call: `siblings[i]` is node i's larger sibling holding
+    // the parent's histograms, and the worker that finishes a feature run of
+    // node i subtracts it there (invariants: level-fill-matches-lone-nodes).
     void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
                        split_input_refs nodes, std::span<feature_id_t const> selected,
                        sibling_refs siblings);

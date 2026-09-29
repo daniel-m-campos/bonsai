@@ -24,6 +24,35 @@ using namespace bonsai; // NOLINT
 namespace
 {
 
+void check_cell_close(HistCell got, HistCell want)
+{
+    CHECK(got.sum_grad == Catch::Approx(want.sum_grad).margin(1e-2));
+    CHECK(got.sum_hess == Catch::Approx(want.sum_hess).margin(1e-2));
+}
+
+struct LevelFillOnlyEngine
+{
+    void begin_tree(Dataset const &, floats_view, floats_view) {}
+    void populate(Dataset const &, floats_view, floats_view, SplitInput &,
+                  std::span<feature_id_t const>)
+    {
+    }
+    void populate_many(Dataset const &, floats_view, floats_view, split_input_refs,
+                       std::span<feature_id_t const>)
+    {
+    }
+};
+static_assert(LevelFillEngine<CpuHistogramEngine> &&
+              LoneLevelEngine<CpuHistogramEngine> && TotalsEngine<CpuHistogramEngine>);
+static_assert(LevelFillEngine<LevelFillOnlyEngine> &&
+              !LoneLevelEngine<LevelFillOnlyEngine> &&
+              !TotalsEngine<LevelFillOnlyEngine>);
+
+} // namespace
+
+namespace
+{
+
 struct Fixture
 {
     Dataset                   ds;
@@ -155,8 +184,7 @@ TEST_CASE("row-wise multi-block fill matches serial sums within tolerance",
         {
             // Blocked f32 accumulation vs the serial f32 order: rounding
             // differs by O(cell_sum * eps); real fill bugs miss whole rows.
-            CHECK(cells[b].sum_grad == Catch::Approx(ref[s][b].sum_grad).margin(1e-2));
-            CHECK(cells[b].sum_hess == Catch::Approx(ref[s][b].sum_hess).margin(1e-2));
+            check_cell_close(cells[b], ref[s][b]);
         }
     }
     parallel::set_n_threads(0);
@@ -218,10 +246,8 @@ TEST_CASE("sparse fill sums its per-thread partials into the node arena", "[popu
         {
             // A dropped or double-counted partial loses or repeats whole
             // chunks of rows; only reassociation rounding is in tolerance.
-            CHECK(cells[b].sum_grad == Catch::Approx(one[b].sum_grad).margin(1e-2));
-            CHECK(cells[b].sum_hess == Catch::Approx(one[b].sum_hess).margin(1e-2));
-            CHECK(cells[b].sum_grad == Catch::Approx(ref[s][b].sum_grad).margin(1e-2));
-            CHECK(cells[b].sum_hess == Catch::Approx(ref[s][b].sum_hess).margin(1e-2));
+            check_cell_close(cells[b], one[b]);
+            check_cell_close(cells[b], ref[s][b]);
         }
     }
     parallel::set_n_threads(0);
@@ -302,8 +328,7 @@ TEST_CASE("a lone node cut into row blocks is reproducible and serial at one "
         REQUIRE(std::memcmp(c4.data(), c4b.data(), c4.size() * sizeof(HistCell)) == 0);
         for (size_t b = 0; b < c4.size(); ++b)
         {
-            CHECK(c4[b].sum_grad == Catch::Approx(ref[s][b].sum_grad).margin(1e-2));
-            CHECK(c4[b].sum_hess == Catch::Approx(ref[s][b].sum_hess).margin(1e-2));
+            check_cell_close(c4[b], ref[s][b]);
         }
     }
     parallel::set_n_threads(0);
@@ -384,10 +409,7 @@ TEST_CASE("a full-cardinality row list that is not the identity still gathers",
             {
                 // Values first: the bootstrap's are wrong by whole rows,
                 // which no rounding tolerance covers.
-                CHECK(cells[b].sum_grad ==
-                      Catch::Approx(ref[s][b].sum_grad).margin(1e-2));
-                CHECK(cells[b].sum_hess ==
-                      Catch::Approx(ref[s][b].sum_hess).margin(1e-2));
+                check_cell_close(cells[b], ref[s][b]);
             }
             // Then the column fill's serial-order contract: one worker owns a
             // feature and adds the node's rows in list order, so the cells
@@ -591,8 +613,7 @@ TEST_CASE("wide multi-slice fill matches serial sums within tolerance", "[popula
         REQUIRE(cells.size() == ref[s].size());
         for (size_t b = 0; b < cells.size(); ++b)
         {
-            CHECK(cells[b].sum_grad == Catch::Approx(ref[s][b].sum_grad).margin(1e-2));
-            CHECK(cells[b].sum_hess == Catch::Approx(ref[s][b].sum_hess).margin(1e-2));
+            check_cell_close(cells[b], ref[s][b]);
         }
     }
     parallel::set_n_threads(0);
@@ -726,10 +747,7 @@ TEST_CASE("CpuHistogramEngine: the level fill matches the nodes filled alone",
                     }
                     else
                     {
-                        CHECK(got[b].sum_grad ==
-                              Catch::Approx(want[b].sum_grad).margin(1e-2));
-                        CHECK(got[b].sum_hess ==
-                              Catch::Approx(want[b].sum_hess).margin(1e-2));
+                        check_cell_close(got[b], want[b]);
                     }
                     REQUIRE(big[b].sum_grad == above[b].sum_grad - got[b].sum_grad);
                     REQUIRE(big[b].sum_hess == above[b].sum_hess - got[b].sum_hess);
