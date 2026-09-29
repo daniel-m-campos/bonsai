@@ -289,12 +289,15 @@ inline void fill_partials(ReducePlan const &plan, SlicePartials const &partials,
     size_t const                      n_sel_b   = sl.n_selected();
     size_t const                      row_cells = partials.row_cells;
     CellMode const                    mode      = partials.mode;
-    std::span<uint8_t const> const    rm     = ds.mirror().bins().subspan(sl.rm_base);
-    std::span<RowChunk const> const   chunks = plan.chunks;
-    std::span<ReduceNode const> const rns    = plan.nodes;
-    auto const own_fill_done                 = [&, siblings, rns, nodes](size_t node)
+    std::span<uint8_t const> const    rm      = ds.mirror().bins().subspan(sl.rm_base);
+    std::span<RowChunk const> const   chunks  = plan.chunks;
+    std::span<ReduceNode const> const rns     = plan.nodes;
+    size_t const                      no_node = nodes.size();
+    auto const leave_node = [&, siblings, rns, nodes, no_node](size_t node)
     {
-        if (!siblings.empty() && rns[node].first_thread == rns[node].last_thread)
+        bool const filled_alone = node != no_node && !siblings.empty() &&
+                                  rns[node].first_thread == rns[node].last_thread;
+        if (filled_alone)
         {
             subtract_slice_run(siblings[node], nodes[node].get().hists, sl, selected);
         }
@@ -305,7 +308,7 @@ inline void fill_partials(ReducePlan const &plan, SlicePartials const &partials,
         {
             static thread_local std::vector<HistCell *> bases;
             bases.resize(n_sel_b);
-            size_t last_node = nodes.size();
+            size_t last_node = no_node;
             for (size_t i = plan.begin(t); i < plan.begin(t + 1); ++i)
             {
                 RowChunk const   &chunk  = chunks[i];
@@ -319,10 +322,7 @@ inline void fill_partials(ReducePlan const &plan, SlicePartials const &partials,
                 }
                 if (chunk.node != last_node)
                 {
-                    if (last_node != nodes.size())
-                    {
-                        own_fill_done(last_node);
-                    }
+                    leave_node(last_node);
                     enter_node(nodes[chunk.node], direct, slot, partials, selected,
                                bases);
                     last_node = chunk.node;
@@ -335,10 +335,7 @@ inline void fill_partials(ReducePlan const &plan, SlicePartials const &partials,
                 fill_rows(nodes[chunk.node], chunk.first, chunk.last, grad, hess,
                           target);
             }
-            if (last_node != nodes.size())
-            {
-                own_fill_done(last_node);
-            }
+            leave_node(last_node);
         });
 }
 
