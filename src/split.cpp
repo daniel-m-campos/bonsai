@@ -4,7 +4,9 @@
 #include "bonsai/parallel.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <mdspan>
 #include <span>
 #include <vector>
@@ -68,10 +70,36 @@ inline HistCell cell_totals(SplitInput const &input)
             .sum_hess = static_cast<float>(t.sum_hess)};
 }
 
-inline bool missing_empty(HistCell const &missing)
+constexpr uint64_t k_cell_magnitude_bits = 0x7FFFFFFF7FFFFFFFULL;
+
+inline bool cell_empty(HistCell const &cell)
 {
-    return missing.sum_grad == 0.0F && missing.sum_hess == 0.0F;
+    return (std::bit_cast<uint64_t>(cell) & k_cell_magnitude_bits) == 0;
 }
+
+constexpr size_t k_cuts_per_word = 64;
+
+inline uint64_t occupied_cuts(std::span<HistCell const> block)
+{
+    uint64_t bits = 0;
+    for (size_t i = 0; i < block.size(); ++i)
+    {
+        bits |= static_cast<uint64_t>(!cell_empty(block[i])) << i;
+    }
+    return bits;
+}
+
+struct CutScan
+{
+    HistCell const &missing;
+    double          node_score;
+    double          real_grad;
+    double          real_hess;
+    int             monotone;
+    size_t          n_dirs;
+    double          left_grad = 0.0;
+    double          left_hess = 0.0;
+};
 
 inline void update_best(SplitOutput &best, double gain, feature_id_t fid, bin_id_t bin,
                         bool default_left, TreeConfig const &config)
@@ -83,6 +111,36 @@ inline void update_best(SplitOutput &best, double gain, feature_id_t fid, bin_id
                 .bin_id       = bin,
                 .default_left = default_left,
                 .valid        = true};
+    }
+}
+
+inline void update_best_at_cut(SplitInput const &input, feature_id_t fid, bin_id_t b,
+                               CutScan const &scan, TreeConfig const &config,
+                               SplitOutput &best)
+{
+    for (size_t d = 0; d < scan.n_dirs; ++d)
+    {
+        bool const default_left = d == 0;
+        auto const c =
+            score_candidate(scan.left_grad, scan.left_hess, scan.missing,
+                            scan.real_grad, scan.real_hess, default_left, config);
+        if (!c.feasible)
+        {
+            continue;
+        }
+        if (scan.monotone != 0)
+        {
+            double const w_left =
+                bounded_leaf_weight(c.s.gL, c.s.hL, config, input.lo, input.hi);
+            double const w_right =
+                bounded_leaf_weight(c.s.gR, c.s.hR, config, input.lo, input.hi);
+            if (static_cast<double>(scan.monotone) * (w_right - w_left) < 0.0)
+            {
+                continue;
+            }
+        }
+        update_best(best, c.children_score - scan.node_score, fid, b, default_left,
+                    config);
     }
 }
 
@@ -100,47 +158,33 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
     {
         return;
     }
-    auto const  &missing_cell = hist.missing();
-    double const node_score   = score(node_totals.sum_grad, node_totals.sum_hess,
-                                      config.lambda_l1, config.lambda_l2);
-    double const real_grad    = node_totals.sum_grad - missing_cell.sum_grad;
-    double const real_hess    = node_totals.sum_hess - missing_cell.sum_hess;
+    auto const &missing_cell = hist.missing();
+    CutScan     scan{.missing    = missing_cell,
+                     .node_score = score(node_totals.sum_grad, node_totals.sum_hess,
+                                         config.lambda_l1, config.lambda_l2),
+                     .real_grad  = node_totals.sum_grad - missing_cell.sum_grad,
+                     .real_hess  = node_totals.sum_hess - missing_cell.sum_hess,
+                     .monotone   = monotone_constraint_of(config, fid),
+                     .n_dirs     = cell_empty(missing_cell) ? size_t{1} : size_t{2}};
 
-    int const mc = monotone_constraint_of(config, fid);
-
-    size_t const n_dirs = missing_empty(missing_cell) ? 1 : 2;
-
-    double   left_grad = 0.0;
-    double   left_hess = 0.0;
-    bin_id_t b         = 0;
-    for (auto const &cell : hist.cut_cells())
+    auto const cuts = hist.cut_cells();
+    for (size_t base = 0; base < cuts.size(); base += k_cuts_per_word)
     {
-        left_grad += cell.sum_grad;
-        left_hess += cell.sum_hess;
-        for (size_t d = 0; d < n_dirs; ++d)
+        size_t const width = std::min(k_cuts_per_word, cuts.size() - base);
+        uint64_t     bits  = occupied_cuts(cuts.subspan(base, width));
+        if (base == 0)
         {
-            bool const default_left = d == 0;
-            auto const c = score_candidate(left_grad, left_hess, missing_cell,
-                                           real_grad, real_hess, default_left, config);
-            if (!c.feasible)
-            {
-                continue;
-            }
-            if (mc != 0)
-            {
-                double const w_left =
-                    bounded_leaf_weight(c.s.gL, c.s.hL, config, input.lo, input.hi);
-                double const w_right =
-                    bounded_leaf_weight(c.s.gR, c.s.hR, config, input.lo, input.hi);
-                if (static_cast<double>(mc) * (w_right - w_left) < 0.0)
-                {
-                    continue;
-                }
-            }
-            update_best(best, c.children_score - node_score, fid, b, default_left,
-                        config);
+            bits |= 1;
         }
-        ++b;
+        while (bits != 0)
+        {
+            size_t const b = base + static_cast<size_t>(std::countr_zero(bits));
+            bits &= bits - 1;
+            scan.left_grad += cuts[b].sum_grad;
+            scan.left_hess += cuts[b].sum_hess;
+            update_best_at_cut(input, fid, static_cast<bin_id_t>(b), scan, config,
+                               best);
+        }
     }
 }
 
@@ -179,7 +223,7 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
         sum_parent_score += parent_score[p];
         real_grad[p]      = node_totals[p].sum_grad - missing.sum_grad;
         real_hess[p]      = node_totals[p].sum_hess - missing.sum_hess;
-        all_missing_empty = all_missing_empty && missing_empty(missing);
+        all_missing_empty = all_missing_empty && cell_empty(missing);
     }
     size_t const n_dirs = all_missing_empty ? 1 : 2;
 
