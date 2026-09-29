@@ -34,6 +34,54 @@ TEST_CASE("HistogramNodeSplitFinder: picks the obvious cut on a single feature",
     CHECK(s.gain == expected);
 }
 
+// INVARIANT: find-scores-the-first-cut
+// The first cut puts the missing cell alone on the left under default_left,
+// a real candidate even when bin 0 holds no rows, so the finder scores it
+// whatever its cell holds.
+TEST_CASE("HistogramNodeSplitFinder: scores an empty first cut with a missing cell",
+          "[split][edge]")
+{
+    Histogram h{4};
+    h.add(1, +1.0, 1.0);
+    h.add(2, +1.0, 1.0);
+    h.add(3, -2.0, 1.0);
+
+    TreeConfig cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
+    SplitInput node{.hists = {}, .rows = {}};
+    node.hists.push_back(std::move(h));
+    SplitOutput const s = HistogramNodeSplitFinder::find(node, cfg);
+
+    REQUIRE(s.valid);
+    CHECK(s.bin_id == bin_id_t{0});
+    CHECK(s.default_left);
+    double const expected = score(-2.0, 1.0, cfg.lambda_l2) +
+                            score(+2.0, 2.0, cfg.lambda_l2) -
+                            score(0.0, 3.0, cfg.lambda_l2);
+    CHECK(s.gain == expected);
+}
+
+// INVARIANT: find-keeps-the-first-of-equal-cuts
+// A cut whose cell is empty repeats the sums of the cut before it, and the
+// strict tie rule keeps the earlier bin, so the finder skips such a cut
+// without scoring it.
+TEST_CASE("HistogramNodeSplitFinder: an empty later cut keeps the earlier bin",
+          "[split][edge]")
+{
+    Histogram h{5};
+    h.add(0, -1.0, 1.0);
+    h.add(3, +1.0, 1.0);
+
+    TreeConfig cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
+    SplitInput node{.hists = {}, .rows = {}};
+    node.hists.push_back(std::move(h));
+    SplitOutput const s = HistogramNodeSplitFinder::find(node, cfg);
+
+    REQUIRE(s.valid);
+    CHECK(s.bin_id == bin_id_t{0});
+    CHECK(s.gain == score(-1.0, 1.0, cfg.lambda_l2) + score(+1.0, 1.0, cfg.lambda_l2) -
+                        score(0.0, 2.0, cfg.lambda_l2));
+}
+
 TEST_CASE("HistogramNodeSplitFinder: picks the best feature across two features",
           "[split][feature]")
 {

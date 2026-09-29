@@ -86,6 +86,18 @@ A device root carries a host row list only until the engine stages it; from begi
 
 - enforced by: [`Resident: a one-leaf tree on a view matches the host path`](../tests/unit/test_cuda_resident.cpp)
 
+### find-keeps-the-first-of-equal-cuts
+
+A cut whose cell is empty repeats the sums of the cut before it, and the strict tie rule keeps the earlier bin, so the finder skips such a cut without scoring it.
+
+- enforced by: [`HistogramNodeSplitFinder: an empty later cut keeps the earlier bin`](../tests/unit/test_split_node.cpp)
+
+### find-scores-the-first-cut
+
+The first cut puts the missing cell alone on the left under default_left, a real candidate even when bin 0 holds no rows, so the finder scores it whatever its cell holds.
+
+- enforced by: [`HistogramNodeSplitFinder: scores an empty first cut with a missing cell`](../tests/unit/test_split_node.cpp)
+
 ### fit-id-gates-resident-reuse
 
 A row-narrowed view mints a FitId distinct from its parent's, and a copy shares one. Anything caching against a Dataset keys on these tokens, so an equal token means "the same fit" with no allocator caveat: the device resident state is armed for ONE FitId, and a token that compared equal across two different fits would leave the previous fit's labels, scores and rows live under the next one.
