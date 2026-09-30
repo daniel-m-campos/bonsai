@@ -65,7 +65,7 @@ inline void fill_lone(Dataset const &ds, SplitInput &node,
             FillBlock const   &r         = items[t];
             MirrorSlice const &sl        = sp.slices[r.slice];
             bool const         direct    = r.block == 0;
-            bool const         dense_sel = sl.n_selected() == sl.rm_width;
+            bool const         dense_sel = sl.dense_selection();
             MirrorSlice const  sub       = sl.subrange(r.b0, r.b1);
             HistCell *const    part      = direct ? nullptr : &view[r.block - 1, 0];
             auto const         base_of   = [&](size_t s)
@@ -96,7 +96,7 @@ inline void fill_lone(Dataset const &ds, SplitInput &node,
                 }
             }
             FillTarget const target{.slice    = sub,
-                                    .rm       = rm_all.subspan(sl.rm_base + r.b0),
+                                    .rm       = rm_all.subspan(sub.rm_base),
                                     .bases    = bases,
                                     .selected = selected,
                                     .mode     = dense_sel ? CellMode::uniform
