@@ -194,6 +194,12 @@ A row sitting exactly on a cut routes the same at train time and at predict time
 
 - enforced by: [`Binned prediction: a value on a cut routes the same both ways`](../tests/unit/test_predict_binned.cpp)
 
+### u16-bins-take-the-column-route
+
+A dataset past 255 bins reaches the level fill and the lone fill on the column route only: the row fills address a node's cells at the u8 feature stride, so a u16 node entering them would land in the wrong cells silently.
+
+- enforced by: [`CpuHistogramEngine: the level fill at u16 bins matches lone nodes`](../tests/unit/test_populate.cpp)
+
 ### untouched-resize-writes-nothing
 
 A resize of an untouched vector allocates and constructs nothing: every zero-argument construction is skipped, so the first write to each page is the producer's and homes the page on the writer's memory node, which is what lets a bound team read the row mirror from its own node. A construction from a value runs as usual.

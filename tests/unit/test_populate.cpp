@@ -578,6 +578,71 @@ TEST_CASE("u16 fallback fill is bit-identical to the serial order", "[populate]"
     parallel::set_n_threads(0);
 }
 
+// INVARIANT: u16-bins-take-the-column-route
+// A dataset past 255 bins reaches the level fill and the lone fill on the
+// column route only: the row fills address a node's cells at the u8 feature
+// stride, so a u16 node entering them would land in the wrong cells silently.
+TEST_CASE("CpuHistogramEngine: the level fill at u16 bins matches lone nodes",
+          "[populate][invariant]")
+{
+    auto const fx = make_fixture(8192, 40, BinMapperConfig{.max_bin = 2048});
+    REQUIRE(!fx.ds.bins_are_u8());
+    size_t const                             n           = fx.ds.plane_n_rows();
+    std::vector<std::vector<row_id_t>> const smalls_rows = {
+        test::iota_rows(n / 4),
+        test::iota_rows(n / 64),
+        {},
+    };
+    auto const cells_of = [](NodeHistograms const &hists, feature_id_t f)
+    {
+        auto const c = hists[f].all_cells();
+        return std::vector<HistCell>(c.begin(), c.end());
+    };
+    parallel::set_n_threads(4);
+    CpuHistogramEngine engine;
+    engine.begin_tree(fx.ds, fx.grad, fx.hess);
+    std::vector<grower_detail::DeferredSplit>       splits(smalls_rows.size());
+    std::vector<std::vector<std::vector<HistCell>>> parents(smalls_rows.size());
+    for (size_t i = 0; i < splits.size(); ++i)
+    {
+        SplitInput parent;
+        parent.rows           = test::iota_rows(n);
+        parent.shape.identity = true;
+        engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
+        for (feature_id_t const f : fx.selected)
+        {
+            parents[i].push_back(cells_of(parent.hists, f));
+        }
+        grower_detail::PendingSplit &p = splits[i].p;
+        p.left.rows                    = smalls_rows[i];
+        p.left.shape.identity          = rows_are_identity(p.left.rows, n);
+        p.right.rows                   = test::iota_rows(n);
+        p.right.shape.identity         = true;
+        p.parent_hists                 = std::move(parent.hists);
+    }
+    grower_detail::populate_level(fx.ds, fx.grad, fx.hess, splits, fx.selected, engine);
+    for (size_t i = 0; i < splits.size(); ++i)
+    {
+        SplitInput const alone = populate_node(fx, smalls_rows[i]);
+        for (size_t s = 0; s < fx.selected.size(); ++s)
+        {
+            feature_id_t const f    = fx.selected[s];
+            auto const         got  = cells_of(splits[i].p.left.hists, f);
+            auto const         want = cells_of(alone.hists, f);
+            auto const         big  = cells_of(splits[i].p.right.hists, f);
+            REQUIRE(got.size() == want.size());
+            REQUIRE(std::memcmp(got.data(), want.data(),
+                                got.size() * sizeof(HistCell)) == 0);
+            for (size_t b = 0; b < got.size(); ++b)
+            {
+                REQUIRE(big[b].sum_grad == parents[i][s][b].sum_grad - got[b].sum_grad);
+                REQUIRE(big[b].sum_hess == parents[i][s][b].sum_hess - got[b].sum_hess);
+            }
+        }
+    }
+    parallel::set_n_threads(0);
+}
+
 TEST_CASE("row-major mirror matches the binned columns", "[dataset]")
 {
     auto const fx = make_fixture(4096, 5);
