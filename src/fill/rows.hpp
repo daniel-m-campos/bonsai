@@ -235,7 +235,7 @@ inline SlicePartials slice_partials(ReducePlan const &plan, Dataset const &ds,
 {
     static thread_local std::vector<uint8_t> touched;
     size_t const                             n_sel_b   = sl.n_selected();
-    bool const                               dense_sel = n_sel_b == sl.rm_width;
+    bool const                               dense_sel = sl.dense_selection();
     bool const                               padded    = ds.bins_are_u8();
     size_t const row_cells          = padded ? n_sel_b * k_feature_stride : sl.cells;
     std::span<HistCell> const cells = partials_storage(plan.n_slots * row_cells);
@@ -387,6 +387,12 @@ inline void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes,
 // perf: Rows per chunk in the partition; measured, not tunable.
 inline constexpr size_t k_reduce_grain = 1024;
 
+// perf: Features per fill run: a 512-feature run at 255 u8 bins is 1 MB, so a
+// thread's small child and its sibling stay resident while it zeroes, scatters
+// and subtracts; same-pod cpu-wide depthwise populate 45.8 to 38.9 s against
+// the 2048-feature tile.
+inline constexpr size_t k_fill_run_features = 512;
+
 inline void fill_sparse(Dataset const &ds, floats_view grad, floats_view hess,
                         split_input_refs nodes, std::span<feature_id_t const> selected,
                         SelectionPlan const &sp, sibling_refs siblings = {})
@@ -394,7 +400,12 @@ inline void fill_sparse(Dataset const &ds, floats_view grad, floats_view hess,
     ReducePlan const &plan = plan_reduce(nodes, k_reduce_grain);
     for (MirrorSlice const &sl : sp.slices)
     {
-        run_fill_reduce(plan, nodes, ds, grad, hess, selected, sp, sl, siblings);
+        for (size_t b0 = 0; b0 < sl.n_selected(); b0 += k_fill_run_features)
+        {
+            size_t const b1 = std::min(b0 + k_fill_run_features, sl.n_selected());
+            run_fill_reduce(plan, nodes, ds, grad, hess, selected, sp,
+                            sl.subrange(b0, b1), siblings);
+        }
     }
 }
 

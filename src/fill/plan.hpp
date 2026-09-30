@@ -32,21 +32,28 @@ struct MirrorSlice
     size_t rm_base, rm_width;
     size_t cell0, cells;
     size_t fid0;
+    size_t tile_selected;
 
     size_t n_selected() const
     {
         return s1 - s0;
     }
 
+    bool dense_selection() const
+    {
+        return tile_selected == rm_width;
+    }
+
     MirrorSlice subrange(size_t b0, size_t b1) const
     {
-        return {.s0       = s0 + b0,
-                .s1       = s0 + b1,
-                .rm_base  = rm_base,
-                .rm_width = rm_width,
-                .cell0    = cell0,
-                .cells    = cells,
-                .fid0     = fid0 + b0};
+        return {.s0            = s0 + b0,
+                .s1            = s0 + b1,
+                .rm_base       = rm_base + b0,
+                .rm_width      = rm_width,
+                .cell0         = cell0,
+                .cells         = cells,
+                .fid0          = fid0 + b0,
+                .tile_selected = tile_selected};
     }
 };
 
@@ -69,13 +76,14 @@ inline std::vector<MirrorSlice> mirror_slices(Dataset const                &ds,
             ++e;
         }
         size_t const cell_end = e < selected.size() ? offsets[e] : total_cells;
-        slices.push_back({.s0       = s,
-                          .s1       = e,
-                          .rm_base  = ds.plane_n_rows() * tile * width,
-                          .rm_width = tile_width,
-                          .cell0    = offsets[s],
-                          .cells    = cell_end - offsets[s],
-                          .fid0     = tile * width});
+        slices.push_back({.s0            = s,
+                          .s1            = e,
+                          .rm_base       = ds.plane_n_rows() * tile * width,
+                          .rm_width      = tile_width,
+                          .cell0         = offsets[s],
+                          .cells         = cell_end - offsets[s],
+                          .fid0          = tile * width,
+                          .tile_selected = e - s});
         s = e;
     }
     return slices;
