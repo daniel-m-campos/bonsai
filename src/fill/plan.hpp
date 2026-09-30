@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <ranges>
@@ -26,11 +27,16 @@ inline std::span<HistCell> partials_storage(size_t n_cells)
     return {cells.data(), n_cells};
 }
 
+enum class CellMode : uint8_t
+{
+    uniform,
+    gathered,
+};
+
 struct MirrorSlice
 {
     size_t s0, s1;
     size_t rm_base, rm_width;
-    size_t cell0, cells;
     size_t fid0;
     size_t tile_selected;
 
@@ -44,23 +50,24 @@ struct MirrorSlice
         return tile_selected == rm_width;
     }
 
+    CellMode cell_mode() const
+    {
+        return dense_selection() ? CellMode::uniform : CellMode::gathered;
+    }
+
     MirrorSlice subrange(size_t b0, size_t b1) const
     {
         return {.s0            = s0 + b0,
                 .s1            = s0 + b1,
                 .rm_base       = rm_base + b0,
                 .rm_width      = rm_width,
-                .cell0         = cell0,
-                .cells         = cells,
                 .fid0          = fid0 + b0,
                 .tile_selected = tile_selected};
     }
 };
 
 inline std::vector<MirrorSlice> mirror_slices(Dataset const                &ds,
-                                              std::span<feature_id_t const> selected,
-                                              std::span<size_t const>       offsets,
-                                              size_t                        total_cells)
+                                              std::span<feature_id_t const> selected)
 {
     std::vector<MirrorSlice> slices;
     size_t const             width = Dataset::mirror_tile_width();
@@ -75,13 +82,10 @@ inline std::vector<MirrorSlice> mirror_slices(Dataset const                &ds,
         {
             ++e;
         }
-        size_t const cell_end = e < selected.size() ? offsets[e] : total_cells;
         slices.push_back({.s0            = s,
                           .s1            = e,
                           .rm_base       = ds.plane_n_rows() * tile * width,
                           .rm_width      = tile_width,
-                          .cell0         = offsets[s],
-                          .cells         = cell_end - offsets[s],
                           .fid0          = tile * width,
                           .tile_selected = e - s});
         s = e;
@@ -101,20 +105,12 @@ struct SelectionPlan
 {
     SelectionPlan(Dataset const &ds, std::span<feature_id_t const> selected)
         : bins(selected_bins(ds, selected)), layout(bins, ds.bins_are_u8()),
-          offsets(selected.size())
+          slices(mirror_slices(ds, selected))
     {
-        for (size_t s = 0; s < selected.size(); ++s)
-        {
-            offsets[s] = total_cells;
-            total_cells += bins[s];
-        }
-        slices = mirror_slices(ds, selected, offsets, total_cells);
     }
 
     std::vector<size_t>      bins;
     ArenaLayout              layout;
-    std::vector<size_t>      offsets;
-    size_t                   total_cells = 0;
     std::vector<MirrorSlice> slices;
 };
 

@@ -99,8 +99,7 @@ inline void fill_lone(Dataset const &ds, SplitInput &node,
                                     .rm       = rm_all.subspan(sub.rm_base),
                                     .bases    = bases,
                                     .selected = selected,
-                                    .mode     = dense_sel ? CellMode::uniform
-                                                          : CellMode::gathered};
+                                    .mode     = sl.cell_mode()};
             fill_rows<true>(node, n * r.block / blocks, n * (r.block + 1) / blocks,
                             gh.g, gh.h, target);
             if (blocks == 1)
@@ -148,14 +147,14 @@ struct FillPlan
 
 inline FillPlan plan_lone_fill(size_t n_rows, SelectionPlan const &sp, size_t threads)
 {
-    size_t const n_sel   = sp.offsets.size();
+    size_t const n_sel   = sp.bins.size();
     size_t const workers = std::clamp(((n_sel * k_feature_stride) + (n_rows * n_sel)) /
                                           k_fill_cells_per_worker,
                                       size_t{1}, threads);
     size_t       lines   = 0;
     for (MirrorSlice const &sl : sp.slices)
     {
-        lines += sl.n_selected() == sl.rm_width
+        lines += sl.dense_selection()
                      ? (sl.n_selected() + k_line_bytes - 1) / k_line_bytes
                      : sl.n_selected();
     }

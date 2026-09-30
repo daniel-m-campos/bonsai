@@ -26,13 +26,6 @@ struct Partials
     std::span<uint8_t> used;
 };
 
-enum class CellMode : uint8_t
-{
-    uniform,
-    dense,
-    gathered,
-};
-
 struct FillTarget
 {
     MirrorSlice const            &slice;
@@ -59,11 +52,6 @@ inline void fill_by_mode(CellMode mode, CellIndex const ci, RunRowsFn &&run_rows
     {
         run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
                  { return ci.a0[s, row_bins[s]]; }, unit_hess);
-    }
-    else if (mode == CellMode::dense)
-    {
-        run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
-                 { return ci.bases[s][row_bins[s]]; }, unit_hess);
     }
     else
     {
@@ -216,40 +204,31 @@ inline ReducePlan const &plan_reduce(split_input_refs nodes, size_t grain)
 
 struct SlicePartials
 {
-    MirrorSlice const      &slice;
-    ArenaLayout const      &layout;
-    Partials                parts;
-    std::span<size_t const> offsets;
-    size_t                  row_cells;
-    bool                    padded;
-    CellMode                mode;
+    MirrorSlice const &slice;
+    ArenaLayout const &layout;
+    Partials           parts;
+    size_t             row_cells;
+    CellMode           mode;
 
     size_t cell_of(size_t s) const
     {
-        return padded ? (s - slice.s0) * k_feature_stride : offsets[s] - slice.cell0;
+        return (s - slice.s0) * k_feature_stride;
     }
 };
 
-inline SlicePartials slice_partials(ReducePlan const &plan, Dataset const &ds,
-                                    SelectionPlan const &sp, MirrorSlice const &sl)
+inline SlicePartials slice_partials(ReducePlan const &plan, SelectionPlan const &sp,
+                                    MirrorSlice const &sl)
 {
     static thread_local std::vector<uint8_t> touched;
-    size_t const                             n_sel_b   = sl.n_selected();
-    bool const                               dense_sel = sl.dense_selection();
-    bool const                               padded    = ds.bins_are_u8();
-    size_t const row_cells          = padded ? n_sel_b * k_feature_stride : sl.cells;
-    std::span<HistCell> const cells = partials_storage(plan.n_slots * row_cells);
+    size_t const              row_cells = sl.n_selected() * k_feature_stride;
+    std::span<HistCell> const cells     = partials_storage(plan.n_slots * row_cells);
     touched.assign(plan.n_slots, 0);
     PartialsView const view{cells.data(), plan.n_slots, row_cells};
     return {.slice     = sl,
             .layout    = sp.layout,
             .parts     = {.cells = view, .used = touched},
-            .offsets   = sp.offsets,
             .row_cells = row_cells,
-            .padded    = padded,
-            .mode      = dense_sel && padded ? CellMode::uniform
-                         : dense_sel         ? CellMode::dense
-                                             : CellMode::gathered};
+            .mode      = sl.cell_mode()};
 }
 
 inline void subtract_slice_run(NodeHistograms &sibling, NodeHistograms const &hists,
@@ -379,7 +358,7 @@ inline void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes,
                             SelectionPlan const &sp, MirrorSlice const &sl,
                             sibling_refs siblings)
 {
-    SlicePartials const partials = slice_partials(plan, ds, sp, sl);
+    SlicePartials const partials = slice_partials(plan, sp, sl);
     fill_partials(plan, partials, nodes, ds, grad, hess, selected, siblings);
     reduce_partials(plan, partials, nodes, selected, siblings);
 }
