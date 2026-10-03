@@ -78,7 +78,7 @@ Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bon
 
 ### Perf
 
-On GPU at the tall scenario, fit totals run depthwise 2.8s vs XGBoost 17.0s; leafwise 2.8s vs LightGBM 23.8s; levelwise 2.7s vs CatBoost 15.3s. On CPU at the tall scenario: depthwise 7.3s vs XGBoost 8.1s; leafwise 7.6s vs LightGBM 12.0s; levelwise 6.9s vs CatBoost 9.0s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
+On GPU at the tall scenario, fit totals run depthwise 2.7s vs XGBoost 15.2s; leafwise 2.7s vs LightGBM 21.2s; levelwise 2.6s vs CatBoost 14.2s. On CPU at the tall scenario: depthwise 7.1s vs XGBoost 7.1s (tie); leafwise 7.3s vs LightGBM 11.0s; levelwise 6.5s vs CatBoost 8.6s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
 
 The panels, and the closed campaigns behind them, are in [the ledger](https://daniel-m-campos.github.io/bonsai/results/results/).
 
@@ -107,8 +107,8 @@ bonsai leafwise against LightGBM head to head on the GPU, both at 63 leaves with
 
 | library | mean rank | outright wins |
 |---|--:|--:|
-| **bonsai** | **1.42** | **32** |
-| lightgbm | 1.58 | 23 |
+| **bonsai** | **1.40** | **33** |
+| lightgbm | 1.60 | 22 |
 
 <!-- standings:end -->
 bonsai keeps the lead under either reading of the one knob that translates ambiguously between libraries, which [the standings page](https://daniel-m-campos.github.io/bonsai/results/results/quality-grinsztajn/) records; reproduce with `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite and `python -m bonsai.bench.grinsztajn out.jsonl --report` to render the standings.
