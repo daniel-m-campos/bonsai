@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -300,8 +301,11 @@ using LogLossBooster = Booster<LogLossObjective, G, AllRowsSampler>;
 template <typename G>
 using LogLossBernoulliBooster = Booster<LogLossObjective, G, BernoulliSampler>;
 template <typename G>
-using PoissonBooster                   = Booster<PoissonObjective, G, AllRowsSampler>;
-template <typename G> using MaeBooster = Booster<MAEObjective, G, AllRowsSampler>;
+using PoissonBooster                     = Booster<PoissonObjective, G, AllRowsSampler>;
+template <typename G> using MaeBooster   = Booster<MAEObjective, G, AllRowsSampler>;
+template <typename G> using HuberBooster = Booster<HuberObjective, G, AllRowsSampler>;
+template <typename G>
+using QuantileBooster = Booster<QuantileObjective, G, AllRowsSampler>;
 
 } // namespace
 
@@ -311,7 +315,7 @@ template <typename G> using MaeBooster = Booster<MAEObjective, G, AllRowsSampler
 // round with no host cross-check, so a divergence shows up only as a quality
 // difference. This suite is the cross-check: MSE, LogLoss and Poisson, on both
 // the depthwise and levelwise planes, against the same fit with the host
-// objective forced.
+// objective forced; the renewal objectives have their own pin below.
 TEST_CASE("Resident MSE matches host-objective GPU (depthwise)",
           "[cuda][resident][invariant]")
 {
@@ -721,22 +725,83 @@ TEST_CASE("Resident leafwise matches host-objective GPU under Bernoulli sampling
     REQUIRE(max_abs_diff(host, res) < 0.25F);
 }
 
-TEST_CASE("MAE stays on the host path, the escape hatch is a no-op", "[cuda][resident]")
+// INVARIANT: device-leaf-renewal-matches-host
+// MAE, Huber and Quantile replace each leaf with a statistic of its residuals
+// after the tree is built (src/objective.cpp renew_leaf). The resident path
+// renews on the device: residuals sorted by leaf, one selection per leaf,
+// Huber's clamped mean, the monotone fence. This suite is its cross-check
+// against the host renewal on all three planes, to the same tolerance the
+// Newton objectives hold.
+TEMPLATE_TEST_CASE("Resident renewal matches host renewal on every plane",
+                   "[cuda][resident][invariant]", CudaDepthwiseGrower,
+                   CudaObliviousGrower, CudaLeafwiseGrower)
 {
     if (!cuda_available())
     {
-        SKIP("this MAE proxy needs a usable CUDA device");
+        SKIP("resident renewal needs a usable CUDA device");
     }
     auto const data = make_regression(8192, 6, 59);
-    auto const cfg  = reg_cfg();
-    // device_objective_kind<MAE> is none, so try_resident_round is compiled out
-    // and MAE always trains on the host objective path. The behavioral proof:
-    // BONSAI_HOST_OBJECTIVE has no path to toggle, so forcing it changes nothing
-    // and the two models are byte-for-byte identical (a resident objective would
-    // diverge here on the atomic-order tolerance).
-    auto const def = fit_predict<MaeBooster<CudaDepthwiseGrower>>(cfg, data, 40, false);
+    Config cfg = std::same_as<TestType, CudaLeafwiseGrower> ? leaf_cfg() : reg_cfg();
+    cfg.objective.huber_delta    = 0.5F;
+    cfg.objective.quantile_alpha = 0.75F;
+    auto const check             = [&](char const *tag, std::vector<float> const &host,
+                           std::vector<float> const &res)
+    {
+        report(tag, host, res, data.y);
+        REQUIRE(r2_of(res, data.y) > 0.8);
+        REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(1e-4));
+        REQUIRE(max_abs_diff(host, res) < 2e-2F);
+    };
+    SECTION("mae")
+    {
+        check("mae", fit_predict<MaeBooster<TestType>>(cfg, data, 40, true),
+              fit_predict<MaeBooster<TestType>>(cfg, data, 40, false));
+    }
+    SECTION("huber")
+    {
+        check("huber", fit_predict<HuberBooster<TestType>>(cfg, data, 40, true),
+              fit_predict<HuberBooster<TestType>>(cfg, data, 40, false));
+    }
+    SECTION("quantile")
+    {
+        check("quantile", fit_predict<QuantileBooster<TestType>>(cfg, data, 40, true),
+              fit_predict<QuantileBooster<TestType>>(cfg, data, 40, false));
+    }
+}
+
+TEST_CASE("Resident renewal clamps a renewed leaf into its monotone fence",
+          "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident renewal needs a usable CUDA device");
+    }
+    auto const data                      = make_regression(8192, 6, 73);
+    Config     cfg                       = reg_cfg();
+    cfg.tree_config.monotone_constraints = {+1, 0, 0, 0, 0, 0};
+    auto const host = fit_predict<MaeBooster<CudaDepthwiseGrower>>(cfg, data, 40, true);
+    auto const res = fit_predict<MaeBooster<CudaDepthwiseGrower>>(cfg, data, 40, false);
+    report("mae-fence", host, res, data.y);
+    REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(1e-4));
+    REQUIRE(max_abs_diff(host, res) < 2e-2F);
+}
+
+TEST_CASE("An oblivious monotone fit under a renewal objective stays on the host",
+          "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident renewal needs a usable CUDA device");
+    }
+    auto const data                      = make_regression(8192, 6, 79);
+    Config     cfg                       = reg_cfg();
+    cfg.tree_config.monotone_constraints = {+1, 0, 0, 0, 0, 0};
+    // The host reprojects the renewed leaf table onto the monotone lattice, a
+    // step the device epilogue does not carry, so the booster never arms: the
+    // escape hatch has nothing to toggle and the two models are identical bytes.
+    auto const def = fit_predict<MaeBooster<CudaObliviousGrower>>(cfg, data, 20, false);
     auto const forced =
-        fit_predict<MaeBooster<CudaDepthwiseGrower>>(cfg, data, 40, true);
+        fit_predict<MaeBooster<CudaObliviousGrower>>(cfg, data, 20, true);
     REQUIRE(max_abs_diff(def, forced) == 0.0F);
 }
 

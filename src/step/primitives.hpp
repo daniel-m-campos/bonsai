@@ -619,6 +619,35 @@ std::vector<ResidentNodeT> resident_node_table(DenseTree const &tree, Dataset co
 }
 
 template <typename ResidentNodeT>
+std::vector<ResidentNodeT> resident_node_table(DenseBuild const &build,
+                                               Dataset const    &ds)
+{
+    std::vector<ResidentNodeT> table =
+        resident_node_table<ResidentNodeT>(build.nodes, ds);
+    size_t const fenced = std::min(table.size(), build.leaf_bounds.size());
+    for (size_t i = 0; i < fenced; ++i)
+    {
+        table[i].lo = build.leaf_bounds[i].lo;
+        table[i].hi = build.leaf_bounds[i].hi;
+    }
+    return table;
+}
+
+template <typename EngineT>
+void finish_resident_tree(EngineT &engine, DenseBuild &build, Dataset const &ds)
+{
+    auto const table = resident_node_table<typename EngineT::ResidentNode>(build, ds);
+    std::vector<float> const renewed = engine.resident_finalize(table);
+    for (size_t i = 0; i < renewed.size(); ++i)
+    {
+        if (table[i].is_leaf)
+        {
+            build.nodes[i] = DenseTree::leaf(renewed[i]);
+        }
+    }
+}
+
+template <typename ResidentNodeT>
 std::vector<ResidentNodeT> resident_node_table(ObliviousTree const &tree,
                                                Dataset const       &ds)
 {

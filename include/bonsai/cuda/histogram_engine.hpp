@@ -7,6 +7,7 @@
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -132,8 +133,9 @@ class CudaHistogramEngine
     // One flattened tree node the device-resident epilogue walks in bin space
     // to fuse the per-row score update. Internal
     // nodes carry the split (feature, bin, missing routing, children); leaves
-    // carry the contribution. Dense trees map their nodes one-to-one; oblivious
-    // trees synthesize the perfect-tree numbering, children 2i+1 / 2i+2
+    // carry the contribution and the fence a renewed value is clamped into.
+    // Dense trees map their nodes one-to-one; oblivious trees synthesize the
+    // perfect-tree numbering, children 2i+1 / 2i+2
     // (invariants: perfect-tree-numbering-one-scheme).
     struct ResidentNode
     {
@@ -142,6 +144,8 @@ class CudaHistogramEngine
         node_id_t    left         = 0;
         node_id_t    right        = 0;
         float        value        = 0.0F;
+        double       lo           = -std::numeric_limits<double>::infinity();
+        double       hi           = std::numeric_limits<double>::infinity();
         bool         default_left = false;
         bool         is_leaf      = false;
     };
@@ -243,7 +247,7 @@ class CudaHistogramEngine
     // false when the objective or the capacity does not hold, leaving the
     // caller on the host path. resident_end downloads the scores so the host
     // copy is authoritative again.
-    bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+    bool resident_begin(Dataset const &ds, DeviceObjective objective,
                         std::span<float const> initial_scores, float learning_rate);
     // The leaf plane's arming: the level plane's gate plus the leaf plane's
     // own, applied once per fit over EVERY feature and the full leaf budget.
@@ -251,12 +255,15 @@ class CudaHistogramEngine
     // passes this bound leaves no tree able to fail the per-tree test; a
     // config that would only fit per tree simply never arms.
     bool resident_begin_leaf(Dataset const &ds, TreeConfig const &config,
-                             DeviceObjectiveKind    kind,
+                             DeviceObjective        objective,
                              std::span<float const> initial_scores,
                              float                  learning_rate);
     bool resident_armed() const;
-    void resident_finalize(std::span<ResidentNode const> nodes);
-    void resident_end(std::span<float> scores_out);
+    // Fuses the finished tree into the resident scores; a renewal objective
+    // first renews the leaves on the device and returns the value per node
+    // index, empty otherwise (invariants: device-leaf-renewal-matches-host).
+    std::vector<float> resident_finalize(std::span<ResidentNode const> nodes);
+    void               resident_end(std::span<float> scores_out);
 
     // The validation plane: eval_begin adopts the rows' device plane in place
     // or uploads them retiled, with the labels when the kind has a device
@@ -264,7 +271,7 @@ class CudaHistogramEngine
     // mirror is not u8 (and any prior arming is dropped). eval_accumulate
     // walks the finished tree there by view position; with a device loss it
     // returns the round's loss (at most 8 KiB moved), else scores_out.
-    bool                 eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+    bool                 eval_begin(Dataset const &valid, DeviceObjective objective,
                                     std::span<float const> initial_scores);
     std::optional<float> eval_accumulate(std::span<ResidentNode const> nodes, float lr,
                                          std::span<float> scores_out);

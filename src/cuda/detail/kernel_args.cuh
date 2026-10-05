@@ -193,6 +193,8 @@ struct NodeTableRef
     uint32_t const *default_left;
     uint32_t const *is_leaf;
     float const    *value;
+    double const   *lo;
+    double const   *hi;
 };
 
 struct SiblingDerive

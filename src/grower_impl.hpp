@@ -780,7 +780,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow_leaves(Dataset const &ds,
         gd::stamp_leaf_rows(build.nodes,
                             heap | std::views::transform(&gd::Candidate::node),
                             out.values, out.leaf_ids);
-        step.end_tree(build.nodes, out.values, out.leaf_ids);
+        step.end_tree(build, out.values, out.leaf_ids);
         if (!resident)
         {
             gd::route_unsampled(ds, build, selection.rows, out);

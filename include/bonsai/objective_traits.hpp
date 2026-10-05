@@ -17,16 +17,42 @@ namespace bonsai
 // resident scores and labels, with no host objective pass and no per-tree
 // gradient upload. Squared error is the trivial case: g = score - label,
 // h = 1. LogLoss and Poisson add a transcendental per row (sigmoid, exp) but
-// stay two-line kernels. The booster and the CUDA engine share this tag
-// (invariants: resident-objective-eligibility), and this core header carries
-// no CUDA include.
+// stay two-line kernels; MAE, Huber and Quantile renew their leaves from the
+// resident residuals after the tree is built. The booster and the CUDA
+// engine share this tag (invariants: resident-objective-eligibility), and
+// this core header carries no CUDA include.
 enum class DeviceObjectiveKind : uint8_t
 {
     none,
     mse,
     logloss,
     poisson,
+    mae,
+    huber,
+    quantile,
 };
+
+// A kind with the parameters its kernels read; a bare kind converts.
+struct DeviceObjective
+{
+    DeviceObjectiveKind kind  = DeviceObjectiveKind::none;
+    float               alpha = 0.5F;
+    float               delta = 1.0F;
+
+    constexpr DeviceObjective() = default;
+    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
+    constexpr DeviceObjective(DeviceObjectiveKind k) : kind(k) {}
+    constexpr DeviceObjective(DeviceObjectiveKind k, float alpha_in, float delta_in)
+        : kind(k), alpha(alpha_in), delta(delta_in)
+    {
+    }
+};
+
+constexpr bool renew_leaf_on_device(DeviceObjectiveKind kind)
+{
+    return kind == DeviceObjectiveKind::mae || kind == DeviceObjectiveKind::huber ||
+           kind == DeviceObjectiveKind::quantile;
+}
 
 template <typename Objective> struct device_objective_kind_of
 {
@@ -48,9 +74,39 @@ template <> struct device_objective_kind_of<PoissonObjective>
     static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::poisson;
 };
 
+template <> struct device_objective_kind_of<MAEObjective>
+{
+    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::mae;
+};
+
+template <> struct device_objective_kind_of<HuberObjective>
+{
+    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::huber;
+};
+
+template <> struct device_objective_kind_of<QuantileObjective>
+{
+    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::quantile;
+};
+
 template <typename Objective>
 inline constexpr DeviceObjectiveKind device_objective_kind =
     device_objective_kind_of<Objective>::value;
+
+template <typename Objective> DeviceObjective device_objective_of(Objective const &)
+{
+    return device_objective_kind<Objective>;
+}
+
+inline DeviceObjective device_objective_of(HuberObjective const &objective)
+{
+    return {DeviceObjectiveKind::huber, 0.5F, objective.delta_};
+}
+
+inline DeviceObjective device_objective_of(QuantileObjective const &objective)
+{
+    return {DeviceObjectiveKind::quantile, objective.alpha_, 1.0F};
+}
 
 // Inverse link function for objective T, applied in place. Identity for
 // regression objectives; sigmoid for binary classification. CLI-only concern

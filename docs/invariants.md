@@ -68,9 +68,15 @@ Device ingest above 8 GiB of raw floats streams chunks through three pinned slot
 
 - enforced by: [`cuda_ingest bins identically across more chunks than slots`](../tests/unit/test_cuda_grower.cpp)
 
+### device-leaf-renewal-matches-host
+
+MAE, Huber and Quantile replace each leaf with a statistic of its residuals after the tree is built (src/objective.cpp renew_leaf). The resident path renews on the device: residuals sorted by leaf, one selection per leaf, Huber's clamped mean, the monotone fence. This suite is its cross-check against the host renewal on all three planes, to the same tolerance the Newton objectives hold.
+
+- enforced by: [`Resident renewal matches host renewal on every plane`](../tests/unit/test_cuda_resident.cpp)
+
 ### device-objective-formula-matches-host
 
-The device gradient and hessian kernels must stay numerically identical to src/objective.cpp's host formulas. Device-resident training reads them every round with no host cross-check, so a divergence shows up only as a quality difference. This suite is the cross-check: MSE, LogLoss and Poisson, on both the depthwise and levelwise planes, against the same fit with the host objective forced.
+The device gradient and hessian kernels must stay numerically identical to src/objective.cpp's host formulas. Device-resident training reads them every round with no host cross-check, so a divergence shows up only as a quality difference. This suite is the cross-check: MSE, LogLoss and Poisson, on both the depthwise and levelwise planes, against the same fit with the host objective forced; the renewal objectives have their own pin below.
 
 - enforced by: [`Resident MSE matches host-objective GPU (depthwise)`](../tests/unit/test_cuda_resident.cpp)
 
@@ -259,7 +265,7 @@ The cuda growers are registered in every build; without a device, construction a
 
 ### resident-objective-eligibility
 
-The device-resident objective arms only for MSE, LogLoss, and Poisson, weighted or not, with no DART and a sampler that never reads gradient values; everything else takes the host path. `BONSAI_HOST_OBJECTIVE=1` forces the host path.
+The device-resident objective arms for MSE, LogLoss, Poisson, MAE, Huber and Quantile, weighted or not, with no DART and a sampler that never reads gradient values; everything else takes the host path, as does an oblivious tree under a monotone constraint with a renewal objective (its leaf table is reprojected on the host). `BONSAI_HOST_OBJECTIVE=1` forces the host path.
 
 - code: `include/bonsai/booster.hpp` : `resident_begin`
 - code: `src/cuda/detail/device_context.cu` : `resident_begin`

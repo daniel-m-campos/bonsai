@@ -76,7 +76,7 @@ class LeafStep : public TreeStep<EngineT>
 
     void leaf(node_id_t /*id*/, uint32_t /*slot*/) {}
 
-    void end_tree(DenseTree::Nodes const & /*nodes*/, train_leaf_values & /*values*/,
+    void end_tree(DenseBuild & /*build*/, train_leaf_values & /*values*/,
                   std::vector<node_id_t> & /*leaf_ids*/)
     {
     }
@@ -165,18 +165,17 @@ class LeafStep<EngineT, SplitterT> : public TreeStep<EngineT>
         }
     }
 
-    void end_tree(DenseTree::Nodes const &nodes, train_leaf_values &values,
+    void end_tree(DenseBuild &build, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids)
     {
         if (resident_)
         {
-            engine_.resident_finalize(
-                resident_node_table<typename EngineT::ResidentNode>(nodes, ds_));
+            finish_resident_tree(engine_, build, ds_);
             return;
         }
         engine_.leaf_stamp(stamps_);
         stamps_.clear();
-        engine_.finalize_tree(node_values(nodes), values, leaf_ids);
+        engine_.finalize_tree(node_values(build.nodes), values, leaf_ids);
     }
 
   private:

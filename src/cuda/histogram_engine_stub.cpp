@@ -181,7 +181,7 @@ void CudaHistogramEngine::leaf_stamp(std::span<LeafStamp const> /*stamps*/)
 }
 
 bool CudaHistogramEngine::resident_begin(Dataset const & /*ds*/,
-                                         DeviceObjectiveKind /*kind*/,
+                                         DeviceObjective /*objective*/,
                                          std::span<float const> /*initial_scores*/,
                                          float /*learning_rate*/)
 {
@@ -190,7 +190,7 @@ bool CudaHistogramEngine::resident_begin(Dataset const & /*ds*/,
 
 bool CudaHistogramEngine::resident_begin_leaf(Dataset const & /*ds*/,
                                               TreeConfig const & /*config*/,
-                                              DeviceObjectiveKind /*kind*/,
+                                              DeviceObjective /*objective*/,
                                               std::span<float const> /*initial_scores*/,
                                               float /*learning_rate*/)
 {
@@ -202,12 +202,16 @@ bool CudaHistogramEngine::resident_armed() const
     return false;
 }
 
-void CudaHistogramEngine::resident_finalize(std::span<ResidentNode const> /*nodes*/) {}
+std::vector<float>
+CudaHistogramEngine::resident_finalize(std::span<ResidentNode const> /*nodes*/)
+{
+    return {};
+}
 
 void CudaHistogramEngine::resident_end(std::span<float> /*scores_out*/) {}
 
 bool CudaHistogramEngine::eval_begin(Dataset const & /*valid*/,
-                                     DeviceObjectiveKind /*kind*/,
+                                     DeviceObjective /*objective*/,
                                      std::span<float const> /*initial_scores*/)
 {
     return false;
