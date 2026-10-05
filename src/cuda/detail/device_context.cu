@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cub/cub.cuh>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <format>
@@ -606,8 +607,9 @@ void CudaDeviceContext::note_plane(bool tiled, size_t shared)
 
 bool CudaDeviceContext::unit_hessian() const
 {
-    return resident.armed && resident.kind == DeviceObjectiveKind::mse &&
-           !resident.weighted;
+    auto const kind = resident.objective.kind;
+    return resident.armed && !resident.weighted &&
+           (kind == DeviceObjectiveKind::mse || renew_leaf_on_device(kind));
 }
 
 size_t CudaDeviceContext::tiled_shared_bytes() const
@@ -758,7 +760,7 @@ void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
         grads.gh.reserve(resident.n_rows);
         grads.absmax.reserve(1);
         grads.quant.reserve(1);
-        gh_from_scores(resident.kind, resident.weighted, resident.scores.data(),
+        gh_from_scores(resident.objective, resident.weighted, resident.scores.data(),
                        resident.labels.data(),
                        resident.weighted ? resident.weights.data() : nullptr, n,
                        grads.gh.data());
@@ -1498,12 +1500,11 @@ void CudaDeviceContext::leaf_stamp(
     }
 }
 
-bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjective objective,
                                        std::span<float const> initial_scores,
                                        float                  learning_rate)
 {
-    if (kind != DeviceObjectiveKind::mse && kind != DeviceObjectiveKind::logloss &&
-        kind != DeviceObjectiveKind::poisson)
+    if (objective.kind == DeviceObjectiveKind::none)
     {
         return false;
     }
@@ -1524,7 +1525,7 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
         resident.labels_key = ds.labels_identity();
     }
     resident.scores.upload(initial_scores.data(), initial_scores.size());
-    resident.kind          = kind;
+    resident.objective     = objective;
     resident.weighted      = !ds.weights().empty();
     resident.n_rows        = ds.plane_n_rows();
     resident.learning_rate = learning_rate;
@@ -1534,7 +1535,7 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
 }
 
 bool CudaDeviceContext::resident_begin_leaf(Dataset const &ds, TreeConfig const &config,
-                                            DeviceObjectiveKind    kind,
+                                            DeviceObjective        objective,
                                             std::span<float const> initial_scores,
                                             float                  learning_rate)
 {
@@ -1545,7 +1546,7 @@ bool CudaDeviceContext::resident_begin_leaf(Dataset const &ds, TreeConfig const 
     {
         return false;
     }
-    return resident_begin(ds, kind, initial_scores, learning_rate);
+    return resident_begin(ds, objective, initial_scores, learning_rate);
 }
 
 void CudaDeviceContext::NodeTable::stage(
@@ -1569,15 +1570,69 @@ void CudaDeviceContext::NodeTable::stage(
            [](ResidentNode const &rn) { return rn.default_left ? 1U : 0U; });
     column(is_leaf, [](ResidentNode const &rn) { return rn.is_leaf ? 1U : 0U; });
     column(value, [](ResidentNode const &rn) { return rn.value; });
+    column(lo, [](ResidentNode const &rn) { return rn.lo; });
+    column(hi, [](ResidentNode const &rn) { return rn.hi; });
 }
 
-void CudaDeviceContext::resident_finalize(
+void CudaDeviceContext::resident_renew(uint32_t n, uint32_t n_nodes)
+{
+    resident.keys.reserve(n);
+    resident.keys_sorted.reserve(n);
+    data.dispatch_bins(
+        [&](auto const *bins)
+        {
+            route_residual_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
+                bins, data.n_bins_ptr(), static_cast<uint32_t>(data.key.n_rows),
+                static_cast<uint32_t>(data.key.n_feats), resident.nodes.ref(),
+                resident.labels.data(), resident.scores.data(), n, resident.rows.data(),
+                resident.keys.data());
+        });
+    check(cudaGetLastError(), "resident route+residual launch");
+    // perf: The sort covers the residual's 32 bits plus the node index's, so a
+    // 256-leaf tree sorts 40 of the 64 key bits: five radix passes, not eight.
+    int const node_bits  = n_nodes <= 1 ? 0 : 32 - __builtin_clz(n_nodes - 1);
+    size_t    temp_bytes = 0;
+    check(cub::DeviceRadixSort::SortKeys(nullptr, temp_bytes, resident.keys.data(),
+                                         resident.keys_sorted.data(), n, 0,
+                                         32 + node_bits),
+          "resident sort sizing");
+    resident.sort_temp.reserve(temp_bytes);
+    check(cub::DeviceRadixSort::SortKeys(
+              resident.sort_temp.data(), temp_bytes, resident.keys.data(),
+              resident.keys_sorted.data(), n, 0, 32 + node_bits),
+          "resident sort");
+    resident.seg_start.reserve(n_nodes);
+    resident.seg_end.reserve(n_nodes);
+    check(cudaMemset(resident.seg_start.data(), 0, n_nodes * sizeof(uint32_t)),
+          "resident segment start zero");
+    check(cudaMemset(resident.seg_end.data(), 0, n_nodes * sizeof(uint32_t)),
+          "resident segment end zero");
+    segment_bounds_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
+        resident.keys_sorted.data(), n, resident.seg_start.data(),
+        resident.seg_end.data());
+    check(cudaGetLastError(), "resident segment bounds launch");
+    renew_leaves_kernel<<<dim3(n_nodes), dim3(k_linear_threads)>>>(
+        resident.keys_sorted.data(), resident.seg_start.data(), resident.seg_end.data(),
+        resident.objective.kind, resident.objective.alpha, resident.objective.delta,
+        resident.nodes.ref(), resident.nodes.value.dev.data());
+    check(cudaGetLastError(), "resident renew launch");
+}
+
+std::vector<float> CudaDeviceContext::resident_finalize(
     std::span<CudaHistogramEngine::ResidentNode const> nodes)
 {
     auto lap = prof_counters.lap();
     resident.nodes.stage(nodes);
 
-    auto const n = static_cast<uint32_t>(resident.rows.n);
+    auto const         n = static_cast<uint32_t>(resident.rows.n);
+    std::vector<float> renewed;
+    if (renew_leaf_on_device(resident.objective.kind) && n > 0)
+    {
+        resident_renew(n, static_cast<uint32_t>(nodes.size()));
+        resident.nodes.value.fetch(nodes.size());
+        renewed = resident.nodes.value.host;
+        lap(prof_counters.renew_kernel_s);
+    }
     data.dispatch_bins(
         [&](auto const *bins)
         {
@@ -1589,6 +1644,7 @@ void CudaDeviceContext::resident_finalize(
         });
     check(cudaGetLastError(), "resident route+add launch");
     lap(prof_counters.score_kernel_s);
+    return renewed;
 }
 
 void CudaDeviceContext::resident_end(std::span<float> scores_out)
@@ -1608,12 +1664,13 @@ namespace
 
 using EvalPlane = CudaDeviceContext::EvalPlane;
 
-void stage_eval_labels(EvalPlane &veval, Dataset const &valid, DeviceObjectiveKind kind)
+void stage_eval_labels(EvalPlane &veval, Dataset const &valid,
+                       DeviceObjective objective)
 {
-    veval.kind = valid.labels().size() == valid.plane_n_rows()
-                     ? kind
-                     : DeviceObjectiveKind::none;
-    if (veval.kind == DeviceObjectiveKind::none)
+    veval.objective = valid.labels().size() == valid.plane_n_rows()
+                          ? objective
+                          : DeviceObjective{DeviceObjectiveKind::none};
+    if (veval.objective.kind == DeviceObjectiveKind::none)
     {
         return;
     }
@@ -1680,7 +1737,7 @@ void retile_eval_plane(EvalPlane &veval, Dataset const &valid)
 
 } // namespace
 
-bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjective objective,
                                    std::span<float const> initial_scores)
 {
     veval.armed = false;
@@ -1690,7 +1747,7 @@ bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjectiveKind kin
     {
         return false;
     }
-    stage_eval_labels(veval, valid, kind);
+    stage_eval_labels(veval, valid, objective);
     if (!adopt_eval_plane(veval, valid))
     {
         retile_eval_plane(veval, valid);
@@ -1727,11 +1784,11 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
         static_cast<uint32_t>(veval.n_feats), veval.nodes.ref(), lr,
         veval.scores.data(), n, veval.rows.data(), nullptr);
     check(cudaGetLastError(), "eval route+add launch");
-    if (veval.kind != DeviceObjectiveKind::none)
+    if (veval.objective.kind != DeviceObjectiveKind::none)
     {
         uint32_t const blocks =
-            eval_loss_pass1(veval.kind, veval.scores.data(), veval.labels.data(), n,
-                            veval.loss_partial.device());
+            eval_loss_pass1(veval.objective, veval.scores.data(), veval.labels.data(),
+                            n, veval.loss_partial.device());
         veval.loss_partial.fetch(blocks);
         double const total = std::accumulate(veval.loss_partial.host.begin(),
                                              veval.loss_partial.host.end(), 0.0);

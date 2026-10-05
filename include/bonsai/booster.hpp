@@ -751,7 +751,8 @@ class Booster final : public Ensemble<Gr, Sa>
             // A view is eligible: the resident epilogue walks the view's
             // rows and leaves every other score untouched, the same contract
             // the host path keeps.
-            bool const runtime_ok = config().dart_drop_rate <= 0.0F && !host_forced;
+            bool const runtime_ok = config().dart_drop_rate <= 0.0F && !host_forced &&
+                                    !(has_renew_leaf && reproject_monotone_on_host());
             if (resident_active_ &&
                 (!runtime_ok || resident_fit_ != train.fit_identity()))
             {
@@ -762,7 +763,7 @@ class Booster final : public Ensemble<Gr, Sa>
             if (runtime_ok && !resident_active_)
             {
                 resident_active_ = grower().resident_begin(
-                    train, device_objective_kind<objective_type>,
+                    train, device_objective_of(objective_),
                     std::span<float const>{scores_}, config().learning_rate);
                 resident_fit_ = resident_active_ ? train.fit_identity() : FitId{};
             }
@@ -775,9 +776,19 @@ class Booster final : public Ensemble<Gr, Sa>
         return false;
     }
 
+    static constexpr bool has_renew_leaf =
+        requires(Obj const &o, std::span<float> r) { o.renew_leaf(r); };
+
+    bool reproject_monotone_on_host() const
+    {
+        return std::same_as<tree_type, ObliviousTree> &&
+               has_monotone_constraint(monotone_constraints_);
+    }
+
     // One boosting round with the resident objective armed. The sampler still
     // runs, and grow returns an empty per-row output: the device derived the
-    // gradients and fused the score update.
+    // gradients, renewed the leaves where the objective renews, and fused the
+    // score update.
     void resident_round(Dataset const &train)
     {
         auto                    &prof = detail::FitProfiler::instance();
@@ -1026,7 +1037,7 @@ class Booster final : public Ensemble<Gr, Sa>
     bool begin_resident_validation(Dataset const         &bins,
                                    std::span<float const> seed) override
     {
-        return grower().eval_begin(bins, device_objective_kind<objective_type>, seed);
+        return grower().eval_begin(bins, device_objective_of(objective_), seed);
     }
 
     bool accumulate_last_round_resident(Dataset const &bins, floats_out scores,

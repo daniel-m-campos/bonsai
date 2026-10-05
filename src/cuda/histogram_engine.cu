@@ -180,20 +180,20 @@ void CudaHistogramEngine::leaf_stamp(std::span<LeafStamp const> stamps)
     impl_->ctx.leaf_stamp(stamps);
 }
 
-bool CudaHistogramEngine::resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+bool CudaHistogramEngine::resident_begin(Dataset const &ds, DeviceObjective objective,
                                          std::span<float const> initial_scores,
                                          float                  learning_rate)
 {
-    return impl_->ctx.resident_begin(ds, kind, initial_scores, learning_rate);
+    return impl_->ctx.resident_begin(ds, objective, initial_scores, learning_rate);
 }
 
 bool CudaHistogramEngine::resident_begin_leaf(Dataset const         &ds,
                                               TreeConfig const      &config,
-                                              DeviceObjectiveKind    kind,
+                                              DeviceObjective        objective,
                                               std::span<float const> initial_scores,
                                               float                  learning_rate)
 {
-    return impl_->ctx.resident_begin_leaf(ds, config, kind, initial_scores,
+    return impl_->ctx.resident_begin_leaf(ds, config, objective, initial_scores,
                                           learning_rate);
 }
 
@@ -202,9 +202,10 @@ bool CudaHistogramEngine::resident_armed() const
     return impl_->ctx.resident_armed();
 }
 
-void CudaHistogramEngine::resident_finalize(std::span<ResidentNode const> nodes)
+std::vector<float>
+CudaHistogramEngine::resident_finalize(std::span<ResidentNode const> nodes)
 {
-    impl_->ctx.resident_finalize(nodes);
+    return impl_->ctx.resident_finalize(nodes);
 }
 
 void CudaHistogramEngine::resident_end(std::span<float> scores_out)
@@ -212,10 +213,10 @@ void CudaHistogramEngine::resident_end(std::span<float> scores_out)
     impl_->ctx.resident_end(scores_out);
 }
 
-bool CudaHistogramEngine::eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+bool CudaHistogramEngine::eval_begin(Dataset const &valid, DeviceObjective objective,
                                      std::span<float const> initial_scores)
 {
-    return impl_->ctx.eval_begin(valid, kind, initial_scores);
+    return impl_->ctx.eval_begin(valid, objective, initial_scores);
 }
 
 std::optional<float>

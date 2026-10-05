@@ -93,7 +93,7 @@ class LevelStep : public TreeStep<EngineT>
     }
 
     void finalize_leaves(std::vector<SplitInput> const &frontier,
-                         std::vector<float> const &leaf_table, LeafFinalize const &fin)
+                         std::vector<float> &leaf_table, LeafFinalize const &fin)
     {
         parallel::for_each_index(frontier.size(),
                                  [&](size_t li)
@@ -217,19 +217,18 @@ class LevelStep<EngineT, SplitterT> : public TreeStep<EngineT>
         }
         if (resident)
         {
-            engine_.resident_finalize(
-                resident_node_table<typename EngineT::ResidentNode>(build.nodes, ds_));
+            finish_resident_tree(engine_, build, ds_);
             return;
         }
         engine_.finalize_tree(node_values(build.nodes), values, leaf_ids);
     }
 
     void finalize_leaves(std::vector<SplitInput> const &frontier,
-                         std::vector<float> const &leaf_table, LeafFinalize const &fin)
+                         std::vector<float> &leaf_table, LeafFinalize const &fin)
     {
         if (engine_.resident_armed())
         {
-            engine_.resident_finalize(
+            auto const table =
                 grower_detail::perfect_tree_table<typename EngineT::ResidentNode>(
                     fin.level_splits.size(),
                     [&](size_t lvl)
@@ -238,7 +237,13 @@ class LevelStep<EngineT, SplitterT> : public TreeStep<EngineT>
                             fin.level_splits[lvl].feature_id, fin.level_bins[lvl],
                             fin.level_splits[lvl].default_left};
                     },
-                    leaf_table));
+                    leaf_table);
+            std::vector<float> const renewed    = engine_.resident_finalize(table);
+            size_t const             n_internal = table.size() - leaf_table.size();
+            for (size_t j = 0; j < leaf_table.size() && !renewed.empty(); ++j)
+            {
+                leaf_table[j] = renewed[n_internal + j];
+            }
             return;
         }
         engine_.stamp_leaves(leaf_stamps<typename EngineT::LeafStamp>(

@@ -47,7 +47,7 @@ Leaf-wise and depthwise agree structurally at a capped depth with a full leaf bu
 
 Where the leaf plane stands against LightGBM's CUDA leaf-wise is on [the perf standings](../results/results/perf.md): bonsai trains faster at every published GPU scenario, on less host and device memory, and LightGBM scores the better test r2 on those same cells. Uncapped depth is the cell to read carefully, because best-first there must find a split for every leaf it creates and so pays about twice the rounds; the last measurement of it still put bonsai ahead (decision 100), which carries the reasoning.
 
-The device-resident objective (MSE, LogLoss, or Poisson; no DART; all-rows or Bernoulli sampling) arms for `cuda_leafwise` the same way it arms for `cuda_depthwise` and `cuda_levelwise`. There is nothing to configure: an eligible fit keeps labels and scores on the device for the whole fit, and `BONSAI_HOST_OBJECTIVE=1` forces the host path.
+The device-resident objective (MSE, LogLoss, Poisson, MAE, Huber, or Quantile; no DART; all-rows or Bernoulli sampling) arms for `cuda_leafwise` the same way it arms for `cuda_depthwise` and `cuda_levelwise`. There is nothing to configure: an eligible fit keeps labels and scores on the device for the whole fit, and `BONSAI_HOST_OBJECTIVE=1` forces the host path. The three constant-hessian objectives renew each leaf from its residuals after the tree is built; on the device that renewal is a sort of the rows' residuals by leaf and a selection per leaf, so it stays on the device too. The one fit that still renews on the host is `cuda_levelwise` under a monotone constraint, whose leaf table is reprojected after renewal.
 
 ## Try it
 

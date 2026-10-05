@@ -54,7 +54,7 @@ struct ProfileCounters
     double root_sums_s = 0, adv_memset_s = 0, adv_hist_s = 0;
     double root_hist_s = 0, fin_stamp_s = 0, fin_map_s = 0;
     double part_kernel_s = 0;
-    double obj_kernel_s = 0, score_kernel_s = 0;
+    double obj_kernel_s = 0, score_kernel_s = 0, renew_kernel_s = 0;
     double eval_kernel_s = 0;
     size_t launches = 0, gpu_nodes = 0;
 
@@ -180,8 +180,9 @@ struct ProfileCounters
             std::println(stderr, "cuda-part-decomp: kernel={:.3f}s", part_kernel_s);
             std::println(stderr,
                          "cuda-resident-decomp: obj_kernel={:.2f}s "
-                         "score_kernel={:.2f}s eval_kernel={:.2f}s",
-                         obj_kernel_s, score_kernel_s, eval_kernel_s);
+                         "renew_kernel={:.2f}s score_kernel={:.2f}s "
+                         "eval_kernel={:.2f}s",
+                         obj_kernel_s, renew_kernel_s, score_kernel_s, eval_kernel_s);
         }
         catch (...)
         {

@@ -155,7 +155,7 @@ concept ResidentTreeEngine =
         typename T::ResidentNode;
         b.finalize_tree(node_values, values, leaf_ids);
         { b.resident_armed() } -> std::convertible_to<bool>;
-        b.resident_finalize(res_nodes);
+        { b.resident_finalize(res_nodes) } -> std::same_as<std::vector<float>>;
         b.resident_end(scores_out);
     };
 
@@ -259,12 +259,15 @@ static_assert(HistogramEngine<CpuHistogramEngine>);
 // returning false on engines without the seam (the CPU plane), keeping the
 // booster generic.
 template <typename EngineT>
-bool engine_resident_begin(EngineT &engine, Dataset const &ds, DeviceObjectiveKind kind,
-                           std::span<float const> scores, float learning_rate)
+bool engine_resident_begin(EngineT &engine, Dataset const &ds,
+                           DeviceObjective objective, std::span<float const> scores,
+                           float learning_rate)
 {
-    if constexpr (requires { engine.resident_begin(ds, kind, scores, learning_rate); })
+    if constexpr (requires {
+                      engine.resident_begin(ds, objective, scores, learning_rate);
+                  })
     {
-        return engine.resident_begin(ds, kind, scores, learning_rate);
+        return engine.resident_begin(ds, objective, scores, learning_rate);
     }
     else
     {
@@ -277,15 +280,15 @@ bool engine_resident_begin(EngineT &engine, Dataset const &ds, DeviceObjectiveKi
 // capacity test the resident mode needs cannot be decided without it.
 template <typename EngineT>
 bool engine_resident_begin_leaf(EngineT &engine, Dataset const &ds,
-                                TreeConfig const &config, DeviceObjectiveKind kind,
+                                TreeConfig const &config, DeviceObjective objective,
                                 std::span<float const> scores, float learning_rate)
 {
     if constexpr (requires {
-                      engine.resident_begin_leaf(ds, config, kind, scores,
+                      engine.resident_begin_leaf(ds, config, objective, scores,
                                                  learning_rate);
                   })
     {
-        return engine.resident_begin_leaf(ds, config, kind, scores, learning_rate);
+        return engine.resident_begin_leaf(ds, config, objective, scores, learning_rate);
     }
     else
     {
@@ -305,12 +308,12 @@ void engine_resident_end(EngineT &engine, std::span<float> scores)
 // The validation-plane shims, same collapse: a host engine has no eval plane,
 // so eval_begin answers false and the booster keeps the host walk.
 template <typename EngineT>
-bool engine_eval_begin(EngineT &engine, Dataset const &valid, DeviceObjectiveKind kind,
+bool engine_eval_begin(EngineT &engine, Dataset const &valid, DeviceObjective objective,
                        std::span<float const> scores)
 {
-    if constexpr (requires { engine.eval_begin(valid, kind, scores); })
+    if constexpr (requires { engine.eval_begin(valid, objective, scores); })
     {
-        return engine.eval_begin(valid, kind, scores);
+        return engine.eval_begin(valid, objective, scores);
     }
     else
     {
@@ -336,18 +339,19 @@ template <typename EngineT> class DeviceSeam
         return engine_;
     }
 
-    bool begin(Dataset const &ds, DeviceObjectiveKind kind,
+    bool begin(Dataset const &ds, DeviceObjective objective,
                std::span<float const> scores, float learning_rate)
     {
-        resident_ = engine_resident_begin(engine_, ds, kind, scores, learning_rate);
+        resident_ =
+            engine_resident_begin(engine_, ds, objective, scores, learning_rate);
         return resident_;
     }
 
     bool begin_leaf(Dataset const &ds, TreeConfig const &config,
-                    DeviceObjectiveKind kind, std::span<float const> scores,
+                    DeviceObjective objective, std::span<float const> scores,
                     float learning_rate)
     {
-        resident_ = engine_resident_begin_leaf(engine_, ds, config, kind, scores,
+        resident_ = engine_resident_begin_leaf(engine_, ds, config, objective, scores,
                                                learning_rate);
         return resident_;
     }
@@ -363,10 +367,10 @@ template <typename EngineT> class DeviceSeam
         return resident_;
     }
 
-    bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+    bool eval_begin(Dataset const &valid, DeviceObjective objective,
                     std::span<float const> scores)
     {
-        eval_ = engine_eval_begin(engine_, valid, kind, scores);
+        eval_ = engine_eval_begin(engine_, valid, objective, scores);
         return eval_;
     }
 
@@ -395,10 +399,10 @@ template <HistogramEngine EngineT> class GrowerHost
         recycled_.set(std::move(values), std::move(leaf_ids));
     }
 
-    bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+    bool resident_begin(Dataset const &ds, DeviceObjective objective,
                         std::span<float const> scores, float learning_rate)
     {
-        return seam_.begin(ds, kind, scores, learning_rate);
+        return seam_.begin(ds, objective, scores, learning_rate);
     }
     void resident_end(std::span<float> scores)
     {
@@ -408,10 +412,10 @@ template <HistogramEngine EngineT> class GrowerHost
     {
         return seam_.armed();
     }
-    bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+    bool eval_begin(Dataset const &valid, DeviceObjective objective,
                     std::span<float const> scores)
     {
-        return seam_.eval_begin(valid, kind, scores);
+        return seam_.eval_begin(valid, objective, scores);
     }
     template <typename Tree>
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
@@ -507,10 +511,10 @@ class LeafwiseGrower : public GrowerHost<EngineT>
     explicit LeafwiseGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           RowSelection selection = {});
-    bool             resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+    bool             resident_begin(Dataset const &ds, DeviceObjective objective,
                                     std::span<float const> scores, float learning_rate)
     {
-        return seam().begin_leaf(ds, config(), kind, scores, learning_rate);
+        return seam().begin_leaf(ds, config(), objective, scores, learning_rate);
     }
     // The plane a budget that cannot bind is grown on: the level plane while
     // one node's arena is under the pinned threshold, else this one

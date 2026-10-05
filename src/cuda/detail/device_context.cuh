@@ -229,6 +229,8 @@ struct CudaDeviceContext
         Staged<uint32_t> default_left;
         Staged<uint32_t> is_leaf;
         Staged<float>    value;
+        Staged<double>   lo;
+        Staged<double>   hi;
         void         stage(std::span<CudaHistogramEngine::ResidentNode const> nodes);
         NodeTableRef ref() const
         {
@@ -238,23 +240,30 @@ struct CudaDeviceContext
                     .right        = right.device(),
                     .default_left = default_left.device(),
                     .is_leaf      = is_leaf.device(),
-                    .value        = value.device()};
+                    .value        = value.device(),
+                    .lo           = lo.device(),
+                    .hi           = hi.device()};
         }
     };
 
     struct ResidentPlane
     {
-        DeviceBuffer<float> labels;
-        DeviceBuffer<float> scores;
-        DeviceBuffer<float> weights;
-        LabelsId            labels_key{};
-        NodeTable           nodes;
-        DeviceObjectiveKind kind          = DeviceObjectiveKind::none;
-        bool                weighted      = false;
-        bool                armed         = false;
-        float               learning_rate = 0.0F;
-        size_t              n_rows        = 0;
-        RowMap              rows;
+        DeviceBuffer<float>              labels;
+        DeviceBuffer<float>              scores;
+        DeviceBuffer<float>              weights;
+        LabelsId                         labels_key{};
+        NodeTable                        nodes;
+        DeviceObjective                  objective;
+        bool                             weighted      = false;
+        bool                             armed         = false;
+        float                            learning_rate = 0.0F;
+        size_t                           n_rows        = 0;
+        RowMap                           rows;
+        DeviceBuffer<unsigned long long> keys;
+        DeviceBuffer<unsigned long long> keys_sorted;
+        DeviceBuffer<uint8_t>            sort_temp;
+        DeviceBuffer<uint32_t>           seg_start;
+        DeviceBuffer<uint32_t>           seg_end;
     };
 
     struct EvalPlane
@@ -264,7 +273,7 @@ struct CudaDeviceContext
         DeviceBuffer<float>                scores;
         DeviceBuffer<float>                labels;
         Staged<double>                     loss_partial;
-        DeviceObjectiveKind                kind = DeviceObjectiveKind::none;
+        DeviceObjective                    objective;
         NodeTable                          nodes;
         RowMap                             rows;
         std::shared_ptr<IngestPlane const> adopted;
@@ -394,20 +403,22 @@ struct CudaDeviceContext
                             std::span<SplitOutput> out, std::span<NodeTotals> child_sums);
     void          leaf_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps);
 
-    bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+    bool resident_begin(Dataset const &ds, DeviceObjective objective,
                         std::span<float const> initial_scores, float learning_rate);
     bool resident_begin_leaf(Dataset const &ds, TreeConfig const &config,
-                             DeviceObjectiveKind    kind,
+                             DeviceObjective        objective,
                              std::span<float const> initial_scores,
                              float                  learning_rate);
     bool resident_armed() const
     {
         return resident.armed;
     }
-    void resident_finalize(std::span<CudaHistogramEngine::ResidentNode const> nodes);
+    std::vector<float>
+         resident_finalize(std::span<CudaHistogramEngine::ResidentNode const> nodes);
+    void resident_renew(uint32_t n, uint32_t n_nodes);
     void resident_end(std::span<float> scores_out);
 
-    bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+    bool eval_begin(Dataset const &valid, DeviceObjective objective,
                     std::span<float const> initial_scores);
     std::optional<float>
     eval_accumulate(std::span<CudaHistogramEngine::ResidentNode const> nodes, float lr,
