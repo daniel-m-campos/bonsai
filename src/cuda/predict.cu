@@ -124,7 +124,9 @@ class CudaPredictPlan
                 .right        = right.data(),
                 .default_left = default_left.data(),
                 .is_leaf      = is_leaf.data(),
-                .value        = value.data()};
+                .value        = value.data(),
+                .lo           = nullptr,
+                .hi           = nullptr};
     }
 };
 
