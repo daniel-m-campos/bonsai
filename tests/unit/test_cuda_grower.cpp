@@ -42,22 +42,89 @@ namespace
 
 using namespace bonsai;
 
+// A seeded draw over an empty column batch with gradient buffers sized to
+// its rows; each case fills the columns its shape needs.
+struct GrowDraw
+{
+    std::mt19937                          rng;
+    std::uniform_real_distribution<float> value{0.0F, 1.0F};
+    std::normal_distribution<float>       gradient{0.0F, 1.0F};
+    detail::ColumnBatch                   batch;
+    std::vector<float>                    grad;
+    std::vector<float>                    hess;
+
+    GrowDraw(uint32_t seed, size_t n, std::vector<std::string> names)
+        : rng(seed), grad(n), hess(n)
+    {
+        batch.features.resize(names.size(), std::vector<float>(n));
+        batch.feature_names = std::move(names);
+        batch.labels.assign(n, 0.0F);
+    }
+};
+
+// Three value groups whose gradient means swing down-up (-1, +2, -2), so an
+// unconstrained tree is non-monotone in the feature: the CPU monotone test's
+// data shape, sized to 4096 rows so the device find really runs.
+struct MonotoneScenario
+{
+    test::Built           built;
+    std::vector<row_id_t> rows;
+    std::vector<float>    grad;
+    std::vector<float>    hess;
+    TreeConfig            unconstrained;
+    TreeConfig            constrained;
+};
+
+MonotoneScenario monotone_scenario()
+{
+    std::mt19937                          rng(17);
+    std::uniform_real_distribution<float> jitter(0.0F, 0.8F);
+    size_t const                          n = 4096;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(1, std::vector<float>(n));
+    batch.feature_names = {"a"};
+    batch.labels.assign(n, 0.0F);
+    std::vector<float>         grad(n);
+    std::vector<float>         hess(n, 1.0F);
+    std::array<float, 3> const group_grad{-1.0F, +2.0F, -2.0F};
+    for (size_t r = 0; r < n; ++r)
+    {
+        size_t const g       = r % 3;
+        batch.features[0][r] = static_cast<float>(g) + jitter(rng);
+        grad[r]              = group_grad[g];
+    }
+    TreeConfig unconstrained;
+    unconstrained.max_depth          = 4;
+    unconstrained.min_data_in_leaf   = 4;
+    TreeConfig constrained           = unconstrained;
+    constrained.monotone_constraints = {+1};
+    return {test::build(std::move(batch)),
+            test::iota_rows(n),
+            std::move(grad),
+            std::move(hess),
+            unconstrained,
+            constrained};
+}
+
+template <typename TreeT> std::vector<float> curve_at_groups(TreeT const &tree)
+{
+    std::vector<float> out;
+    for (float x : {0.4F, 1.4F, 2.4F})
+    {
+        out.push_back(test::predict_one(tree, std::vector<float>{x}));
+    }
+    return out;
+}
+
 // 4096 rows x 4 features with duplicates-heavy value
 // ranges and a NaN column so the missing bin is populated; seeded so
 // failures reproduce.
 test::ScenarioInputs random_scenario()
 {
-    std::mt19937                          rng(7);
-    std::uniform_real_distribution<float> value(0.0F, 1.0F);
-    std::normal_distribution<float>       gradient(0.0F, 1.0F);
-    size_t const                          n = 4096;
-
-    detail::ColumnBatch batch;
-    batch.features.resize(4, std::vector<float>(n));
-    batch.feature_names = {"a", "b", "c", "d"};
-    batch.labels.assign(n, 0.0F);
-    std::vector<float> grad(n);
-    std::vector<float> hess(n);
+    size_t const n = 4096;
+    GrowDraw     draw(7, n, {"a", "b", "c", "d"});
+    auto &[rng, value, gradient, batch, grad, hess] = draw;
     for (size_t r = 0; r < n; ++r)
     {
         batch.features[0][r] = value(rng);
@@ -259,18 +326,10 @@ TEST_CASE("CudaDepthwiseGrower device eval walk honors a row view",
 // a single aligned vector, so both paths need a fit over them.
 test::ScenarioInputs wide_scenario()
 {
-    std::mt19937                          rng(13);
-    std::uniform_real_distribution<float> value(0.0F, 1.0F);
-    std::normal_distribution<float>       gradient(0.0F, 1.0F);
-    size_t const                          n     = 4096;
-    size_t const                          feats = 12;
-
-    detail::ColumnBatch batch;
-    batch.features.resize(feats, std::vector<float>(n));
-    batch.feature_names = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"};
-    batch.labels.assign(n, 0.0F);
-    std::vector<float> grad(n);
-    std::vector<float> hess(n);
+    size_t const n     = 4096;
+    size_t const feats = 12;
+    GrowDraw draw(13, n, {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"});
+    auto &[rng, value, gradient, batch, grad, hess] = draw;
     for (size_t r = 0; r < n; ++r)
     {
         for (size_t f = 0; f < feats; ++f)
@@ -498,21 +557,16 @@ TEST_CASE("CudaGrowers: lambda_l1 matches the host on every plane",
 // integer so min_child_hess can sit exactly on the boundary.
 test::ScenarioInputs screening_scenario(float grad_scale, bool unit_hess)
 {
-    std::mt19937                          rng(23);
-    std::uniform_real_distribution<float> value(0.0F, 1.0F);
-    std::normal_distribution<float>       noise(0.0F, 0.25F);
-    size_t const                          n      = 8192;
-    size_t const                          n_feat = 12;
-
-    detail::ColumnBatch batch;
-    batch.features.resize(n_feat, std::vector<float>(n));
+    std::normal_distribution<float> noise(0.0F, 0.25F);
+    size_t const                    n      = 8192;
+    size_t const                    n_feat = 12;
+    std::vector<std::string>        names;
     for (size_t f = 0; f < n_feat; ++f)
     {
-        batch.feature_names.push_back("f" + std::to_string(f));
+        names.push_back("f" + std::to_string(f));
     }
-    batch.labels.assign(n, 0.0F);
-    std::vector<float> grad(n);
-    std::vector<float> hess(n);
+    GrowDraw draw(23, n, std::move(names));
+    auto &[rng, value, gradient, batch, grad, hess] = draw;
     for (size_t r = 0; r < n; ++r)
     {
         float const x        = value(rng);
@@ -869,17 +923,9 @@ TEST_CASE("CudaDepthwiseGrower matches CPU across every histogram plane",
     {
         max_bin = 512;
     }
-    std::mt19937                          rng(17);
-    std::uniform_real_distribution<float> value(0.0F, 1.0F);
-    std::normal_distribution<float>       gradient(0.0F, 1.0F);
-    size_t const                          n = 65536;
-
-    detail::ColumnBatch batch;
-    batch.features.resize(4, std::vector<float>(n));
-    batch.feature_names = {"a", "b", "c", "d"};
-    batch.labels.assign(n, 0.0F);
-    std::vector<float> grad(n);
-    std::vector<float> hess(n);
+    size_t const n = 65536;
+    GrowDraw     draw(17, n, {"a", "b", "c", "d"});
+    auto &[rng, value, gradient, batch, grad, hess] = draw;
     for (size_t r = 0; r < n; ++r)
     {
         for (auto &column : batch.features)
@@ -925,17 +971,9 @@ TEST_CASE("CudaDepthwiseGrower matches CPU past the 48KiB shared-memory budget",
     // this exercises the dynamic shared-memory opt-in. A device that does not
     // grant an opt-in this wide refuses the fit instead (see the max_bin case
     // below); every device this suite runs on does.
-    std::mt19937                          rng(11);
-    std::uniform_real_distribution<float> value(0.0F, 1.0F);
-    std::normal_distribution<float>       gradient(0.0F, 1.0F);
-    size_t const                          n = 16384;
-
-    detail::ColumnBatch batch;
-    batch.features.resize(3, std::vector<float>(n));
-    batch.feature_names = {"a", "b", "c"};
-    batch.labels.assign(n, 0.0F);
-    std::vector<float> grad(n);
-    std::vector<float> hess(n);
+    size_t const n = 16384;
+    GrowDraw     draw(11, n, {"a", "b", "c"});
+    auto &[rng, value, gradient, batch, grad, hess] = draw;
     for (size_t r = 0; r < n; ++r)
     {
         batch.features[0][r] = value(rng);
@@ -987,17 +1025,9 @@ TEST_CASE("A max_bin past the shared-memory ceiling is refused",
     // limit; the host fallback this replaced trained a wrong model once
     // (issue #12, fixed in cd4e726) and hid a large slowdown the rest of the
     // time.
-    std::mt19937                          rng(13);
-    std::uniform_real_distribution<float> value(0.0F, 1.0F);
-    std::normal_distribution<float>       gradient(0.0F, 1.0F);
-    size_t const                          n = 40960;
-
-    detail::ColumnBatch batch;
-    batch.features.resize(2, std::vector<float>(n));
-    batch.feature_names = {"a", "b"};
-    batch.labels.assign(n, 0.0F);
-    std::vector<float> grad(n);
-    std::vector<float> hess(n);
+    size_t const n = 40960;
+    GrowDraw     draw(13, n, {"a", "b"});
+    auto &[rng, value, gradient, batch, grad, hess] = draw;
     for (size_t r = 0; r < n; ++r)
     {
         batch.features[0][r] = value(rng);
@@ -1270,44 +1300,9 @@ TEST_CASE("CudaDepthwiseGrower: monotone +1 forces non-decreasing predictions",
     {
         SKIP("no usable CUDA device");
     }
-    // Three value groups whose gradient means swing down-up (-1, +2, -2), so
-    // the unconstrained tree is non-monotone in the feature — the CPU monotone
-    // test's data shape, sized to 4096 rows so the device find really runs.
-    std::mt19937                          rng(17);
-    std::uniform_real_distribution<float> jitter(0.0F, 0.8F);
-    size_t const                          n = 4096;
-
-    detail::ColumnBatch batch;
-    batch.features.resize(1, std::vector<float>(n));
-    batch.feature_names = {"a"};
-    batch.labels.assign(n, 0.0F);
-    std::vector<float>         grad(n);
-    std::vector<float>         hess(n, 1.0F);
-    std::array<float, 3> const group_grad{-1.0F, +2.0F, -2.0F};
-    for (size_t r = 0; r < n; ++r)
-    {
-        size_t const g       = r % 3;
-        batch.features[0][r] = static_cast<float>(g) + jitter(rng);
-        grad[r]              = group_grad[g];
-    }
-    auto built = test::build(std::move(batch));
-    auto rows  = test::iota_rows(n);
-
-    TreeConfig unconstrained;
-    unconstrained.max_depth          = 4;
-    unconstrained.min_data_in_leaf   = 4;
-    TreeConfig constrained           = unconstrained;
-    constrained.monotone_constraints = {+1};
-
-    auto predict_curve = [&](DenseTree const &tree)
-    {
-        std::vector<float> out;
-        for (float x : {0.4F, 1.4F, 2.4F})
-        {
-            out.push_back(test::predict_one(tree, std::vector<float>{x}));
-        }
-        return out;
-    };
+    auto scenario                                               = monotone_scenario();
+    auto &[built, rows, grad, hess, unconstrained, constrained] = scenario;
+    auto const predict_curve = curve_at_groups<DenseTree>;
 
     // Sanity: the unconstrained GPU tree is non-monotone on this data,
     // otherwise the constrained assertion below would pass vacuously.
@@ -1393,17 +1388,9 @@ TEST_CASE("CudaGrowers: a tied gain goes to the lower feature on every plane",
     {
         SKIP("no usable CUDA device");
     }
-    std::mt19937                          rng(11);
-    std::uniform_real_distribution<float> value(0.0F, 1.0F);
-    std::normal_distribution<float>       gradient(0.0F, 1.0F);
-    size_t const                          n = 4096;
-
-    detail::ColumnBatch batch;
-    batch.features.resize(4, std::vector<float>(n));
-    batch.feature_names = {"a", "b", "a_copy", "b_copy"};
-    batch.labels.assign(n, 0.0F);
-    std::vector<float> grad(n);
-    std::vector<float> hess(n);
+    size_t const n = 4096;
+    GrowDraw     draw(11, n, {"a", "b", "a_copy", "b_copy"});
+    auto &[rng, value, gradient, batch, grad, hess] = draw;
     for (size_t r = 0; r < n; ++r)
     {
         batch.features[0][r] = value(rng);
@@ -1504,41 +1491,9 @@ TEST_CASE("CudaObliviousGrower: monotone +1 forces non-decreasing predictions",
     // runs on the host leaf table in both planes, so the constrained device
     // tree must equal the constrained CPU tree leaf for leaf, not merely
     // satisfy the ordering on its own.
-    std::mt19937                          rng(17);
-    std::uniform_real_distribution<float> jitter(0.0F, 0.8F);
-    size_t const                          n = 4096;
-
-    detail::ColumnBatch batch;
-    batch.features.resize(1, std::vector<float>(n));
-    batch.feature_names = {"a"};
-    batch.labels.assign(n, 0.0F);
-    std::vector<float>         grad(n);
-    std::vector<float>         hess(n, 1.0F);
-    std::array<float, 3> const group_grad{-1.0F, +2.0F, -2.0F};
-    for (size_t r = 0; r < n; ++r)
-    {
-        size_t const g       = r % 3;
-        batch.features[0][r] = static_cast<float>(g) + jitter(rng);
-        grad[r]              = group_grad[g];
-    }
-    auto built = test::build(std::move(batch));
-    auto rows  = test::iota_rows(n);
-
-    TreeConfig unconstrained;
-    unconstrained.max_depth          = 4;
-    unconstrained.min_data_in_leaf   = 4;
-    TreeConfig constrained           = unconstrained;
-    constrained.monotone_constraints = {+1};
-
-    auto predict_curve = [&](ObliviousTree const &tree)
-    {
-        std::vector<float> out;
-        for (float x : {0.4F, 1.4F, 2.4F})
-        {
-            out.push_back(test::predict_one(tree, std::vector<float>{x}));
-        }
-        return out;
-    };
+    auto scenario                                               = monotone_scenario();
+    auto &[built, rows, grad, hess, unconstrained, constrained] = scenario;
+    auto const predict_curve = curve_at_groups<ObliviousTree>;
 
     CudaObliviousGrower free_grower(unconstrained);
     auto                free_out   = free_grower.grow(built.ds, grad, hess, rows);
