@@ -743,8 +743,7 @@ class Booster final : public Ensemble<Gr, Sa>
     // home, so the host path always resumes with the state it would have had.
     bool try_resident_round(Dataset const &train)
     {
-        if constexpr (device_objective_kind<objective_type> !=
-                          DeviceObjectiveKind::none &&
+        if constexpr (has_device_objective<objective_type> &&
                       !sampler_traits<sampler_type>::reads_gradients)
         {
             bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;

@@ -477,7 +477,7 @@ TEST_CASE("Resident LogLoss matches host-objective GPU (depthwise)", "[cuda][res
     }
     auto const data = make_regression(8192, 6, 31, /*binary=*/true);
     auto const cfg  = reg_cfg();
-    // device_objective_kind<LogLoss> is logloss, so the resident sigmoid kernel
+    // device_form_t<LogLoss> is DeviceLogLoss, so the resident sigmoid kernel
     // derives (p - y, p(1 - p)) on device; the host arm forces the CPU objective.
     auto const host =
         fit_predict<LogLossBooster<CudaDepthwiseGrower>>(cfg, data, 40, true);
@@ -520,7 +520,7 @@ TEST_CASE("Resident Poisson matches host-objective GPU (depthwise)", "[cuda][res
     }
     auto const data = make_counts(8192, 6, 41);
     auto const cfg  = reg_cfg();
-    // device_objective_kind<Poisson> is poisson: the resident kernel clamps the
+    // device_form_t<Poisson> is DevicePoisson: the resident kernel clamps the
     // score, exponentiates, and writes (mu - y, mu) exactly as the host does.
     auto const host =
         fit_predict<PoissonBooster<CudaDepthwiseGrower>>(cfg, data, 40, true);

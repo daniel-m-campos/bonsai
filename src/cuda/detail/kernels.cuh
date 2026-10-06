@@ -1984,52 +1984,18 @@ __global__ void map_leaf_values_kernel(uint32_t const *leaf_by_row,
     values[r]           = leaf < n_values ? node_values[leaf] : 0.0F;
 }
 
-template <DeviceObjectiveKind Kind, bool Weighted>
-__global__ void gh_from_scores_kernel(float const *scores, float const *labels,
-                                      float const *weights, uint32_t n, float alpha,
-                                      float delta, float2 *gh)
+template <typename Form, bool Weighted>
+__global__ void gh_from_scores_kernel(Form form, float const *scores,
+                                      float const *labels, float const *weights,
+                                      uint32_t n, float2 *gh)
 {
     uint32_t const span = gridDim.x * blockDim.x;
     for (uint32_t r = (blockIdx.x * blockDim.x) + threadIdx.x; r < n; r += span)
     {
         float const s = scores[r];
         float const y = labels[r];
-        float       g = 0.0F;
-        float       h = 0.0F;
-        if constexpr (Kind == DeviceObjectiveKind::mse)
-        {
-            g = s - y;
-            h = 1.0F;
-        }
-        else if constexpr (Kind == DeviceObjectiveKind::logloss)
-        {
-            float const p = 1.0F / (1.0F + expf(-s));
-            g             = p - y;
-            h             = p * (1.0F - p);
-        }
-        else if constexpr (Kind == DeviceObjectiveKind::poisson)
-        {
-            float const sc = fminf(fmaxf(s, -k_poisson_max_log), k_poisson_max_log);
-            float const mu = expf(sc);
-            g              = mu - y;
-            h              = mu;
-        }
-        else if constexpr (Kind == DeviceObjectiveKind::mae)
-        {
-            float const r = s - y;
-            g             = r > 0.0F ? 1.0F : (r < 0.0F ? -1.0F : 0.0F);
-            h             = 1.0F;
-        }
-        else if constexpr (Kind == DeviceObjectiveKind::huber)
-        {
-            g = fminf(fmaxf(s - y, -delta), delta);
-            h = 1.0F;
-        }
-        else if constexpr (Kind == DeviceObjectiveKind::quantile)
-        {
-            g = s > y ? (1.0F - alpha) : -alpha;
-            h = 1.0F;
-        }
+        float       g = form.gradient(s, y);
+        float       h = form.hessian(s, y);
         if constexpr (Weighted)
         {
             float const w = weights[r];
@@ -2040,107 +2006,48 @@ __global__ void gh_from_scores_kernel(float const *scores, float const *labels,
     }
 }
 
-template <DeviceObjectiveKind Kind>
-inline void gh_from_scores_weighted(bool weighted, float const *scores,
+template <typename Form>
+inline void gh_from_scores_weighted(Form form, bool weighted, float const *scores,
                                     float const *labels, float const *weights,
-                                    uint32_t n, ObjectiveArgs objective, float2 *gh,
-                                    dim3 grid, dim3 block)
+                                    uint32_t n, float2 *gh, dim3 grid, dim3 block)
 {
     if (weighted)
     {
-        gh_from_scores_kernel<Kind, true><<<grid, block>>>(
-            scores, labels, weights, n, objective.alpha, objective.delta, gh);
+        gh_from_scores_kernel<Form, true>
+            <<<grid, block>>>(form, scores, labels, weights, n, gh);
     }
     else
     {
-        gh_from_scores_kernel<Kind, false><<<grid, block>>>(
-            scores, labels, weights, n, objective.alpha, objective.delta, gh);
+        gh_from_scores_kernel<Form, false>
+            <<<grid, block>>>(form, scores, labels, weights, n, gh);
     }
 }
 
-template <typename Fn> inline void for_objective_kind(DeviceObjectiveKind kind, Fn &&fn)
-{
-    switch (kind)
-    {
-    case DeviceObjectiveKind::mse:
-        fn.template operator()<DeviceObjectiveKind::mse>();
-        break;
-    case DeviceObjectiveKind::logloss:
-        fn.template operator()<DeviceObjectiveKind::logloss>();
-        break;
-    case DeviceObjectiveKind::poisson:
-        fn.template operator()<DeviceObjectiveKind::poisson>();
-        break;
-    case DeviceObjectiveKind::mae:
-        fn.template operator()<DeviceObjectiveKind::mae>();
-        break;
-    case DeviceObjectiveKind::huber:
-        fn.template operator()<DeviceObjectiveKind::huber>();
-        break;
-    case DeviceObjectiveKind::quantile:
-        fn.template operator()<DeviceObjectiveKind::quantile>();
-        break;
-    case DeviceObjectiveKind::none:
-        break;
-    }
-}
-
-inline void gh_from_scores(ObjectiveArgs objective, bool weighted, float const *scores,
-                           float const *labels, float const *weights, uint32_t n,
-                           float2 *gh)
+inline void gh_from_scores(DeviceObjective const &objective, bool weighted,
+                           float const *scores, float const *labels,
+                           float const *weights, uint32_t n, float2 *gh)
 {
     dim3 const grid  = strided_grid(n, 1024);
     dim3 const block = dim3(k_linear_threads);
-    for_objective_kind(objective.kind,
-                       [&]<DeviceObjectiveKind K>()
-                       {
-                           gh_from_scores_weighted<K>(weighted, scores, labels, weights,
-                                                      n, objective, gh, grid, block);
-                       });
+    for_device_form(objective,
+                    [&](auto const &form)
+                    {
+                        gh_from_scores_weighted(form, weighted, scores, labels, weights,
+                                                n, gh, grid, block);
+                    });
     check(cudaGetLastError(), "gh_from_scores launch");
 }
 
-template <DeviceObjectiveKind Kind>
-__global__ void eval_loss_pass1_kernel(float const *scores, float const *labels,
-                                       uint32_t n, float alpha, float delta,
-                                       double *partial)
+template <typename Form>
+__global__ void eval_loss_pass1_kernel(Form form, float const *scores,
+                                       float const *labels, uint32_t n, double *partial)
 {
     __shared__ double sl[k_linear_threads];
     double            acc = 0.0;
     for (uint32_t r = (blockIdx.x * blockDim.x) + threadIdx.x; r < n;
          r += gridDim.x * blockDim.x)
     {
-        float const s = scores[r];
-        float const y = labels[r];
-        if constexpr (Kind == DeviceObjectiveKind::mse)
-        {
-            double const d = static_cast<double>(s) - static_cast<double>(y);
-            acc += d * d;
-        }
-        else if constexpr (Kind == DeviceObjectiveKind::logloss)
-        {
-            float const ax = fabsf(s);
-            acc += fmaxf(0.0F, s) + log1pf(expf(-ax)) - (y * s);
-        }
-        else if constexpr (Kind == DeviceObjectiveKind::poisson)
-        {
-            float const f = fminf(fmaxf(s, -k_poisson_max_log), k_poisson_max_log);
-            acc += static_cast<double>(expf(f)) -
-                   (static_cast<double>(y) * static_cast<double>(f));
-        }
-        else if constexpr (Kind == DeviceObjectiveKind::mae)
-        {
-            acc += fabsf(s - y);
-        }
-        else if constexpr (Kind == DeviceObjectiveKind::huber)
-        {
-            float const a = fabsf(s - y);
-            acc += a <= delta ? 0.5F * a * a : delta * (a - (0.5F * delta));
-        }
-        else if constexpr (Kind == DeviceObjectiveKind::quantile)
-        {
-            acc += y >= s ? alpha * (y - s) : (1.0F - alpha) * (s - y);
-        }
+        acc += form.loss(scores[r], labels[r]);
     }
     sl[threadIdx.x] = acc;
     __syncthreads();
@@ -2158,18 +2065,14 @@ __global__ void eval_loss_pass1_kernel(float const *scores, float const *labels,
     }
 }
 
-inline uint32_t eval_loss_pass1(ObjectiveArgs objective, float const *scores,
+inline uint32_t eval_loss_pass1(DeviceObjective const &objective, float const *scores,
                                 float const *labels, uint32_t n, double *partial)
 {
     dim3 const grid  = strided_grid(n, 1024);
     dim3 const block = dim3(k_linear_threads);
-    for_objective_kind(objective.kind,
-                       [&]<DeviceObjectiveKind K>()
-                       {
-                           eval_loss_pass1_kernel<K>
-                               <<<grid, block>>>(scores, labels, n, objective.alpha,
-                                                 objective.delta, partial);
-                       });
+    for_device_form(
+        objective, [&](auto const &form)
+        { eval_loss_pass1_kernel<<<grid, block>>>(form, scores, labels, n, partial); });
     check(cudaGetLastError(), "eval loss pass1 launch");
     return grid.x;
 }
