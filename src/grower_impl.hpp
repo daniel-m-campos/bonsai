@@ -409,6 +409,24 @@ void for_each_unsampled(RowView const &view, row_index_view sampled, F &&fn)
     parallel::for_each_index(oob.size(), [&](size_t k) { fn(oob[k]); });
 }
 
+struct DenseFrame
+{
+    bool              resident;
+    GrowProfiler::Lap setup;
+    DenseBuild        build;
+    RecycledOutputs   out;
+
+    static DenseFrame open(bool resident, RowSelection const &selection,
+                           RecycledOutputs out)
+    {
+        return {resident,
+                {},
+                DenseBuild(static_cast<float>(selection.rows.size())),
+                std::move(out)};
+    }
+    GrowResult<DenseTree> finish(Dataset const &ds, row_index_view rows);
+};
+
 inline GrowResult<DenseTree> assemble_dense(DenseBuild build, RecycledOutputs outputs)
 {
     GrowProfiler::Lap alap;
@@ -445,6 +463,15 @@ inline void route_unsampled(Dataset const &ds, DenseBuild const &build,
                            out.values[r]   = nodes[idx].threshold_or_value;
                            out.leaf_ids[r] = idx;
                        });
+}
+
+inline GrowResult<DenseTree> DenseFrame::finish(Dataset const &ds, row_index_view rows)
+{
+    if (!resident)
+    {
+        route_unsampled(ds, build, rows, out);
+    }
+    return assemble_dense(std::move(build), std::move(out));
 }
 
 inline void route_unsampled(Dataset const &ds, std::span<float const> leaf_table,
@@ -485,11 +512,9 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                                                floats_view hess, RowSelection selection)
     -> GrowResult<Tree>
 {
-    namespace gd                     = grower_detail;
-    bool const              resident = this->resident();
-    gd::GrowProfiler::Lap   slap;
-    gd::DenseBuild          build(static_cast<float>(selection.rows.size()));
-    RecycledOutputs         out = begin_grow(ds);
+    namespace gd = grower_detail;
+    auto frame   = gd::DenseFrame::open(this->resident(), selection, begin_grow(ds));
+    auto &[resident, slap, build, out] = frame;
     std::vector<SplitInput> current;
     std::vector<SplitInput> next;
     gd::LevelOutputs        level_out;
@@ -522,12 +547,8 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     {
         gd::Phase<&gd::GrowProfiler::finalize_s> phase;
         step.end_tree(current, build, out.values, out.leaf_ids, selection.rows);
-        if (!resident)
-        {
-            gd::route_unsampled(ds, build, selection.rows, out);
-        }
     }
-    return gd::assemble_dense(std::move(build), std::move(out));
+    return frame.finish(ds, selection.rows);
 }
 
 template <HistogramEngine EngineT, LevelSplitFinder SplitterT>
@@ -715,11 +736,9 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow_leaves(Dataset const &ds,
                                                      RowSelection selection)
     -> GrowResult<Tree>
 {
-    namespace gd                   = grower_detail;
-    bool const            resident = this->resident();
-    gd::GrowProfiler::Lap slap;
-    gd::DenseBuild        build(static_cast<float>(selection.rows.size()));
-    RecycledOutputs       out = begin_grow(ds);
+    namespace gd = grower_detail;
+    auto frame   = gd::DenseFrame::open(this->resident(), selection, begin_grow(ds));
+    auto &[resident, slap, build, out] = frame;
 
     auto gain_less = [](gd::Candidate const &a, gd::Candidate const &b)
     {
@@ -781,12 +800,8 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow_leaves(Dataset const &ds,
                             heap | std::views::transform(&gd::Candidate::node),
                             out.values, out.leaf_ids);
         step.end_tree(build, out.values, out.leaf_ids);
-        if (!resident)
-        {
-            gd::route_unsampled(ds, build, selection.rows, out);
-        }
     }
-    return gd::assemble_dense(std::move(build), std::move(out));
+    return frame.finish(ds, selection.rows);
 }
 
 template <typename EngineT, typename TableFn>
