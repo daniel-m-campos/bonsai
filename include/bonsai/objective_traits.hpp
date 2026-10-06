@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <variant>
 
 #include "bonsai/objective.hpp"
 #include "bonsai/task.hpp"
@@ -32,21 +33,48 @@ enum class DeviceObjectiveKind : uint8_t
     quantile,
 };
 
-// A kind with the parameters its kernels read; a bare kind converts.
-struct DeviceObjective
+// One alternative per kind, each carrying only the parameters its kernels
+// read; an alternative's index in the variant is its kind.
+struct DeviceMse
 {
-    DeviceObjectiveKind kind  = DeviceObjectiveKind::none;
-    float               alpha = 0.5F;
-    float               delta = 1.0F;
-
-    constexpr DeviceObjective() = default;
-    // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
-    constexpr DeviceObjective(DeviceObjectiveKind k) : kind(k) {}
-    constexpr DeviceObjective(DeviceObjectiveKind k, float alpha_in, float delta_in)
-        : kind(k), alpha(alpha_in), delta(delta_in)
-    {
-    }
 };
+struct DeviceLogLoss
+{
+};
+struct DevicePoisson
+{
+};
+struct DeviceMae
+{
+};
+struct DeviceHuber
+{
+    float delta = 1.0F;
+};
+struct DeviceQuantile
+{
+    float alpha = 0.5F;
+};
+using DeviceObjective =
+    std::variant<std::monostate, DeviceMse, DeviceLogLoss, DevicePoisson, DeviceMae,
+                 DeviceHuber, DeviceQuantile>;
+
+constexpr DeviceObjectiveKind device_kind(DeviceObjective const &objective)
+{
+    return static_cast<DeviceObjectiveKind>(objective.index());
+}
+
+template <typename Form>
+inline constexpr DeviceObjectiveKind device_kind_of_form =
+    device_kind(DeviceObjective{Form{}});
+
+static_assert(device_kind_of_form<std::monostate> == DeviceObjectiveKind::none);
+static_assert(device_kind_of_form<DeviceMse> == DeviceObjectiveKind::mse);
+static_assert(device_kind_of_form<DeviceLogLoss> == DeviceObjectiveKind::logloss);
+static_assert(device_kind_of_form<DevicePoisson> == DeviceObjectiveKind::poisson);
+static_assert(device_kind_of_form<DeviceMae> == DeviceObjectiveKind::mae);
+static_assert(device_kind_of_form<DeviceHuber> == DeviceObjectiveKind::huber);
+static_assert(device_kind_of_form<DeviceQuantile> == DeviceObjectiveKind::quantile);
 
 constexpr bool renew_leaf_on_device(DeviceObjectiveKind kind)
 {
@@ -54,58 +82,62 @@ constexpr bool renew_leaf_on_device(DeviceObjectiveKind kind)
            kind == DeviceObjectiveKind::quantile;
 }
 
-template <typename Objective> struct device_objective_kind_of
+template <typename Objective> struct device_form_of
 {
-    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::none;
+    using type = std::monostate;
 };
 
-template <> struct device_objective_kind_of<MSEObjective>
+template <> struct device_form_of<MSEObjective>
 {
-    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::mse;
+    using type = DeviceMse;
 };
 
-template <> struct device_objective_kind_of<LogLossObjective>
+template <> struct device_form_of<LogLossObjective>
 {
-    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::logloss;
+    using type = DeviceLogLoss;
 };
 
-template <> struct device_objective_kind_of<PoissonObjective>
+template <> struct device_form_of<PoissonObjective>
 {
-    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::poisson;
+    using type = DevicePoisson;
 };
 
-template <> struct device_objective_kind_of<MAEObjective>
+template <> struct device_form_of<MAEObjective>
 {
-    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::mae;
+    using type = DeviceMae;
 };
 
-template <> struct device_objective_kind_of<HuberObjective>
+template <> struct device_form_of<HuberObjective>
 {
-    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::huber;
+    using type = DeviceHuber;
 };
 
-template <> struct device_objective_kind_of<QuantileObjective>
+template <> struct device_form_of<QuantileObjective>
 {
-    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::quantile;
+    using type = DeviceQuantile;
 };
 
 template <typename Objective>
+using device_form_t = typename device_form_of<Objective>::type;
+
+template <typename Objective>
 inline constexpr DeviceObjectiveKind device_objective_kind =
-    device_objective_kind_of<Objective>::value;
+    device_kind_of_form<device_form_t<Objective>>;
 
-template <typename Objective> DeviceObjective device_objective_of(Objective const &)
+template <typename Objective>
+device_form_t<Objective> device_objective_of(Objective const &)
 {
-    return device_objective_kind<Objective>;
+    return {};
 }
 
-inline DeviceObjective device_objective_of(HuberObjective const &objective)
+inline DeviceHuber device_objective_of(HuberObjective const &objective)
 {
-    return {DeviceObjectiveKind::huber, 0.5F, objective.delta_};
+    return {objective.delta_};
 }
 
-inline DeviceObjective device_objective_of(QuantileObjective const &objective)
+inline DeviceQuantile device_objective_of(QuantileObjective const &objective)
 {
-    return {DeviceObjectiveKind::quantile, objective.alpha_, 1.0F};
+    return {objective.alpha_};
 }
 
 // Inverse link function for objective T, applied in place. Identity for

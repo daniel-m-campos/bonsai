@@ -2043,7 +2043,7 @@ __global__ void gh_from_scores_kernel(float const *scores, float const *labels,
 template <DeviceObjectiveKind Kind>
 inline void gh_from_scores_weighted(bool weighted, float const *scores,
                                     float const *labels, float const *weights,
-                                    uint32_t n, DeviceObjective objective, float2 *gh,
+                                    uint32_t n, ObjectiveArgs objective, float2 *gh,
                                     dim3 grid, dim3 block)
 {
     if (weighted)
@@ -2085,9 +2085,9 @@ template <typename Fn> inline void for_objective_kind(DeviceObjectiveKind kind, 
     }
 }
 
-inline void gh_from_scores(DeviceObjective objective, bool weighted,
-                           float const *scores, float const *labels,
-                           float const *weights, uint32_t n, float2 *gh)
+inline void gh_from_scores(ObjectiveArgs objective, bool weighted, float const *scores,
+                           float const *labels, float const *weights, uint32_t n,
+                           float2 *gh)
 {
     dim3 const grid  = strided_grid(n, 1024);
     dim3 const block = dim3(k_linear_threads);
@@ -2158,7 +2158,7 @@ __global__ void eval_loss_pass1_kernel(float const *scores, float const *labels,
     }
 }
 
-inline uint32_t eval_loss_pass1(DeviceObjective objective, float const *scores,
+inline uint32_t eval_loss_pass1(ObjectiveArgs objective, float const *scores,
                                 float const *labels, uint32_t n, double *partial)
 {
     dim3 const grid  = strided_grid(n, 1024);
@@ -2220,106 +2220,140 @@ inline __device__ float float_of_sortable(uint32_t u)
     return __uint_as_float((u & 0x80000000U) != 0U ? (u & 0x7FFFFFFFU) : ~u);
 }
 
-using leaf_residual_key = unsigned long long;
-
-inline __device__ uint32_t key_leaf(leaf_residual_key key)
-{
-    return static_cast<uint32_t>(key >> 32U);
-}
-
-inline __device__ float key_residual(leaf_residual_key key)
-{
-    return float_of_sortable(static_cast<uint32_t>(key & 0xFFFFFFFFULL));
-}
-
 template <typename BinT>
-__global__ void route_residual_kernel(BinT const *bins, uint32_t const *n_bins,
-                                      uint32_t n_rows, uint32_t n_feats,
-                                      NodeTableRef nodes, float const *labels,
-                                      float const *scores, uint32_t n,
-                                      uint32_t const *rows, leaf_residual_key *keys)
+__global__ void route_leaf_kernel(BinT const *bins, uint32_t const *n_bins,
+                                  uint32_t n_rows, uint32_t n_feats, NodeTableRef nodes,
+                                  uint32_t n, uint32_t const *rows, uint32_t *leaf_ids)
 {
     uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
     if (k >= n)
     {
         return;
     }
-    uint32_t const r        = mapped_row(rows, k);
-    uint32_t const leaf     = leaf_of_row(bins, n_bins, n_rows, n_feats, nodes, r);
-    float const    residual = labels[r] - scores[r];
-    keys[k] = (static_cast<leaf_residual_key>(leaf) << 32U) | sortable_bits(residual);
+    leaf_ids[k] =
+        leaf_of_row(bins, n_bins, n_rows, n_feats, nodes, mapped_row(rows, k));
 }
 
-__global__ void segment_bounds_kernel(leaf_residual_key const *keys, uint32_t n,
-                                      uint32_t *seg_start, uint32_t *seg_end)
+inline __device__ uint32_t select_shift(uint32_t pass)
 {
-    uint32_t const i = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (i >= n)
+    return k_select_shift_bits * (k_select_passes - 1U - pass);
+}
+
+inline __device__ uint32_t select_digit(uint32_t key, uint32_t pass)
+{
+    return (key >> select_shift(pass)) & (k_select_digits - 1U);
+}
+
+inline __device__ bool select_prefix_holds(uint32_t key, uint32_t prefix, uint32_t pass)
+{
+    uint32_t const settled = k_select_shift_bits * pass;
+    return settled == 0U || (key >> (32U - settled)) == (prefix >> (32U - settled));
+}
+
+inline __device__ float residual_of(float const *labels, float const *scores,
+                                    uint32_t r)
+{
+    return labels[r] - scores[r];
+}
+
+__global__ void renew_count_kernel(uint32_t const *leaf_ids, float const *labels,
+                                   float const *scores, uint32_t n,
+                                   uint32_t const *rows, LeafSelect const *select,
+                                   uint32_t pass, uint32_t *hist)
+{
+    uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (k >= n)
     {
         return;
     }
-    uint32_t const leaf = key_leaf(keys[i]);
-    if (i == 0 || key_leaf(keys[i - 1]) != leaf)
+    uint32_t const leaf = leaf_ids[k];
+    uint32_t const key =
+        sortable_bits(residual_of(labels, scores, mapped_row(rows, k)));
+    if (select_prefix_holds(key, select[leaf].prefix, pass))
     {
-        seg_start[leaf] = i;
-    }
-    if (i + 1 == n || key_leaf(keys[i + 1]) != leaf)
-    {
-        seg_end[leaf] = i + 1;
+        atomicAdd(&hist[(leaf * k_select_digits) + select_digit(key, pass)], 1U);
     }
 }
 
-__global__ void renew_leaves_kernel(leaf_residual_key const *keys,
-                                    uint32_t const *seg_start, uint32_t const *seg_end,
-                                    DeviceObjectiveKind kind, float alpha, float delta,
-                                    NodeTableRef nodes, float *values)
+__global__ void renew_narrow_kernel(uint32_t *hist, uint32_t pass, double alpha,
+                                    NodeTableRef nodes, LeafSelect *select)
 {
-    __shared__ double sum[k_linear_threads];
-    uint32_t const    node = blockIdx.x;
+    __shared__ uint32_t scan[k_select_digits];
+    uint32_t const      node = blockIdx.x;
+    uint32_t const      d    = threadIdx.x;
     if (nodes.is_leaf[node] == 0)
     {
         return;
     }
-    uint32_t const start = seg_start[node];
-    uint32_t const end   = seg_end[node];
-    if (end <= start)
+    uint32_t *const row   = hist + (static_cast<size_t>(node) * k_select_digits);
+    uint32_t const  count = row[d];
+    row[d]                = 0;
+    scan[d]               = count;
+    __syncthreads();
+    for (uint32_t off = 1; off < k_select_digits; off <<= 1U)
+    {
+        uint32_t const add = d >= off ? scan[d - off] : 0U;
+        __syncthreads();
+        scan[d] += add;
+        __syncthreads();
+    }
+    uint32_t const below = scan[d] - count;
+    LeafSelect     s     = select[node];
+    if (pass == 0)
+    {
+        s.count = scan[k_select_digits - 1];
+        if (s.count == 0)
+        {
+            return;
+        }
+        long long const want = llround(alpha * static_cast<double>(s.count - 1));
+        s.rank = static_cast<uint32_t>(min(static_cast<long long>(s.count - 1), want));
+    }
+    if (count != 0 && below <= s.rank && s.rank < below + count)
+    {
+        s.prefix |= d << select_shift(pass);
+        s.rank -= below;
+        select[node] = s;
+    }
+}
+
+__global__ void renew_huber_kernel(uint32_t const *leaf_ids, float const *labels,
+                                   float const *scores, uint32_t n,
+                                   uint32_t const *rows, LeafSelect const *select,
+                                   float delta, double scale, unsigned long long *sums)
+{
+    uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (k >= n)
     {
         return;
     }
-    uint32_t const count = end - start;
-    double const   a =
-        kind == DeviceObjectiveKind::quantile ? static_cast<double>(alpha) : 0.5;
-    auto const k =
-        static_cast<uint32_t>(min(static_cast<long long>(count - 1),
-                                  llround(a * static_cast<double>(count - 1))));
-    float const q = key_residual(keys[start + k]);
-    float       v = q;
-    if (kind == DeviceObjectiveKind::huber)
+    uint32_t const leaf = leaf_ids[k];
+    float const    q    = float_of_sortable(select[leaf].prefix);
+    float const    dev  = fminf(
+        fmaxf(residual_of(labels, scores, mapped_row(rows, k)) - q, -delta), delta);
+    long long const fixed = llround(static_cast<double>(dev) * scale);
+    atomicAdd(&sums[leaf], static_cast<unsigned long long>(fixed));
+}
+
+__global__ void renew_values_kernel(LeafSelect const         *select,
+                                    unsigned long long const *sums, bool huber,
+                                    double scale, NodeTableRef nodes, uint32_t n_nodes,
+                                    float *values)
+{
+    uint32_t const node = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (node >= n_nodes || nodes.is_leaf[node] == 0 || select[node].count == 0)
     {
-        double acc = 0.0;
-        for (uint32_t i = start + threadIdx.x; i < end; i += blockDim.x)
-        {
-            acc += static_cast<double>(
-                fminf(fmaxf(key_residual(keys[i]) - q, -delta), delta));
-        }
-        sum[threadIdx.x] = acc;
-        __syncthreads();
-        for (uint32_t s = blockDim.x / 2; s > 0; s >>= 1U)
-        {
-            if (threadIdx.x < s)
-            {
-                sum[threadIdx.x] += sum[threadIdx.x + s];
-            }
-            __syncthreads();
-        }
-        v = q + static_cast<float>(sum[0] / static_cast<double>(count));
+        return;
     }
-    if (threadIdx.x == 0)
+    float v = float_of_sortable(select[node].prefix);
+    if (huber)
     {
-        double const fenced =
-            fmin(fmax(static_cast<double>(v), nodes.lo[node]), nodes.hi[node]);
-        values[node] = static_cast<float>(fenced);
+        double const sum = static_cast<double>(static_cast<long long>(sums[node]));
+        v += static_cast<float>(sum / scale / static_cast<double>(select[node].count));
     }
+    double const fenced =
+        fmin(fmax(static_cast<double>(v), nodes.lo[node]), nodes.hi[node]);
+    values[node] = static_cast<float>(fenced);
 }
 
 // perf: Identity row list built on device: full-data fits

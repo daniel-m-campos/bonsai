@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <variant>
+
+#include "bonsai/objective_traits.hpp"
 
 namespace bonsai
 {
@@ -183,6 +186,38 @@ inline __host__ __device__ uint32_t mapped_row(uint32_t const *rows, uint32_t k)
 }
 
 inline constexpr uint32_t k_not_selected = 0xFFFFFFFFU;
+
+struct ObjectiveArgs
+{
+    DeviceObjectiveKind kind  = DeviceObjectiveKind::none;
+    float               alpha = 0.5F;
+    float               delta = 1.0F;
+};
+
+inline ObjectiveArgs objective_args(DeviceObjective const &objective)
+{
+    ObjectiveArgs args{device_kind(objective)};
+    if (auto const *huber = std::get_if<DeviceHuber>(&objective))
+    {
+        args.delta = huber->delta;
+    }
+    if (auto const *quantile = std::get_if<DeviceQuantile>(&objective))
+    {
+        args.alpha = quantile->alpha;
+    }
+    return args;
+}
+
+inline constexpr uint32_t k_select_shift_bits = 8;
+inline constexpr uint32_t k_select_digits     = 1U << k_select_shift_bits;
+inline constexpr uint32_t k_select_passes     = 32U / k_select_shift_bits;
+
+struct LeafSelect
+{
+    uint32_t prefix;
+    uint32_t rank;
+    uint32_t count;
+};
 
 struct NodeTableRef
 {

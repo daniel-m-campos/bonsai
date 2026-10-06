@@ -253,17 +253,16 @@ struct CudaDeviceContext
         DeviceBuffer<float>              weights;
         LabelsId                         labels_key{};
         NodeTable                        nodes;
-        DeviceObjective                  objective;
+        ObjectiveArgs                    objective;
         bool                             weighted      = false;
         bool                             armed         = false;
         float                            learning_rate = 0.0F;
         size_t                           n_rows        = 0;
         RowMap                           rows;
-        DeviceBuffer<unsigned long long> keys;
-        DeviceBuffer<unsigned long long> keys_sorted;
-        DeviceBuffer<uint8_t>            sort_temp;
-        DeviceBuffer<uint32_t>           seg_start;
-        DeviceBuffer<uint32_t>           seg_end;
+        DeviceBuffer<uint32_t>           leaf_ids;
+        DeviceBuffer<uint32_t>           hist;
+        DeviceBuffer<LeafSelect>         select;
+        DeviceBuffer<unsigned long long> sums;
     };
 
     struct EvalPlane
@@ -273,7 +272,7 @@ struct CudaDeviceContext
         DeviceBuffer<float>                scores;
         DeviceBuffer<float>                labels;
         Staged<double>                     loss_partial;
-        DeviceObjective                    objective;
+        ObjectiveArgs                      objective;
         NodeTable                          nodes;
         RowMap                             rows;
         std::shared_ptr<IngestPlane const> adopted;
