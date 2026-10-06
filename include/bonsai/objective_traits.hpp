@@ -1,10 +1,12 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <concepts>
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <type_traits>
 #include <variant>
 
 #include "bonsai/objective.hpp"
@@ -14,72 +16,215 @@
 namespace bonsai
 {
 
-// Objectives whose gradient and hessian a device backend can derive from
-// resident scores and labels, with no host objective pass and no per-tree
-// gradient upload. Squared error is the trivial case: g = score - label,
-// h = 1. LogLoss and Poisson add a transcendental per row (sigmoid, exp) but
-// stay two-line kernels; MAE, Huber and Quantile renew their leaves from the
-// resident residuals after the tree is built. The booster and the CUDA
-// engine share this tag (invariants: resident-objective-eligibility), and
-// this core header carries no CUDA include.
-enum class DeviceObjectiveKind : uint8_t
+// Objectives a device backend derives from resident scores and labels with
+// no host objective pass and no per-tree gradient upload, one alternative per
+// objective. Each carries only its own parameters and states its gradient,
+// hessian and loss as constexpr members, which the CUDA compiler treats as
+// callable from device code, so a kernel instantiated on the alternative
+// reads the formula from the type; a renewing alternative names the quantile
+// its leaves take (invariants: resident-objective-eligibility). This core
+// header carries no CUDA include.
+struct UnitHessian
 {
-    none,
-    mse,
-    logloss,
-    poisson,
-    mae,
-    huber,
-    quantile,
+    static constexpr bool unit_hessian = true;
+    constexpr float       hessian(float /*score*/, float /*label*/) const
+    {
+        return 1.0F;
+    }
 };
 
-// One alternative per kind, each carrying only the parameters its kernels
-// read; an alternative's index in the variant is its kind.
-struct DeviceMse
+struct NewtonLeaf
 {
+    static constexpr bool renew_leaf = false;
 };
-struct DeviceLogLoss
+
+struct MedianLeaf
 {
+    static constexpr bool renew_leaf = true;
+    constexpr float       leaf_quantile() const
+    {
+        return 0.5F;
+    }
 };
-struct DevicePoisson
+
+struct DeviceMse : UnitHessian, NewtonLeaf
 {
+    constexpr float gradient(float score, float label) const
+    {
+        return score - label;
+    }
+    constexpr double loss(float score, float label) const
+    {
+        double const d = static_cast<double>(score) - static_cast<double>(label);
+        return d * d;
+    }
 };
-struct DeviceMae
+
+struct DeviceLogLoss : NewtonLeaf
 {
+    static constexpr bool unit_hessian = false;
+    constexpr float       gradient(float score, float label) const
+    {
+        return (1.0F / (1.0F + expf(-score))) - label;
+    }
+    constexpr float hessian(float score, float /*label*/) const
+    {
+        float const p = 1.0F / (1.0F + expf(-score));
+        return p * (1.0F - p);
+    }
+    constexpr double loss(float score, float label) const
+    {
+        return fmaxf(0.0F, score) + log1pf(expf(-fabsf(score))) - (label * score);
+    }
 };
-struct DeviceHuber
+
+struct DevicePoisson : NewtonLeaf
+{
+    static constexpr bool unit_hessian = false;
+    constexpr float       clamped_score(float score) const
+    {
+        return fminf(fmaxf(score, -k_poisson_max_log), k_poisson_max_log);
+    }
+    constexpr float gradient(float score, float label) const
+    {
+        return expf(clamped_score(score)) - label;
+    }
+    constexpr float hessian(float score, float /*label*/) const
+    {
+        return expf(clamped_score(score));
+    }
+    constexpr double loss(float score, float label) const
+    {
+        float const f = clamped_score(score);
+        return static_cast<double>(expf(f)) -
+               (static_cast<double>(label) * static_cast<double>(f));
+    }
+};
+
+struct DeviceMae : UnitHessian, MedianLeaf
+{
+    constexpr float gradient(float score, float label) const
+    {
+        float const r = score - label;
+        return r > 0.0F ? 1.0F : (r < 0.0F ? -1.0F : 0.0F);
+    }
+    constexpr double loss(float score, float label) const
+    {
+        return fabsf(score - label);
+    }
+};
+
+struct DeviceHuber : UnitHessian, MedianLeaf
 {
     float delta = 1.0F;
+
+    constexpr DeviceHuber() = default;
+    constexpr explicit DeviceHuber(float delta_in) : delta(delta_in) {}
+    constexpr float gradient(float score, float label) const
+    {
+        return fminf(fmaxf(score - label, -delta), delta);
+    }
+    constexpr double loss(float score, float label) const
+    {
+        float const a = fabsf(score - label);
+        return a <= delta ? 0.5F * a * a : delta * (a - (0.5F * delta));
+    }
 };
-struct DeviceQuantile
+
+struct DeviceQuantile : UnitHessian
 {
-    float alpha = 0.5F;
+    float                 alpha      = 0.5F;
+    static constexpr bool renew_leaf = true;
+
+    constexpr DeviceQuantile() = default;
+    constexpr explicit DeviceQuantile(float alpha_in) : alpha(alpha_in) {}
+    constexpr float leaf_quantile() const
+    {
+        return alpha;
+    }
+    constexpr float gradient(float score, float label) const
+    {
+        return score > label ? (1.0F - alpha) : -alpha;
+    }
+    constexpr double loss(float score, float label) const
+    {
+        return label >= score ? alpha * (label - score)
+                              : (1.0F - alpha) * (score - label);
+    }
 };
+
 using DeviceObjective =
     std::variant<std::monostate, DeviceMse, DeviceLogLoss, DevicePoisson, DeviceMae,
                  DeviceHuber, DeviceQuantile>;
 
-constexpr DeviceObjectiveKind device_kind(DeviceObjective const &objective)
+template <typename Form>
+inline constexpr bool is_device_form = !std::same_as<Form, std::monostate>;
+
+constexpr bool has_device_form(DeviceObjective const &objective)
 {
-    return static_cast<DeviceObjectiveKind>(objective.index());
+    return !std::holds_alternative<std::monostate>(objective);
 }
 
-template <typename Form>
-inline constexpr DeviceObjectiveKind device_kind_of_form =
-    device_kind(DeviceObjective{Form{}});
-
-static_assert(device_kind_of_form<std::monostate> == DeviceObjectiveKind::none);
-static_assert(device_kind_of_form<DeviceMse> == DeviceObjectiveKind::mse);
-static_assert(device_kind_of_form<DeviceLogLoss> == DeviceObjectiveKind::logloss);
-static_assert(device_kind_of_form<DevicePoisson> == DeviceObjectiveKind::poisson);
-static_assert(device_kind_of_form<DeviceMae> == DeviceObjectiveKind::mae);
-static_assert(device_kind_of_form<DeviceHuber> == DeviceObjectiveKind::huber);
-static_assert(device_kind_of_form<DeviceQuantile> == DeviceObjectiveKind::quantile);
-
-constexpr bool renew_leaf_on_device(DeviceObjectiveKind kind)
+template <typename Fn>
+constexpr void for_device_form(DeviceObjective const &objective, Fn &&fn)
 {
-    return kind == DeviceObjectiveKind::mae || kind == DeviceObjectiveKind::huber ||
-           kind == DeviceObjectiveKind::quantile;
+    std::visit(
+        [&](auto const &form)
+        {
+            if constexpr (is_device_form<std::decay_t<decltype(form)>>)
+            {
+                fn(form);
+            }
+        },
+        objective);
+}
+
+template <typename Fn>
+constexpr auto with_device_form(DeviceObjective const &objective, Fn &&fn, auto none)
+{
+    return std::visit(
+        [&](auto const &form)
+        {
+            if constexpr (is_device_form<std::decay_t<decltype(form)>>)
+            {
+                return fn(form);
+            }
+            else
+            {
+                return none;
+            }
+        },
+        objective);
+}
+
+constexpr bool renew_leaf_on_device(DeviceObjective const &objective)
+{
+    return with_device_form(
+        objective, [](auto const &form) { return form.renew_leaf; }, false);
+}
+
+constexpr bool unit_hessian_on_device(DeviceObjective const &objective)
+{
+    return with_device_form(
+        objective, [](auto const &form) { return form.unit_hessian; }, false);
+}
+
+constexpr float leaf_quantile_on_device(DeviceObjective const &objective)
+{
+    return with_device_form(
+        objective,
+        [](auto const &form)
+        {
+            if constexpr (form.renew_leaf)
+            {
+                return form.leaf_quantile();
+            }
+            else
+            {
+                return 0.5F;
+            }
+        },
+        0.5F);
 }
 
 template <typename Objective> struct device_form_of
@@ -121,8 +266,7 @@ template <typename Objective>
 using device_form_t = typename device_form_of<Objective>::type;
 
 template <typename Objective>
-inline constexpr DeviceObjectiveKind device_objective_kind =
-    device_kind_of_form<device_form_t<Objective>>;
+inline constexpr bool has_device_objective = is_device_form<device_form_t<Objective>>;
 
 template <typename Objective>
 device_form_t<Objective> device_objective_of(Objective const &)
@@ -132,12 +276,12 @@ device_form_t<Objective> device_objective_of(Objective const &)
 
 inline DeviceHuber device_objective_of(HuberObjective const &objective)
 {
-    return {objective.delta_};
+    return DeviceHuber{objective.delta_};
 }
 
 inline DeviceQuantile device_objective_of(QuantileObjective const &objective)
 {
-    return {objective.alpha_};
+    return DeviceQuantile{objective.alpha_};
 }
 
 // Inverse link function for objective T, applied in place. Identity for

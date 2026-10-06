@@ -253,7 +253,7 @@ struct CudaDeviceContext
         DeviceBuffer<float>              weights;
         LabelsId                         labels_key{};
         NodeTable                        nodes;
-        ObjectiveArgs                    objective;
+        DeviceObjective                  objective;
         bool                             weighted      = false;
         bool                             armed         = false;
         float                            learning_rate = 0.0F;
@@ -272,7 +272,7 @@ struct CudaDeviceContext
         DeviceBuffer<float>                scores;
         DeviceBuffer<float>                labels;
         Staged<double>                     loss_partial;
-        ObjectiveArgs                      objective;
+        DeviceObjective                    objective;
         NodeTable                          nodes;
         RowMap                             rows;
         std::shared_ptr<IngestPlane const> adopted;

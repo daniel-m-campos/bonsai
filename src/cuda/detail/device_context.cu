@@ -606,9 +606,8 @@ void CudaDeviceContext::note_plane(bool tiled, size_t shared)
 
 bool CudaDeviceContext::unit_hessian() const
 {
-    auto const kind = resident.objective.kind;
     return resident.armed && !resident.weighted &&
-           (kind == DeviceObjectiveKind::mse || renew_leaf_on_device(kind));
+           unit_hessian_on_device(resident.objective);
 }
 
 size_t CudaDeviceContext::tiled_shared_bytes() const
@@ -1503,7 +1502,7 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjective object
                                        std::span<float const> initial_scores,
                                        float                  learning_rate)
 {
-    if (device_kind(objective) == DeviceObjectiveKind::none)
+    if (!has_device_form(objective))
     {
         return false;
     }
@@ -1524,7 +1523,7 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjective object
         resident.labels_key = ds.labels_identity();
     }
     resident.scores.upload(initial_scores.data(), initial_scores.size());
-    resident.objective     = objective_args(objective);
+    resident.objective     = objective;
     resident.weighted      = !ds.weights().empty();
     resident.n_rows        = ds.plane_n_rows();
     resident.learning_rate = learning_rate;
@@ -1592,10 +1591,7 @@ void CudaDeviceContext::resident_renew(uint32_t n, uint32_t n_nodes)
                 resident.rows.data(), resident.leaf_ids.data());
         });
     check(cudaGetLastError(), "resident route launch");
-    ObjectiveArgs const &obj   = resident.objective;
-    double const         alpha = obj.kind == DeviceObjectiveKind::quantile
-                                     ? static_cast<double>(obj.alpha)
-                                     : 0.5;
+    double const alpha = leaf_quantile_on_device(resident.objective);
     // perf: Four passes of 8-bit digits over the 32-bit residual key settle
     // every leaf's k-th residual in place, 4 B of scratch per row; the key sort
     // this replaced moved 24 B per row through five passes.
@@ -1610,23 +1606,23 @@ void CudaDeviceContext::resident_renew(uint32_t n, uint32_t n_nodes)
             resident.select.data());
         check(cudaGetLastError(), "resident digit narrow launch");
     }
-    bool const huber = obj.kind == DeviceObjectiveKind::huber;
-    double     scale = 0.0;
-    if (huber)
+    auto const *huber = std::get_if<DeviceHuber>(&resident.objective);
+    double      scale = 0.0;
+    if (huber != nullptr)
     {
         int const row_bits = 32 - __builtin_clz(n);
-        scale = std::ldexp(1.0, 62 - row_bits) / static_cast<double>(obj.delta);
+        scale = std::ldexp(1.0, 62 - row_bits) / static_cast<double>(huber->delta);
         resident.sums.reserve(n_nodes);
         check(cudaMemset(resident.sums.data(), 0, n_nodes * sizeof(unsigned long long)),
               "resident huber sums zero");
         renew_huber_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
             resident.leaf_ids.data(), resident.labels.data(), resident.scores.data(), n,
-            resident.rows.data(), resident.select.data(), obj.delta, scale,
+            resident.rows.data(), resident.select.data(), huber->delta, scale,
             resident.sums.data());
         check(cudaGetLastError(), "resident huber sum launch");
     }
     renew_values_kernel<<<covering_grid(n_nodes), dim3(k_linear_threads)>>>(
-        resident.select.data(), resident.sums.data(), huber, scale,
+        resident.select.data(), resident.sums.data(), huber != nullptr, scale,
         resident.nodes.ref(), n_nodes, resident.nodes.value.dev.data());
     check(cudaGetLastError(), "resident renew launch");
 }
@@ -1639,7 +1635,7 @@ std::vector<float> CudaDeviceContext::resident_finalize(
 
     auto const         n = static_cast<uint32_t>(resident.rows.n);
     std::vector<float> renewed;
-    if (renew_leaf_on_device(resident.objective.kind) && n > 0)
+    if (renew_leaf_on_device(resident.objective) && n > 0)
     {
         resident_renew(n, static_cast<uint32_t>(nodes.size()));
         resident.nodes.value.fetch(nodes.size());
@@ -1680,10 +1676,9 @@ using EvalPlane = CudaDeviceContext::EvalPlane;
 void stage_eval_labels(EvalPlane &veval, Dataset const &valid,
                        DeviceObjective objective)
 {
-    veval.objective = valid.labels().size() == valid.plane_n_rows()
-                          ? objective_args(objective)
-                          : ObjectiveArgs{};
-    if (veval.objective.kind == DeviceObjectiveKind::none)
+    veval.objective =
+        valid.labels().size() == valid.plane_n_rows() ? objective : DeviceObjective{};
+    if (!has_device_form(veval.objective))
     {
         return;
     }
@@ -1797,7 +1792,7 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
         static_cast<uint32_t>(veval.n_feats), veval.nodes.ref(), lr,
         veval.scores.data(), n, veval.rows.data(), nullptr);
     check(cudaGetLastError(), "eval route+add launch");
-    if (veval.objective.kind != DeviceObjectiveKind::none)
+    if (has_device_form(veval.objective))
     {
         uint32_t const blocks =
             eval_loss_pass1(veval.objective, veval.scores.data(), veval.labels.data(),
