@@ -746,12 +746,7 @@ class Booster final : public Ensemble<Gr, Sa>
         if constexpr (has_device_objective<objective_type> &&
                       !sampler_traits<sampler_type>::reads_gradients)
         {
-            bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
-            // A view is eligible: the resident epilogue walks the view's
-            // rows and leaves every other score untouched, the same contract
-            // the host path keeps.
-            bool const runtime_ok = config().dart_drop_rate <= 0.0F && !host_forced &&
-                                    !(has_renew_leaf && reproject_monotone_on_host());
+            bool const runtime_ok = resident_round_available();
             if (resident_active_ &&
                 (!runtime_ok || resident_fit_ != train.fit_identity()))
             {
@@ -777,6 +772,16 @@ class Booster final : public Ensemble<Gr, Sa>
 
     static constexpr bool has_renew_leaf =
         requires(Obj const &o, std::span<float> r) { o.renew_leaf(r); };
+
+    // The per-fit half of resident-objective-eligibility: no DART, the
+    // escape hatch unset, no renewal the host must reproject. A view is
+    // eligible: the epilogue walks its rows and leaves the rest untouched.
+    bool resident_round_available() const
+    {
+        bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
+        return config().dart_drop_rate <= 0.0F && !host_forced &&
+               !(has_renew_leaf && reproject_monotone_on_host());
+    }
 
     bool reproject_monotone_on_host() const
     {

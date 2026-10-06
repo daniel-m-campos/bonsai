@@ -166,20 +166,6 @@ constexpr bool has_device_form(DeviceObjective const &objective)
 }
 
 template <typename Fn>
-constexpr void for_device_form(DeviceObjective const &objective, Fn &&fn)
-{
-    std::visit(
-        [&](auto const &form)
-        {
-            if constexpr (is_device_form<std::decay_t<decltype(form)>>)
-            {
-                fn(form);
-            }
-        },
-        objective);
-}
-
-template <typename Fn>
 constexpr auto with_device_form(DeviceObjective const &objective, Fn &&fn, auto none)
 {
     return std::visit(
@@ -195,6 +181,19 @@ constexpr auto with_device_form(DeviceObjective const &objective, Fn &&fn, auto 
             }
         },
         objective);
+}
+
+template <typename Fn>
+constexpr void for_device_form(DeviceObjective const &objective, Fn &&fn)
+{
+    with_device_form(
+        objective,
+        [&](auto const &form)
+        {
+            fn(form);
+            return true;
+        },
+        false);
 }
 
 constexpr bool renew_leaf_on_device(DeviceObjective const &objective)
