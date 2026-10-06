@@ -183,7 +183,7 @@ concept GPULevelEngine =
         b.find_splits_many(ds, config, level, out, child_sums);
         b.find_level_split(ds, config, level, out, child_sums);
         {
-            b.resident_begin(ds, DeviceObjectiveKind::mse, init_scores, 1.0F)
+            b.resident_begin(ds, DeviceMse{}, init_scores, 1.0F)
         } -> std::convertible_to<bool>;
     };
 
@@ -207,8 +207,7 @@ concept GPULeafEngine =
         b.leaf_find(ds, config, nodes, slots, out, child_sums);
         b.leaf_stamp(stamps);
         {
-            b.resident_begin_leaf(ds, config, DeviceObjectiveKind::mse, init_scores,
-                                  1.0F)
+            b.resident_begin_leaf(ds, config, DeviceMse{}, init_scores, 1.0F)
         } -> std::convertible_to<bool>;
     };
 

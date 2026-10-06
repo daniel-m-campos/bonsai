@@ -676,17 +676,17 @@ TEST_CASE("Leafwise arming refuses a leaf budget the pool cannot hold",
     cfg.tree_config.max_leaves = 1U << 24U;
     {
         CudaLeafwiseGrower leaf{cfg.tree_config};
-        REQUIRE_FALSE(leaf.resident_begin(data.built.ds, DeviceObjectiveKind::mse,
+        REQUIRE_FALSE(leaf.resident_begin(data.built.ds, DeviceMse{},
                                           std::span<float const>{scores}, 0.1F));
         CudaDepthwiseGrower depth{cfg.tree_config};
-        REQUIRE(depth.resident_begin(data.built.ds, DeviceObjectiveKind::mse,
+        REQUIRE(depth.resident_begin(data.built.ds, DeviceMse{},
                                      std::span<float const>{scores}, 0.1F));
         depth.resident_end(std::span<float>{scores});
     }
     // The positive control: the same seam arms on a budget the pool holds.
     {
         CudaLeafwiseGrower leaf{leaf_cfg().tree_config};
-        REQUIRE(leaf.resident_begin(data.built.ds, DeviceObjectiveKind::mse,
+        REQUIRE(leaf.resident_begin(data.built.ds, DeviceMse{},
                                     std::span<float const>{scores}, 0.1F));
         leaf.resident_end(std::span<float>{scores});
     }

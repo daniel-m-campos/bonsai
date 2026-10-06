@@ -8,7 +8,8 @@
 namespace bonsai
 {
 
-struct DeviceObjective;
+struct DeviceHuber;
+struct DeviceQuantile;
 
 // Objectives are instances constructed from Config so parameterized losses
 // (huber_delta, quantile_alpha) can carry state. Parameter-free objectives
@@ -90,8 +91,8 @@ struct HuberObjective
     static float init_score(floats_view targets); // median
     // LightGBM-style huber renewal: residual median plus the mean of the
     // delta-clamped deviations from it. Reorders in place.
-    float                  renew_leaf(std::span<float> residuals) const;
-    friend DeviceObjective device_objective_of(HuberObjective const &objective);
+    float              renew_leaf(std::span<float> residuals) const;
+    friend DeviceHuber device_objective_of(HuberObjective const &objective);
 
   private:
     float delta_ = 1.0F;
@@ -110,8 +111,8 @@ struct QuantileObjective
     float init_score(floats_view targets) const; // alpha-quantile
     // Pinball-optimal leaf value: the alpha-quantile of the residuals.
     // Reorders in place.
-    float                  renew_leaf(std::span<float> residuals) const;
-    friend DeviceObjective device_objective_of(QuantileObjective const &objective);
+    float                 renew_leaf(std::span<float> residuals) const;
+    friend DeviceQuantile device_objective_of(QuantileObjective const &objective);
 
   private:
     float alpha_ = 0.5F;

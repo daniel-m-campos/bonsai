@@ -16,7 +16,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cub/cub.cuh>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <format>
@@ -1504,7 +1503,7 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjective object
                                        std::span<float const> initial_scores,
                                        float                  learning_rate)
 {
-    if (objective.kind == DeviceObjectiveKind::none)
+    if (device_kind(objective) == DeviceObjectiveKind::none)
     {
         return false;
     }
@@ -1525,7 +1524,7 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjective object
         resident.labels_key = ds.labels_identity();
     }
     resident.scores.upload(initial_scores.data(), initial_scores.size());
-    resident.objective     = objective;
+    resident.objective     = objective_args(objective);
     resident.weighted      = !ds.weights().empty();
     resident.n_rows        = ds.plane_n_rows();
     resident.learning_rate = learning_rate;
@@ -1576,45 +1575,59 @@ void CudaDeviceContext::NodeTable::stage(
 
 void CudaDeviceContext::resident_renew(uint32_t n, uint32_t n_nodes)
 {
-    resident.keys.reserve(n);
-    resident.keys_sorted.reserve(n);
+    size_t const cells = static_cast<size_t>(n_nodes) * k_select_digits;
+    resident.leaf_ids.reserve(n);
+    resident.hist.reserve(cells);
+    resident.select.reserve(n_nodes);
+    check(cudaMemset(resident.hist.data(), 0, cells * sizeof(uint32_t)),
+          "resident digit counts zero");
+    check(cudaMemset(resident.select.data(), 0, n_nodes * sizeof(LeafSelect)),
+          "resident select zero");
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            route_residual_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
+            route_leaf_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
                 bins, data.n_bins_ptr(), static_cast<uint32_t>(data.key.n_rows),
-                static_cast<uint32_t>(data.key.n_feats), resident.nodes.ref(),
-                resident.labels.data(), resident.scores.data(), n, resident.rows.data(),
-                resident.keys.data());
+                static_cast<uint32_t>(data.key.n_feats), resident.nodes.ref(), n,
+                resident.rows.data(), resident.leaf_ids.data());
         });
-    check(cudaGetLastError(), "resident route+residual launch");
-    // perf: The sort covers the residual's 32 bits plus the node index's, so a
-    // 256-leaf tree sorts 40 of the 64 key bits: five radix passes, not eight.
-    int const node_bits  = n_nodes <= 1 ? 0 : 32 - __builtin_clz(n_nodes - 1);
-    size_t    temp_bytes = 0;
-    check(cub::DeviceRadixSort::SortKeys(nullptr, temp_bytes, resident.keys.data(),
-                                         resident.keys_sorted.data(), n, 0,
-                                         32 + node_bits),
-          "resident sort sizing");
-    resident.sort_temp.reserve(temp_bytes);
-    check(cub::DeviceRadixSort::SortKeys(
-              resident.sort_temp.data(), temp_bytes, resident.keys.data(),
-              resident.keys_sorted.data(), n, 0, 32 + node_bits),
-          "resident sort");
-    resident.seg_start.reserve(n_nodes);
-    resident.seg_end.reserve(n_nodes);
-    check(cudaMemset(resident.seg_start.data(), 0, n_nodes * sizeof(uint32_t)),
-          "resident segment start zero");
-    check(cudaMemset(resident.seg_end.data(), 0, n_nodes * sizeof(uint32_t)),
-          "resident segment end zero");
-    segment_bounds_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
-        resident.keys_sorted.data(), n, resident.seg_start.data(),
-        resident.seg_end.data());
-    check(cudaGetLastError(), "resident segment bounds launch");
-    renew_leaves_kernel<<<dim3(n_nodes), dim3(k_linear_threads)>>>(
-        resident.keys_sorted.data(), resident.seg_start.data(), resident.seg_end.data(),
-        resident.objective.kind, resident.objective.alpha, resident.objective.delta,
-        resident.nodes.ref(), resident.nodes.value.dev.data());
+    check(cudaGetLastError(), "resident route launch");
+    ObjectiveArgs const &obj   = resident.objective;
+    double const         alpha = obj.kind == DeviceObjectiveKind::quantile
+                                     ? static_cast<double>(obj.alpha)
+                                     : 0.5;
+    // perf: Four passes of 8-bit digits over the 32-bit residual key settle
+    // every leaf's k-th residual in place, 4 B of scratch per row; the key sort
+    // this replaced moved 24 B per row through five passes.
+    for (uint32_t pass = 0; pass < k_select_passes; ++pass)
+    {
+        renew_count_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
+            resident.leaf_ids.data(), resident.labels.data(), resident.scores.data(), n,
+            resident.rows.data(), resident.select.data(), pass, resident.hist.data());
+        check(cudaGetLastError(), "resident digit count launch");
+        renew_narrow_kernel<<<dim3(n_nodes), dim3(k_select_digits)>>>(
+            resident.hist.data(), pass, alpha, resident.nodes.ref(),
+            resident.select.data());
+        check(cudaGetLastError(), "resident digit narrow launch");
+    }
+    bool const huber = obj.kind == DeviceObjectiveKind::huber;
+    double     scale = 0.0;
+    if (huber)
+    {
+        int const row_bits = 32 - __builtin_clz(n);
+        scale = std::ldexp(1.0, 62 - row_bits) / static_cast<double>(obj.delta);
+        resident.sums.reserve(n_nodes);
+        check(cudaMemset(resident.sums.data(), 0, n_nodes * sizeof(unsigned long long)),
+              "resident huber sums zero");
+        renew_huber_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
+            resident.leaf_ids.data(), resident.labels.data(), resident.scores.data(), n,
+            resident.rows.data(), resident.select.data(), obj.delta, scale,
+            resident.sums.data());
+        check(cudaGetLastError(), "resident huber sum launch");
+    }
+    renew_values_kernel<<<covering_grid(n_nodes), dim3(k_linear_threads)>>>(
+        resident.select.data(), resident.sums.data(), huber, scale,
+        resident.nodes.ref(), n_nodes, resident.nodes.value.dev.data());
     check(cudaGetLastError(), "resident renew launch");
 }
 
@@ -1668,8 +1681,8 @@ void stage_eval_labels(EvalPlane &veval, Dataset const &valid,
                        DeviceObjective objective)
 {
     veval.objective = valid.labels().size() == valid.plane_n_rows()
-                          ? objective
-                          : DeviceObjective{DeviceObjectiveKind::none};
+                          ? objective_args(objective)
+                          : ObjectiveArgs{};
     if (veval.objective.kind == DeviceObjectiveKind::none)
     {
         return;

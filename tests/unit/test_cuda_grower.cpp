@@ -125,7 +125,7 @@ template <typename GrowerT> void check_device_eval_parity(uint8_t max_depth)
     std::vector<float> dev_scores = host_scores;
 
     std::optional<float> loss;
-    REQUIRE(grower.eval_begin(ds, DeviceObjectiveKind::none, dev_scores));
+    REQUIRE(grower.eval_begin(ds, DeviceObjective{}, dev_scores));
     REQUIRE(grower.eval_accumulate(grown.tree, ds, lr, dev_scores, loss));
     REQUIRE(!loss.has_value());
 
@@ -141,7 +141,7 @@ template <typename GrowerT> void check_device_eval_parity(uint8_t max_depth)
     // stay there; the value must match the host objective over the same
     // walked scores.
     std::vector<float> dev_scores2(ds.plane_n_rows(), 0.25F);
-    REQUIRE(grower.eval_begin(ds, DeviceObjectiveKind::mse, dev_scores2));
+    REQUIRE(grower.eval_begin(ds, DeviceMse{}, dev_scores2));
     std::optional<float> dev_loss;
     REQUIRE(grower.eval_accumulate(grown.tree, ds, lr, dev_scores2, dev_loss));
     REQUIRE(dev_loss.has_value());
@@ -195,7 +195,7 @@ TEST_CASE("CudaDepthwiseGrower device eval walk honors a row view",
         std::vector<float>   host(ids.size(), 0.25F);
         std::vector<float>   dev = host;
         std::optional<float> loss;
-        REQUIRE(grower.eval_begin(view, DeviceObjectiveKind::none, dev));
+        REQUIRE(grower.eval_begin(view, DeviceObjective{}, dev));
         REQUIRE(grower.eval_accumulate(grown.tree, view, lr, dev, loss));
         REQUIRE(!loss.has_value());
         for (size_t k = 0; k < ids.size(); ++k)
@@ -206,7 +206,7 @@ TEST_CASE("CudaDepthwiseGrower device eval walk honors a row view",
         }
 
         std::vector<float> dev2(ids.size(), 0.25F);
-        REQUIRE(grower.eval_begin(view, DeviceObjectiveKind::mse, dev2));
+        REQUIRE(grower.eval_begin(view, DeviceMse{}, dev2));
         std::optional<float> dev_loss;
         REQUIRE(grower.eval_accumulate(grown.tree, view, lr, dev2, dev_loss));
         REQUIRE(dev_loss.has_value());
@@ -235,7 +235,7 @@ TEST_CASE("CudaDepthwiseGrower device eval walk honors a row view",
     {
         Dataset const            view = ds.with_rows(RowView::encode(gather, n));
         std::vector<float> const seed(n, 0.25F);
-        REQUIRE(!grower.eval_begin(view, DeviceObjectiveKind::none, seed));
+        REQUIRE(!grower.eval_begin(view, DeviceObjective{}, seed));
         std::vector<float>   scores(gather.size(), 0.25F);
         std::optional<float> loss;
         REQUIRE(!grower.eval_accumulate(grown.tree, view, lr, scores, loss));
