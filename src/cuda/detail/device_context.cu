@@ -482,6 +482,22 @@ void CudaDeviceContext::LevelPipeline::stage_level_sums(
     node_sums.sync();
 }
 
+namespace
+{
+
+template <typename... Kernels>
+bool opt_in_dynamic_shared(size_t ceiling, Kernels... kernels)
+{
+    auto const opt_in = [ceiling](auto kernel)
+    {
+        return cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                    static_cast<int>(ceiling)) == cudaSuccess;
+    };
+    return (opt_in(kernels) && ...);
+}
+
+} // namespace
+
 void CudaDeviceContext::init_shared_limit()
 {
     if (shared_probed)
@@ -504,20 +520,16 @@ void CudaDeviceContext::init_shared_limit()
     {
         return;
     }
-    auto const opt_in = [ceiling](auto kernel)
-    {
-        return cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                    static_cast<int>(ceiling)) == cudaSuccess;
-    };
-    if (opt_in(hist_kernel<uint8_t>) && opt_in(hist_kernel<uint16_t>) &&
-        opt_in(hist_tile_kernel<k_bin_tile_width, false, uint8_t>) &&
-        opt_in(hist_tile_kernel<k_bin_tile_width, false, uint16_t>) &&
-        opt_in(hist_tile_kernel<k_bin_tile_width, true, uint8_t>) &&
-        opt_in(hist_tile_kernel<k_bin_tile_width, true, uint16_t>) &&
-        opt_in(hist_small_kernel<k_bin_tile_width, SmallFill::store, uint8_t>) &&
-        opt_in(hist_small_kernel<k_bin_tile_width, SmallFill::store, uint16_t>) &&
-        opt_in(hist_small_kernel<k_bin_tile_width, SmallFill::store_unit_h, uint8_t>) &&
-        opt_in(hist_small_kernel<k_bin_tile_width, SmallFill::store_unit_h, uint16_t>))
+    if (opt_in_dynamic_shared(
+            ceiling, hist_kernel<uint8_t>, hist_kernel<uint16_t>,
+            hist_tile_kernel<k_bin_tile_width, false, uint8_t>,
+            hist_tile_kernel<k_bin_tile_width, false, uint16_t>,
+            hist_tile_kernel<k_bin_tile_width, true, uint8_t>,
+            hist_tile_kernel<k_bin_tile_width, true, uint16_t>,
+            hist_small_kernel<k_bin_tile_width, SmallFill::store, uint8_t>,
+            hist_small_kernel<k_bin_tile_width, SmallFill::store, uint16_t>,
+            hist_small_kernel<k_bin_tile_width, SmallFill::store_unit_h, uint8_t>,
+            hist_small_kernel<k_bin_tile_width, SmallFill::store_unit_h, uint16_t>))
     {
         shared_limit = ceiling;
     }
