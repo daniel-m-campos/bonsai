@@ -45,6 +45,11 @@ class LevelStep : public TreeStep<EngineT>
             SplitOutput const split = SplitterT::find(frontier, config_);
             out.splits.assign(frontier.size(), split);
         }
+        else if constexpr (ParallelNodeSplitFinder<SplitterT>)
+        {
+            out.splits.resize(frontier.size());
+            SplitterT::find_parallel(frontier, config_, out.splits);
+        }
         else
         {
             out.splits.resize(frontier.size());
