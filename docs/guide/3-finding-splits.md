@@ -78,16 +78,27 @@ All of it is [`src/split.cpp`](../../src/split.cpp):
   then for each cut cell accumulate the prefix and score both
   `default_left` routings via `split_sums_at`, the single source of truth
   for missing-routing arithmetic.
+- `scan_lanes`: the same scan over eight features at once. The two
+  divisions per cell bound a one-feature scan on the scalar divider, so
+  `scan_features` groups plain features (carved, allowed, no monotone
+  constraint) eight to a `LaneGroup` and walks their cut cells in
+  lockstep on vector types, every lane performing the scalar scan's
+  operations in the scalar scan's order, so the gains match to the bit.
+  A feature under a monotone constraint takes the scalar scan, in
+  feature order, between groups.
 - Candidate acceptance folds in the regularizers, each one line:
   `min_child_hess` (reject thin children), `min_gain_to_split`, the L1
   soft threshold inside `score(G, H, α, λ)`
   ([`split.hpp`](../../include/bonsai/split.hpp)), monotone rejection and
   interaction-constraint masking ([chapter 6](6-regularization-and-constraints.md)).
-- `HistogramNodeSplitFinder::find`: the feature loop, parallel, with the
-  per-feature bests merged **serially in feature order** afterward so ties
-  break identically to a serial scan (lowest feature id wins). There is
-  also a *level* finder used by the levelwise grower which scores one
-  shared split summed across a whole frontier
+- `HistogramNodeSplitFinder::find` and `find_parallel`: the feature
+  loop, serial or spread over the team as ranges of features, with the
+  per-range bests merged **serially in feature order** afterward so ties
+  break identically to a serial scan (lowest feature id wins). Both the
+  leaf plane and the host level step drive `find_parallel`, so a node's
+  features spread across every worker even when the frontier holds one
+  node. There is also a *level* finder used by the levelwise grower which
+  scores one shared split summed across a whole frontier
   (`update_best_for_feature_for_level`).
 - Applying the winner: `split_node` in
   [`src/grower.cpp`](../../src/grower.cpp): a stable two-pass scatter of

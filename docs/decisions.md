@@ -2253,3 +2253,73 @@ The device renewal reads 0.5 ms per tree for MAE and Quantile and 1.5 to 1.7 for
 **Rejected.** Downloading leaf ids and residuals and renewing on the host (main's path, decision 77's reason for excluding these objectives): the 4.3 to 5.2 s in the table. The first draft, one `cub::DeviceRadixSort` over (leaf, residual) keys with segment bounds read off the sorted keys: decision 40 keeps cub out of the library and the mapper fit's sort is hand-rolled for that reason; the sort also moved 24 bytes per row of scratch through five passes and ordered rows by key, which the selection does not need. A per-leaf sort over the plane's row partition: a node that stops splitting above the last level loses its row segment when the level buffer ping-pongs, so only a per-row leaf id is reliably available at the end of a tree, and the selection reads that. A binned or histogram quantile per leaf: it changes the leaves the host would have produced, and CatBoost's GPU takes that trade at 2.1 to 2.4x the test loss. A floating-point sum for Huber's clamped mean: atomics make its order a race, and a fixed-point sum scaled to the row count is exact to 2^-38 of delta at 16M rows. Reading the references on the measuring pod: its host built XGBoost's quantile matrix in 42 s where the probe host took under a second (XGBoost trained in 1.9 s once pinned to 16 cores), so that host's reference fits read the host and not the library, and the probe pod's table stands as the comparison.
 
 **Reopener.** Huber's fixed-point sum lands 4M atomics on a few hundred addresses and reads 0.10 s per 100 trees more than the two selections; a per-block partial sum would take that back. An oblivious tree under a monotone constraint with a renewal objective still renews on the host because the reprojection of its leaf table is host code; a device reprojection would close the last host round-trip of the resident path. Softmax stays off the resident path as its own design (a per-class gradient plane). The first measuring pod, a 256-vCPU host under a 30.6-CPU quota, stalled one fit in four by 5 to 50 s outside every profiled bucket on both arms, in the ingest and the allocation the fit profile does not lap; the min over reps read through it, and a lap for ingest would let the next round read it directly. Two draws from CA-MTL-3 came up with only the proxy SSH and no direct port, which the driver's wait cannot use; it should read `ssh.direct` and move to the next datacenter.
+
+## 154. The host node finder scans eight features in lockstep on vector lanes, bit-identical to the scalar scan, and the level step spreads each node's find across the team (adopted)
+
+**Decision.** `HistogramNodeSplitFinder` no longer walks one feature's cut cells at a time. `scan_features` groups the plain features of a range (carved, allowed under the node's interaction mask, no monotone constraint) eight to a `LaneGroup`, and `scan_lanes` walks their cut cells in lockstep on clang vector types (`double __attribute__((ext_vector_type(8)))`): the prefix sums, the right-side differences, the missing-cell routing, the hessian floor, the two scores and the strict-greater best update are the scalar scan's operations in the scalar scan's order, one lane per feature, under the build's `-ffp-contract=off`, so every gain is the same double the scalar scan computes and every tie breaks the same way. A feature under a monotone constraint takes the scalar scan between groups, in feature order, and `flush_lanes` merges a group's bests with the same strict-greater rule the serial loop used, so the lowest feature id and the first bin still win a tie. On x86-64 the kernel is compiled for AVX2 (`__attribute__((target("avx2")))`, helpers force-inlined into it) and taken when the CPU reports AVX2; a host without it keeps the scalar scan. On arm64 the lanes lower to NEON. A find range holds at least one lane group (`scan_ranges` divides the feature count by the lane width before clamping to four ranges per thread). Separately, the host `LevelStep::open_level` hands its frontier to `find_parallel`, the batched scan the leaf plane already drives, instead of one node per worker.
+
+**Why.** The round opened on decision 147's reopener, the level plane's wide fill, and decomposed first. On the M2 (cpu-wide, 16384 x 16384, depth 8, 10 rounds, 8 threads) the depthwise fit reads 18.57 s as find 10.17 plus populate 8.27, and the leafwise fit on the leaf plane reads the same (18.45 as 9.45 plus 8.92, same r2): the level-against-leaf plane gap the x86 pods show is DRAM traffic the M2's unified memory hides, and the find is half the fit on both planes and both hosts. The scalar scan pays two IEEE divisions per cell and runs feature by feature, so the divider sits idle most of each cycle: decision 150 had read the M2 finder as divide-bound, and the hot-equals-cold microbench of decision 151 had already shown the find carries no traffic component. Scanning eight features side by side lets the divisions vectorize across features without changing one operation, which is what keeps the model hashes and the standings' bit identity. The level step's own find had a second, structural loss: one frontier node per worker leaves eleven of twelve workers idle through the first four levels (26 node-rounds per tree against 21.25 at perfect balance), and `find_parallel` was already the right call, one concept away.
+
+**Measured.** Bit identity first: a harness linking main's finder beside the branch's (main's `split.cpp` compiled with its two finders renamed) ran 60000 random nodes through `find` and `find_parallel`, with missing cells, L1, hessian floors, min gain, monotone and interaction constraints and uneven bin counts, and read zero mismatches on gain bits, feature, bin, routing and validity; the three model hashes hold on the M2, on both pods and in CI's x86 Linux hash job; every A/B row below reads the same r2.
+
+Same pod, `cpu5g` EPYC 9754 (Zen 4c, AVX2 taken), 12 threads, main 3d01dc97 against the branch at 774c209e (the PR head differs by a preprocessor spelling and a range-sizing rule the wide cell never reaches; assembly byte-identical for the former), min over reps, train seconds with the find and populate buckets:
+
+| cell | grower | reps | main train (find / populate) | branch train (find / populate) | train delta | find delta | r2 |
+|---|---|---|---|---|---|---|---|
+| cpu-wide | depthwise | 3/3 | 133.40 (62.66 / 68.13) | 98.63 (29.65 / 66.72) | -26.1% | -52.7% | same |
+| cpu-wide | leafwise | 3/3 | 88.34 (50.61 / 37.15) | 64.81 (28.73 / 35.54) | -26.6% | -43.2% | same |
+| cpu-wide | levelwise | 1/1 | 208.91 (136.44 / 70.15) | 206.21 (135.30 / 68.77) | -1.3% | -0.8% | same |
+
+Its microbench (16384 features x 128 rows, four arenas cycled cold or one rescanned hot, min of two reps):
+
+| microbench | main ns/cell | branch ns/cell | delta |
+|---|---|---|---|
+| hot, 1 thread | 5.59 | 3.24 | -42% |
+| hot, 12 threads | 8.89 | 5.20 | -42% |
+| cold, 1 thread | 5.53 | 3.23 | -42% |
+| cold, 12 threads | 8.95 | 4.34 | -52% |
+
+That pod's cpu-tall rows read the find 58 to 64% slower at 774c209e: the range rule had not landed yet, and the tall read below is the record for it.
+
+Same pod, `cpu5g` EPYC 4564P, 12 threads, main 3d01dc97 against the branch at 279bacf3, the SSE2 draft that preceded the AVX2 dispatch, three reps, min:
+
+| cell | grower | reps | main train (find / populate) | branch train (find / populate) | train delta | find delta | r2 |
+|---|---|---|---|---|---|---|---|
+| cpu-wide | depthwise | 3/3 | 68.65 (30.83 / 37.15) | 65.73 (27.63 / 37.42) | -4.2% | -10.4% | same |
+| cpu-wide | leafwise | 3/3 | 55.86 (25.88 / 29.53) | 57.76 (27.73 / 29.56) | +3.4% | +7.1% | same |
+| cpu-wide | levelwise | 3/3 | 119.45 (76.21 / 42.58) | 119.14 (76.03 / 42.39) | -0.3% | -0.2% | same |
+| cpu-tall | depthwise | 3/3 | 10.00 (0.42 / 7.14) | 11.04 (1.08 / 7.30) | +10.4% | +157.1% | same |
+| cpu-tall | leafwise | 3/3 | 10.55 (0.43 / 7.37) | 11.14 (1.07 / 7.30) | +5.6% | +148.8% | same |
+| cpu-tall | levelwise | 3/3 | 8.99 (0.55 / 6.51) | 9.03 (0.55 / 6.53) | +0.5% | +0.0% | same |
+
+| microbench | main ns/cell | branch ns/cell | delta |
+|---|---|---|---|
+| hot, 1 thread | 3.23 | 3.22 | -0% |
+| hot, 12 threads | 4.75 | 5.47 | +15% |
+| cold, 1 thread | 3.19 | 3.41 | +7% |
+| cold, 12 threads | 4.67 | 4.99 | +7% |
+
+The SSE2 draft is the refutation that shaped the dispatch: at the generic x86-64 baseline the eight-wide selects lower to and/andnot/or triples, the kernel issues more micro-ops per cell than the scalar scan, and under SMT it loses what the scalar scan's latency-bound chains hide, so a host without AVX2 keeps the scalar scan. The same table's cpu-tall rows read the find 2.5x slower for a second reason: 48 ranges over 128 features put three features in each range, so the kernel ran five lanes idle; a range now holds at least one lane group.
+
+Same pod, cpu-tall after the range rule, `cpu5g` EPYC 4564P again, three reps on the tall cells and one on the wide, main 3d01dc97 against the branch at 82370a58:
+
+| cell | grower | reps | main train (find / populate) | branch train (find / populate) | train delta | find delta | r2 |
+|---|---|---|---|---|---|---|---|
+| cpu-wide | depthwise | 1/1 | 68.66 (30.76 / 37.24) | 54.87 (16.65 / 37.60) | -20.1% | -45.9% | same |
+| cpu-wide | leafwise | 1/1 | 56.02 (25.92 / 29.66) | 48.48 (17.89 / 30.14) | -13.5% | -31.0% | same |
+| cpu-tall | depthwise | 3/3 | 9.95 (0.42 / 7.10) | 10.24 (0.25 / 7.30) | +2.9% | -40.5% | same |
+| cpu-tall | leafwise | 3/3 | 10.49 (0.42 / 7.34) | 10.25 (0.25 / 7.30) | -2.3% | -40.5% | same |
+| cpu-tall | levelwise | 1/1 | 9.07 (0.55 / 6.57) | 9.00 (0.55 / 6.52) | -0.8% | +0.0% | same |
+
+| microbench | main ns/cell | branch ns/cell | delta |
+|---|---|---|---|
+| hot, 1 thread | 3.20 | 1.76 | -45% |
+| hot, 12 threads | 4.71 | 2.69 | -43% |
+| cold, 1 thread | 3.19 | 1.89 | -41% |
+| cold, 12 threads | 4.74 | 2.81 | -41% |
+
+M2 (8 threads, 4 performance and 4 efficiency cores): hot microbench 16384 features x 128 rows, 4.29 to 3.14 ns per cell at one thread and 6.35 to 5.07 at eight; cpu-wide depthwise at 10 rounds, interleaved min, 14.61 (find 8.39) to 11.63 (find 6.32).
+
+**Rejected.** A single division per candidate (the two scores over a common denominator): one rounding away from the scalar gain, so a near-tie can flip and the hashes move; not bit-identical, not taken. A reciprocal with Newton refinement: the same objection. The loop vectorizer on a plain eight-lane array loop: it declined the gathers and mixed-width selects, and `#pragma clang loop vectorize(enable)` is a hard error under `-Werror`, so the lanes are explicit vector types. Fusing the find into the level fill while a run is hot (decision 147's reopener as written): decision 151's microbench reads the find hot equal to cold at every size and thread count on both hosts, so there is no traffic to save there, and the arena still has to persist as the next level's parents. The occupancy-mask finder of decision 150 is not reopened by this: it skipped cells, this scans every cell faster, and the two could compose on the M2 where the mask won.
+
+**Reopener.** The level finder (`update_best_for_feature_for_level`, the levelwise grower's shared split) is still the scalar scan over parents and bins and reads 76 s of the cpu-wide levelwise fit on the 4564P; the same lockstep over eight features applies. AVX-512 on the Zen 4 EPYCs would halve the divide instruction count again with a second target clone. The populate bucket is now the larger half of every wide row on x86 (37 to 42 s of 66 to 69 on the 4564P), and its traffic is the arena's zero, subtract and write-back, which the next perf turn on the wide row should price against a leaf-at-a-time level transaction.
