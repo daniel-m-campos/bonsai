@@ -131,6 +131,7 @@ nav:
           - E4. The resident objective: learn/engine/4-the-resident-objective.md
           - E5. The ceiling: learn/engine/5-the-ceiling.md
           - E6. The wide-data wall: learn/engine/6-the-wide-data-wall.md
+          - E7. The lane finder: learn/engine/7-the-lane-finder.md
       - Determinism as a contract: learn/determinism-as-a-contract.md
       - The HPC tension: learn/the-hpc-tension.md
       - How we got here: learn/timeline.md

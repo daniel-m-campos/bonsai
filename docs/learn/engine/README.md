@@ -22,3 +22,4 @@ The rules are the compute-DAG method's, stated once in [guide chapter 11](../../
 - **E4. [The resident objective](4-the-resident-objective.md).** Deleting the per-tree host round-trip, and the round falls again from 104 to 64 ms.
 - **E5. [The ceiling](5-the-ceiling.md).** 500M rows by 100 features trained end to end on one 80GB card.
 - **E6. [The wide-data wall](6-the-wide-data-wall.md).** A production field report at 16k features, the cache arithmetic behind a 2-6x cliff, two wrong theories killed by an interleaved A/B, and the tiled layout that dissolves the trade-off.
+- **E7. [The lane finder](7-the-lane-finder.md).** A SIMD lesson told through the split finder: vector types, masks and selects, why eight lanes beat the divider's latency, why the SSE2 draft lost, and the AVX2 dispatch that made it bit-identical and 20 to 27% faster on wide data.
