@@ -87,20 +87,22 @@ inline void update_best(SplitOutput &best, double gain, feature_id_t fid, bin_id
     }
 }
 
+inline bool node_scans(SplitInput const &input, feature_id_t fid)
+{
+    return input.hists[fid].size() != 0 &&
+           (input.allowed.empty() || input.allowed[fid] != 0);
+}
+
 inline void update_best_for_feature_for_node(SplitInput const &input, feature_id_t fid,
                                              HistCell const   &node_totals,
                                              TreeConfig const &config,
                                              SplitOutput      &best)
 {
-    auto const &hist = input.hists[fid];
-    if (hist.size() == 0)
+    if (!node_scans(input, fid))
     {
         return;
     }
-    if (!input.allowed.empty() && input.allowed[fid] == 0)
-    {
-        return;
-    }
+    auto const  &hist         = input.hists[fid];
     auto const  &missing_cell = hist.missing();
     double const node_score   = score(node_totals.sum_grad, node_totals.sum_hess,
                                       config.lambda_l1, config.lambda_l2);
@@ -217,15 +219,23 @@ inline constexpr size_t k_scan_lanes = 8;
 
 inline constexpr HistCell k_idle_cell{};
 
+using lane_d = double __attribute__((ext_vector_type(k_scan_lanes)));
+using lane_i = int64_t __attribute__((ext_vector_type(k_scan_lanes)));
+
+struct LaneSums
+{
+    lane_d real_grad;
+    lane_d real_hess;
+    lane_d miss_grad;
+    lane_d miss_hess;
+};
+
 struct LaneGroup
 {
     std::array<HistCell const *, k_scan_lanes> cells{};
     std::array<size_t, k_scan_lanes>           cuts{};
     std::array<feature_id_t, k_scan_lanes>     fids{};
-    std::array<double, k_scan_lanes>           real_grad{};
-    std::array<double, k_scan_lanes>           real_hess{};
-    std::array<double, k_scan_lanes>           miss_grad{};
-    std::array<double, k_scan_lanes>           miss_hess{};
+    LaneSums                                   sums{};
     size_t                                     n        = 0;
     size_t                                     max_cuts = 0;
     bool                                       two_dirs = false;
@@ -234,6 +244,7 @@ struct LaneGroup
     {
         cells.fill(&k_idle_cell);
         cuts.fill(0);
+        sums     = {};
         n        = 0;
         max_cuts = 0;
         two_dirs = false;
@@ -250,18 +261,15 @@ struct LaneGroup
         cells[n]                = hist.cut_cells().data();
         cuts[n]                 = hist.prefix_size();
         fids[n]                 = fid;
-        real_grad[n]            = node_totals.sum_grad - missing.sum_grad;
-        real_hess[n]            = node_totals.sum_hess - missing.sum_hess;
-        miss_grad[n]            = missing.sum_grad;
-        miss_hess[n]            = missing.sum_hess;
+        sums.real_grad[n]       = node_totals.sum_grad - missing.sum_grad;
+        sums.real_hess[n]       = node_totals.sum_hess - missing.sum_hess;
+        sums.miss_grad[n]       = missing.sum_grad;
+        sums.miss_hess[n]       = missing.sum_hess;
         max_cuts                = std::max(max_cuts, cuts[n]);
         two_dirs                = two_dirs || !missing_empty(missing);
         ++n;
     }
 };
-
-using lane_d = double __attribute__((ext_vector_type(k_scan_lanes)));
-using lane_i = int64_t __attribute__((ext_vector_type(k_scan_lanes)));
 
 struct LaneBest
 {
@@ -270,12 +278,12 @@ struct LaneBest
     lane_i left = 0;
 
     [[gnu::always_inline]] void offer(lane_i const &feasible, lane_d const &candidate,
-                                      int64_t b, int64_t default_left, double min_gain)
+                                      int64_t b, bool default_left, double min_gain)
     {
         lane_i const better = feasible & (candidate > gain) & (candidate >= min_gain);
         gain                = better ? candidate : gain;
         bin                 = better ? lane_i(b) : bin;
-        left                = better ? lane_i(default_left) : left;
+        left                = better ? lane_i(default_left ? 1 : 0) : left;
     }
 };
 
@@ -304,25 +312,6 @@ lane_children_score(lane_d const &grad_left, lane_d const &hess_left,
     lane_score(grad_left, hess_left, l1, l2, left);
     lane_score(grad_right, hess_right, l1, l2, right);
     out = left + right;
-}
-
-struct LaneSums
-{
-    lane_d real_grad;
-    lane_d real_hess;
-    lane_d miss_grad;
-    lane_d miss_hess;
-};
-
-[[gnu::always_inline]] inline void lane_sums(LaneGroup const &g, LaneSums &s)
-{
-    for (size_t l = 0; l < k_scan_lanes; ++l)
-    {
-        s.real_grad[l] = g.real_grad[l];
-        s.real_hess[l] = g.real_hess[l];
-        s.miss_grad[l] = g.miss_grad[l];
-        s.miss_hess[l] = g.miss_hess[l];
-    }
 }
 
 struct LaneRule
@@ -367,17 +356,15 @@ template <bool DefaultLeft>
     lane_d children;
     lane_children_score(grad_left, hess_left, grad_right, hess_right, rule.l1, rule.l2,
                         children);
-    best.offer(feasible, children - rule.node_score, b, DefaultLeft ? 1 : 0,
-               rule.min_gain);
+    best.offer(feasible, children - rule.node_score, b, DefaultLeft, rule.min_gain);
 }
 
 template <bool TwoDirs>
 [[gnu::always_inline]] inline void scan_lanes_body(LaneGroup const &g,
                                                    LaneRule const &rule, LaneBest &best)
 {
-    LaneSums s;
-    lane_sums(g, s);
-    LanePrefix p{};
+    LaneSums const &s = g.sums;
+    LanePrefix      p{};
     for (size_t b = 0; b < g.max_cuts; ++b)
     {
         lane_d cell_grad;
@@ -403,34 +390,31 @@ template <bool TwoDirs>
 }
 
 #ifdef __x86_64__
+#define BONSAI_LANE_TARGET __attribute__((target("avx2")))
+#else
+#define BONSAI_LANE_TARGET
+#endif
+
 inline bool lanes_available()
 {
+#ifdef __x86_64__
     static bool const avx2 = []
     {
         __builtin_cpu_init();
         return __builtin_cpu_supports("avx2");
     }();
     return avx2;
-}
-
-template <bool TwoDirs>
-__attribute__((target("avx2"))) void scan_lanes(LaneGroup const &g,
-                                                LaneRule const &rule, LaneBest &best)
-{
-    scan_lanes_body<TwoDirs>(g, rule, best);
-}
 #else
-inline bool lanes_available()
-{
     return true;
+#endif
 }
 
 template <bool TwoDirs>
-void scan_lanes(LaneGroup const &g, LaneRule const &rule, LaneBest &best)
+BONSAI_LANE_TARGET void scan_lanes(LaneGroup const &g, LaneRule const &rule,
+                                   LaneBest &best)
 {
     scan_lanes_body<TwoDirs>(g, rule, best);
 }
-#endif
 
 inline void flush_lanes(LaneGroup &g, LaneRule const &rule, SplitOutput &best)
 {
@@ -465,8 +449,7 @@ inline bool scans_in_lanes(SplitInput const &input, feature_id_t fid,
                            TreeConfig const &config)
 {
     return lanes_available() && monotone_constraint_of(config, fid) == 0 &&
-           input.hists[fid].size() != 0 &&
-           (input.allowed.empty() || input.allowed[fid] != 0);
+           node_scans(input, fid);
 }
 
 SplitOutput scan_features(SplitInput const &input, feature_id_t f0, feature_id_t f1,
