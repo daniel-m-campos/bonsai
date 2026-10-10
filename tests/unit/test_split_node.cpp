@@ -333,6 +333,87 @@ TEST_CASE("HistogramNodeSplitFinder: min_data_in_leaf accepts when parent has "
 namespace
 {
 
+struct ScalarPrefix
+{
+    double   left_grad;
+    double   left_hess;
+    double   real_grad;
+    double   real_hess;
+    HistCell missing;
+};
+
+struct ScalarChildren
+{
+    double grad_left;
+    double hess_left;
+    double grad_right;
+    double hess_right;
+};
+
+ScalarChildren scalar_children(ScalarPrefix const &p, bool default_left)
+{
+    return {.grad_left = p.left_grad + (default_left ? p.missing.sum_grad : 0.0),
+            .hess_left = p.left_hess + (default_left ? p.missing.sum_hess : 0.0),
+            .grad_right =
+                (p.real_grad - p.left_grad) + (default_left ? 0.0 : p.missing.sum_grad),
+            .hess_right = (p.real_hess - p.left_hess) +
+                          (default_left ? 0.0 : p.missing.sum_hess)};
+}
+
+void scalar_offer(SplitOutput &best, ScalarChildren const &c, feature_id_t fid,
+                  bin_id_t b, bool default_left, TreeConfig const &cfg,
+                  double node_score)
+{
+    if (c.hess_left < cfg.min_child_hess || c.hess_right < cfg.min_child_hess)
+    {
+        return;
+    }
+    double const gain =
+        score(c.grad_left, c.hess_left, cfg.lambda_l1, cfg.lambda_l2) +
+        score(c.grad_right, c.hess_right, cfg.lambda_l1, cfg.lambda_l2) - node_score;
+    if (gain > best.gain && gain >= cfg.min_gain_to_split)
+    {
+        best = {.gain         = gain,
+                .feature_id   = fid,
+                .bin_id       = b,
+                .default_left = default_left,
+                .valid        = true};
+    }
+}
+
+bool scalar_scannable(SplitInput const &node, feature_id_t fid)
+{
+    return node.hists[fid].size() != 0 &&
+           (node.allowed.empty() || node.allowed[fid] != 0);
+}
+
+void scalar_scan_feature(SplitInput const &node, feature_id_t fid,
+                         HistCell const &totals, TreeConfig const &cfg,
+                         double node_score, SplitOutput &best)
+{
+    Histogram const &hist       = node.hists[fid];
+    HistCell const  &missing    = hist.missing();
+    bool const       no_missing = missing.sum_grad == 0.0F && missing.sum_hess == 0.0F;
+    ScalarPrefix     p{.left_grad = 0.0,
+                       .left_hess = 0.0,
+                       .real_grad = totals.sum_grad - missing.sum_grad,
+                       .real_hess = totals.sum_hess - missing.sum_hess,
+                       .missing   = missing};
+    bin_id_t         b = 0;
+    for (HistCell const &cell : hist.cut_cells())
+    {
+        p.left_grad += cell.sum_grad;
+        p.left_hess += cell.sum_hess;
+        scalar_offer(best, scalar_children(p, true), fid, b, true, cfg, node_score);
+        if (!no_missing)
+        {
+            scalar_offer(best, scalar_children(p, false), fid, b, false, cfg,
+                         node_score);
+        }
+        ++b;
+    }
+}
+
 SplitOutput scalar_scan(SplitInput const &node, TreeConfig const &cfg)
 {
     NodeTotals const t = node.totals();
@@ -343,48 +424,9 @@ SplitOutput scalar_scan(SplitInput const &node, TreeConfig const &cfg)
     SplitOutput best;
     for (feature_id_t fid = 0; fid < node.hists.size(); ++fid)
     {
-        Histogram const &hist = node.hists[fid];
-        if (hist.size() == 0 || (!node.allowed.empty() && node.allowed[fid] == 0))
+        if (scalar_scannable(node, fid))
         {
-            continue;
-        }
-        HistCell const &missing   = hist.missing();
-        double const    real_grad = totals.sum_grad - missing.sum_grad;
-        double const    real_hess = totals.sum_hess - missing.sum_hess;
-        bool const no_missing = missing.sum_grad == 0.0F && missing.sum_hess == 0.0F;
-        double     left_grad  = 0.0;
-        double     left_hess  = 0.0;
-        bin_id_t   b          = 0;
-        for (HistCell const &cell : hist.cut_cells())
-        {
-            left_grad += cell.sum_grad;
-            left_hess += cell.sum_hess;
-            for (size_t d = 0; d < (no_missing ? 1U : 2U); ++d)
-            {
-                bool const   left = d == 0;
-                double const gL   = left_grad + (left ? missing.sum_grad : 0.0);
-                double const hL   = left_hess + (left ? missing.sum_hess : 0.0);
-                double const gR =
-                    (real_grad - left_grad) + (left ? 0.0 : missing.sum_grad);
-                double const hR =
-                    (real_hess - left_hess) + (left ? 0.0 : missing.sum_hess);
-                if (hL < cfg.min_child_hess || hR < cfg.min_child_hess)
-                {
-                    continue;
-                }
-                double const gain = score(gL, hL, cfg.lambda_l1, cfg.lambda_l2) +
-                                    score(gR, hR, cfg.lambda_l1, cfg.lambda_l2) -
-                                    node_score;
-                if (gain > best.gain && gain >= cfg.min_gain_to_split)
-                {
-                    best = {.gain         = gain,
-                            .feature_id   = fid,
-                            .bin_id       = b,
-                            .default_left = left,
-                            .valid        = true};
-                }
-            }
-            ++b;
+            scalar_scan_feature(node, fid, totals, cfg, node_score, best);
         }
     }
     return best;
