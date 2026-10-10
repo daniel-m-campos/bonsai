@@ -110,6 +110,12 @@ A multiclass booster's init scores are one per output or none: the score broadca
 
 - enforced by: [`MulticlassBooster: init scores of the wrong length are refused`](../tests/unit/test_booster.cpp)
 
+### lane-scan-matches-scalar-scan
+
+
+
+- enforced by: [`HistogramNodeSplitFinder: lanes match the scalar scan to the bit`](../tests/unit/test_split_node.cpp)
+
 ### leaf-budget-cannot-bind-is-depthwise
 
 A depth-D tree has at most 2^D leaves, so a budget of 0 or of 2^D and above never stops an expansion: every leaf with positive gain splits, the same set depthwise splits. Sibling histograms are paired by subtraction in both growers, so leaf values agree to float rounding.

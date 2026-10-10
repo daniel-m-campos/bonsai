@@ -1,5 +1,10 @@
+#include <algorithm>
+#include <array>
+#include <bit>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cstdint>
+#include <random>
 #include <utility>
 #include <vector>
 
@@ -323,4 +328,145 @@ TEST_CASE("HistogramNodeSplitFinder: min_data_in_leaf accepts when parent has "
 
     REQUIRE(s.valid);
     CHECK(s.bin_id == bin_id_t{0});
+}
+
+namespace
+{
+
+SplitOutput scalar_scan(SplitInput const &node, TreeConfig const &cfg)
+{
+    NodeTotals const t = node.totals();
+    HistCell const   totals{.sum_grad = static_cast<float>(t.sum_grad),
+                            .sum_hess = static_cast<float>(t.sum_hess)};
+    double const     node_score =
+        score(totals.sum_grad, totals.sum_hess, cfg.lambda_l1, cfg.lambda_l2);
+    SplitOutput best;
+    for (feature_id_t fid = 0; fid < node.hists.size(); ++fid)
+    {
+        Histogram const &hist = node.hists[fid];
+        if (hist.size() == 0 || (!node.allowed.empty() && node.allowed[fid] == 0))
+        {
+            continue;
+        }
+        HistCell const &missing   = hist.missing();
+        double const    real_grad = totals.sum_grad - missing.sum_grad;
+        double const    real_hess = totals.sum_hess - missing.sum_hess;
+        bool const no_missing = missing.sum_grad == 0.0F && missing.sum_hess == 0.0F;
+        double     left_grad  = 0.0;
+        double     left_hess  = 0.0;
+        bin_id_t   b          = 0;
+        for (HistCell const &cell : hist.cut_cells())
+        {
+            left_grad += cell.sum_grad;
+            left_hess += cell.sum_hess;
+            for (size_t d = 0; d < (no_missing ? 1U : 2U); ++d)
+            {
+                bool const   left = d == 0;
+                double const gL   = left_grad + (left ? missing.sum_grad : 0.0);
+                double const hL   = left_hess + (left ? missing.sum_hess : 0.0);
+                double const gR =
+                    (real_grad - left_grad) + (left ? 0.0 : missing.sum_grad);
+                double const hR =
+                    (real_hess - left_hess) + (left ? 0.0 : missing.sum_hess);
+                if (hL < cfg.min_child_hess || hR < cfg.min_child_hess)
+                {
+                    continue;
+                }
+                double const gain = score(gL, hL, cfg.lambda_l1, cfg.lambda_l2) +
+                                    score(gR, hR, cfg.lambda_l1, cfg.lambda_l2) -
+                                    node_score;
+                if (gain > best.gain && gain >= cfg.min_gain_to_split)
+                {
+                    best = {.gain         = gain,
+                            .feature_id   = fid,
+                            .bin_id       = b,
+                            .default_left = left,
+                            .valid        = true};
+                }
+            }
+            ++b;
+        }
+    }
+    return best;
+}
+
+SplitInput random_node(std::mt19937 &rng)
+{
+    size_t const n_features   = std::uniform_int_distribution<size_t>(1, 40)(rng);
+    size_t const rows         = std::uniform_int_distribution<size_t>(1, 400)(rng);
+    bool const   with_missing = rng() % 2 == 0;
+    SplitInput   node{.hists = {}, .rows = {}};
+    std::normal_distribution<float> grad(0.0F, 1.0F);
+    for (size_t f = 0; f < n_features; ++f)
+    {
+        if (rng() % 8 == 0)
+        {
+            node.hists.push_back(Histogram{});
+            continue;
+        }
+        size_t const n_bins = std::uniform_int_distribution<size_t>(2, 256)(rng);
+        Histogram    h{n_bins};
+        for (size_t r = 0; r < rows; ++r)
+        {
+            size_t bin = rng() % 4 == 0 ? std::min<size_t>(rng() % 3, n_bins - 2)
+                                        : rng() % (n_bins - 1);
+            if (with_missing && rng() % 5 == 0)
+            {
+                bin = n_bins - 1;
+            }
+            float const hess = rng() % 4 == 0 ? 0.0F : 1.0F;
+            h.add(static_cast<bin_id_t>(bin), grad(rng) * (rng() % 2 ? 1.0F : 100.0F),
+                  hess);
+        }
+        node.hists.push_back(std::move(h));
+    }
+    if (rng() % 3 == 0)
+    {
+        node.allowed.resize(n_features);
+        for (char &a : node.allowed)
+        {
+            a = static_cast<char>(rng() % 2);
+        }
+    }
+    return node;
+}
+
+TreeConfig random_rule(std::mt19937 &rng)
+{
+    TreeConfig cfg{.min_data_in_leaf = 0};
+    cfg.lambda_l1         = rng() % 2 ? 0.0F : 0.7F;
+    cfg.lambda_l2         = rng() % 3 ? 1.0F : 0.0F;
+    cfg.min_child_hess    = rng() % 2 ? 0.0F : 2.0F;
+    cfg.min_gain_to_split = rng() % 3 ? 0.0F : 0.25F;
+    return cfg;
+}
+
+bool same_split(SplitOutput const &a, SplitOutput const &b)
+{
+    return std::bit_cast<uint64_t>(a.gain) == std::bit_cast<uint64_t>(b.gain) &&
+           a.feature_id == b.feature_id && a.bin_id == b.bin_id &&
+           a.default_left == b.default_left && a.valid == b.valid;
+}
+
+} // namespace
+
+// INVARIANT: lane-scan-matches-scalar-scan
+TEST_CASE("HistogramNodeSplitFinder: lanes match the scalar scan to the bit",
+          "[split][edge]")
+{
+    std::mt19937 rng(2026);
+    size_t       valid = 0;
+    for (int trial = 0; trial < 400; ++trial)
+    {
+        SplitInput const           node = random_node(rng);
+        TreeConfig const           cfg  = random_rule(rng);
+        SplitOutput const          want = scalar_scan(node, cfg);
+        SplitOutput const          got  = HistogramNodeSplitFinder::find(node, cfg);
+        std::array<SplitOutput, 1> batched{};
+        HistogramNodeSplitFinder::find_parallel({&node, 1}, cfg, batched);
+        REQUIRE(same_split(got, want));
+        REQUIRE(same_split(batched[0], want));
+        valid += want.valid ? 1 : 0;
+    }
+    CHECK(valid > 300);
 }
