@@ -18,7 +18,7 @@ export RUNPOD_KEY="rpa_..."   # from https://console.runpod.io/user/settings
 PUB=$(cat ~/.ssh/id_ed25519.pub)
 ```
 
-- The image: `ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8` (public GHCR, built by the repo's `ci-image` workflow from `docker/ci.Dockerfile`). CUDA 12.8 toolkit, clang-21 + libc++, cmake/ninja + python 3.12 with numpy/nanobind/xgboost/lightgbm/catboost at `/opt/venv`, FetchContent deps pre-baked. Clone-to-benchmark in under 5 minutes. cuda12.8 covers sm_120 (Blackwell) natively, no toolkit side-install; L40S r550-driver pods still run its 12.8-built binaries via CUDA minor-version compatibility. Branches pinned to the old `cuda12.4` tag keep pulling it unchanged.
+- The image: `ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8` (public GHCR, built by the repo's `ci-image` workflow from `docker/ci.Dockerfile`). CUDA 12.8 toolkit, clang-21 + libc++, cmake/ninja + python 3.12 with numpy/nanobind/xgboost/lightgbm/catboost at `/opt/venv`, FetchContent deps pre-baked at `/opt/deps` and served through `BONSAI_DEPS_DIR` (decision 156). Clone-to-benchmark in under 5 minutes. cuda12.8 covers sm_120 (Blackwell) natively, no toolkit side-install; L40S r550-driver pods still run its 12.8-built binaries via CUDA minor-version compatibility. Branches pinned to the old `cuda12.4` tag keep pulling it unchanged.
 
 ## 1. Create a pod
 
@@ -177,6 +177,7 @@ The sweep is not optional: **an error-returning create can still have created a 
 | `Permission denied (publickey)` | Pod created without `PUBLIC_KEY` env | Delete + recreate; env cannot be added to a running pod |
 | `ssh.runpod.io`: "container not found" | Image lacks RunPod's proxy agent (bonsai-ci is plain sshd) | Use direct IP + port from the GraphQL port mapping |
 | `cmake: not found` on the pod | sshd didn't inherit Docker ENV | `export PATH=/opt/venv/bin:...` (section 3) |
+| Configure fails cloning a dependency: `could not read Username for 'https://github.com'`, `Failed to clone repository` | GitHub refuses anonymous git from the pod's address (a shared rate limit; the bonsai clone itself may have just succeeded) | `export BONSAI_DEPS_DIR=/opt/deps`: the image bakes the four FetchContent sources there and `CMakeLists.txt` serves them from that directory; images built after 2026-10-10 set the ENV themselves and the pod script exports it regardless |
 | SSH session dies with exit 255 during cleanup | Your `pkill -f` matched the session's own argv | Separate ssh calls or bracket the pattern |
 | `origin/<branch>` doesn't exist | Shallow single-branch clone | `git fetch origin <branch> && git checkout FETCH_HEAD` |
 | Everything ~2× slower than the last run, uniformly | Orphaned worker from a killed run still computing | `pgrep -af python`, kill PIDs, verify empty, re-run |
