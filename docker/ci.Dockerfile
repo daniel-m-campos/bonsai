@@ -42,13 +42,15 @@ RUN CUDACXX=/usr/local/cuda/bin/nvcc \
     uv pip install --python /opt/venv/bin/python --no-binary lightgbm \
         --config-setting cmake.define.USE_CUDA=ON lightgbm
 
-# FetchContent sources, pre-cloned: pods point CMake at these via
-# FETCHCONTENT_SOURCE_DIR_* instead of hitting GitHub per configure.
+# FetchContent sources, pre-cloned: CMakeLists.txt reads BONSAI_DEPS_DIR and
+# serves each declared dependency from here instead of hitting GitHub per
+# configure, which one address's rate limit can refuse.
 RUN mkdir -p /opt/deps \
     && git clone -q --depth 1 --branch v3.5.4 https://github.com/catchorg/Catch2.git /opt/deps/Catch2 \
     && git clone -q --depth 1 --branch v2.6.2 https://github.com/CLIUtils/CLI11.git /opt/deps/CLI11 \
     && git clone -q --depth 1 --branch v3.4.0 https://github.com/marzer/tomlplusplus.git /opt/deps/tomlplusplus \
     && git clone -q --depth 1 --branch v3.11.3 https://github.com/nlohmann/json.git /opt/deps/json
+ENV BONSAI_DEPS_DIR=/opt/deps
 
 # RunPod-compatible entrypoint: installs the PUBLIC_KEY env into
 # authorized_keys and runs sshd in the foreground for direct-IP SSH access.

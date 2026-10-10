@@ -44,6 +44,11 @@ PARITY_AXIS=gpu-tall
 HOST_TAG="${HOST_TAG:-}"
 
 export PATH=/opt/venv/bin:/root/.local/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# The image bakes the build's FetchContent sources at /opt/deps and names
+# them in BONSAI_DEPS_DIR; an image built before that ENV still carries the
+# clones, so the export covers it. Without them a configure clones from
+# GitHub, which refused a pod's address once per release.
+export BONSAI_DEPS_DIR="${BONSAI_DEPS_DIR:-/opt/deps}"
 mkdir -p /root/standings
 YM=$(date -u +%Y-%m)
 QUOTA_FAIL=/root/standings/quota-fail.txt
