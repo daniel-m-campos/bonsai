@@ -229,33 +229,45 @@ endif()
 
 include(FetchContent)
 
+# A pre-cloned dependency tree serves every declared source, so a configure
+# never reaches GitHub: the CI image bakes one at /opt/deps and names it in
+# BONSAI_DEPS_DIR. A checkout at another tag than the one declared here is
+# ignored with a message and that dependency fetches as before.
+set(BONSAI_DEPS_DIR "$ENV{BONSAI_DEPS_DIR}" CACHE PATH
+    "Pre-cloned FetchContent sources, one subdirectory per dependency")
+
+function(bonsai_declare name subdir repository tag)
+    string(TOUPPER "${name}" upper)
+    set(baked "${BONSAI_DEPS_DIR}/${subdir}")
+    if(BONSAI_DEPS_DIR AND IS_DIRECTORY "${baked}" AND NOT FETCHCONTENT_SOURCE_DIR_${upper})
+        execute_process(
+            COMMAND git -C "${baked}" describe --tags --exact-match
+            OUTPUT_VARIABLE baked_tag OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(baked_tag STREQUAL tag)
+            set(FETCHCONTENT_SOURCE_DIR_${upper} "${baked}" CACHE PATH
+                "${name} ${tag} from BONSAI_DEPS_DIR")
+        else()
+            message(STATUS "${name}: ${baked} is at '${baked_tag}', not ${tag}; fetching ${tag}")
+        endif()
+    endif()
+    FetchContent_Declare(${name} GIT_REPOSITORY ${repository} GIT_TAG ${tag})
+endfunction()
+
 if(BONSAI_TESTS)
-    FetchContent_Declare(Catch2
-        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-        GIT_TAG        v3.5.4
-    )
+    bonsai_declare(Catch2 Catch2 https://github.com/catchorg/Catch2.git v3.5.4)
     FetchContent_MakeAvailable(Catch2)
 endif()
 
 # CLI parsing, header-only.
-FetchContent_Declare(CLI11
-    GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-    GIT_TAG        v2.6.2
-)
+bonsai_declare(CLI11 CLI11 https://github.com/CLIUtils/CLI11.git v2.6.2)
 
 # TOML config, header-only.
-FetchContent_Declare(tomlplusplus
-    GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
-    GIT_TAG        v3.4.0
-)
+bonsai_declare(tomlplusplus tomlplusplus https://github.com/marzer/tomlplusplus.git v3.4.0)
 
-# nlohmann/json — single-header, MIT, used for MessagePack model format
+# nlohmann/json, single-header, MIT, used for MessagePack model format
 # via to_msgpack / from_msgpack. No transitive deps.
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(nlohmann_json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG        v3.11.3
-)
+bonsai_declare(nlohmann_json json https://github.com/nlohmann/json.git v3.11.3)
 
 FetchContent_MakeAvailable(CLI11 tomlplusplus nlohmann_json)
 
