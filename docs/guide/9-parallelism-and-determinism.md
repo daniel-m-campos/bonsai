@@ -55,29 +55,43 @@ of configuration, never of scheduling.
   resolved count is part of the model's identity and a clamp would change
   the model bytes a container produces. Design notes in
   [the invariants](../invariants.md).
-- Histogram fill ([`src/grower.cpp`](../../src/grower.cpp)): the routing
-  is per node, not per bin width. u16 bins keep the feature-parallel
-  shape (`fill_columns`): each feature's histogram owned by one
-  thread, filled in row order, determinism by ownership. u8 bins take
-  that same fill whenever the node holds at least a quarter of the rows
-  (`k_col_fill_den = 4`), and only sparser u8 nodes take the row-wise
-  fill (`populate_many`/`fill_sparse`, decisions 49 and 105): *row
-  chunks* stream a row-major mirror, tiled into 2048-feature blocks, and
-  a node touched by more than one thread range owns a partial per extra
-  range, reduced in fixed range order; the partition derives from the
-  configured thread count, which is exactly where the fixed-count
-  contract comes from. So the dense nodes near the root stay
-  bit-identical at any thread count, and the contract narrows only for
-  the sparse nodes deeper in the tree.
+- Histogram fill ([`src/grower.cpp`](../../src/grower.cpp) and
+  [`src/fill/`](../../src/fill/)): the routing is per node, not per bin
+  width. u16 bins keep the feature-parallel shape (`fill_columns`): each
+  feature's histogram owned by one thread, filled in row order,
+  determinism by ownership. u8 bins take that same fill whenever the
+  node holds at least a quarter of the rows (`k_col_fill_den = 4`), and
+  only sparser u8 nodes take the row-wise fill (`populate_many`,
+  `fill_sparse`; decisions 49 and 105): *row chunks* stream a row-major
+  mirror, tiled into 2048-feature blocks and walked in runs of 512
+  features so a thread's small child and its sibling stay resident while
+  it zeroes, scatters and subtracts (decision 151), and a node touched
+  by more than one thread range owns a partial per extra range, reduced
+  in fixed range order. The leafwise grower takes that same level fill
+  whenever the node's histogram arena is under 2 MiB (decision 147) and
+  otherwise fills one node at a time, feature-parallel first and
+  row-blocked only when the row is too narrow to give every worker its
+  own cache line, with the blocks' partials reduced in ascending block
+  order. The partition derives from the configured thread count, which
+  is exactly where the fixed-count contract comes from. So the dense
+  nodes near the root stay bit-identical at any thread count, and the
+  contract narrows only for the sparse nodes deeper in the tree.
 - Split scan ([`src/split.cpp`](../../src/split.cpp)): the levelwise
   finder is feature-parallel, each feature finding its own best
   independently and the winners merging **serially in feature order**, so
-  gain ties break exactly as a serial scan would; the per-node finder
-  walks its features serially and inherits that tie-break outright.
-- Node-parallel split scan
-  ([`src/level_step.hpp`](../../src/level_step.hpp)): a level runs one
-  worker per frontier node (`LevelStep::host_find`), so each node's
-  serial scan is independent and nothing is shared between them.
+  gain ties break exactly as a serial scan would. The per-node finder
+  scans eight plain features at a time on vector lanes, every lane doing
+  the scalar scan's operations in the scalar scan's order, and merges
+  the lanes with the same strict-greater rule, so it is bit-identical to
+  the serial walk it replaced; a feature under a monotone constraint
+  takes the scalar scan between groups. How the lanes work is
+  [case E7](../learn/engine/7-the-lane-finder.md).
+- Node-parallel split scan ([`src/step/level.hpp`](../../src/step/level.hpp)):
+  the level step hands its whole frontier to `find_parallel`, which
+  spreads every node's feature ranges across the team and merges each
+  node's bests in feature order, so the top levels no longer idle most
+  of the workers on one node and the result is the serial scan's at any
+  thread count.
 - Row-parallel predict / gradients / scatter: one row, one thread, no
   shared accumulator.
 
