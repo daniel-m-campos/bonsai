@@ -99,7 +99,7 @@ most important optimization in histogram GBT.
 - **The subtraction trick**: `plan_level`/`build_children` route every
   split so only the *smaller* child is populated and the larger derives by
   cell-wise subtract with the parent's histograms *moved*, not copied
-  ([`src/level_step.hpp`](../../src/level_step.hpp)); the CUDA engine runs
+  ([`src/step/level.hpp`](../../src/step/level.hpp)); the CUDA engine runs
   the same plan with a subtract kernel on device histograms.
 
 ## Missing values

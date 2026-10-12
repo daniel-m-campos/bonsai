@@ -24,6 +24,18 @@ with $u$ the unit roundoff, and two runs of one fit differ in the last ulps. Int
 
 The entire backend is one CUDA C++ translation unit, [`src/cuda/histogram_engine.cu`](../../src/cuda/histogram_engine.cu) plus its kernel header [`src/cuda/detail/kernels.cuh`](../../src/cuda/detail/kernels.cuh), compiled by the project's own clang (`-x cuda`), not nvcc, same C++23, same libc++ as the rest of the build. Builds without CUDA link a stub that throws; `bonsai::cuda_available()` is the runtime predicate and the `cuda_*` growers are registered everywhere, so a GPU-trained model predicts fine on a CPU-only binary.
 
+The device context splits its resident memory into five planes, each a struct with its own lifetime ([`src/cuda/detail/device_context.cuh`](../../src/cuda/detail/device_context.cuh)):
+
+| Plane | Holds | Lifetime |
+|---|---|---|
+| `DeviceData` | the binned matrix | once per fit |
+| `GradientPlane` | per-tree gradients, interleaved to `float2` | once per tree |
+| `LevelPipeline` | rows, histograms, staging buffers | once per level |
+| `LeafPipeline` | the leafwise histogram slot pool and segment map | once per tree |
+| `ResidentPlane` | labels, scores, and resident-objective state | once per fit |
+
+Dividing by lifetime is what keeps an edge honest: an upload done once per fit must never be redone per tree, and a buffer's lifetime is its type's rather than a comment's. Naming the planes also makes the boundary crossings countable, which is what [chapter 11](11-performance-engineering.md)'s pricing rests on.
+
 Follow one fit through the transactions:
 
 - **Ingest**: [`cuda_ingest`](../../src/cuda/histogram_engine.cu) (decision 54): raw feature values stream to the device in ~64MB chunks and a kernel bins them with a `lower_bound` that reproduces the host `transform` *exactly*: same cuts, same comparisons, bit-identical bin ids. The product, an `IngestPlane`, rides on the `Dataset` as an opaque receipt; host binned columns are never materialized unless a host consumer asks. At 16M×100 this replaced 4.6s of host binning plus a 1.6GB upload with ~0.5–0.9s of transfer+kernel (host-dependent).
@@ -33,7 +45,9 @@ Follow one fit through the transactions:
 - **Histogram build**: the shared-memory chunked kernel for large children, a direct-to-global kernel for small ones (a full shared-memory pipeline per 40-row node is all overhead), then the subtract kernel for every larger sibling.
 - **`end_tree`**: the epilogue (decision 53): the host sends the finished tree's node-value table (a few KB); a kernel maps every row's resident leaf assignment to its training value; values and leaf ids come home in two bulk copies. Before this transaction existed, the host looped over 16M rows per tree.
 
-The host control plane between transactions is [`src/level_step.hpp`](../../src/level_step.hpp) and the growers, the same `plan_level`/`commit_children` logic the CPU path uses, because it *is* the CPU path's logic. When the device declines (a feature's bins exceed the shared-memory budget), the same grower runs the same tree on the host engine mid-fit.
+The host control plane between transactions is [`src/step/level.hpp`](../../src/step/level.hpp) and the growers, the same `plan_level`/`commit_children` logic the CPU path uses, because it *is* the CPU path's logic. There is no fallback across that boundary, per node or per tree: an engine grows a whole tree resident or refuses it in `begin_root`, with an error naming the limit it hit (a feature's bins past the shared-memory budget, say) and the `device="cpu"` remedy. A fit that asked for a device never quietly trains somewhere else, which is the same standard the [benchmark protocol](../results/benchmark-protocol.md) holds the reference libraries to.
+
+What stays on the host stays there on purpose ([decision 41](../decisions.md)). Split decisions cross the bus down every level, because the grow loop must observe each level's outputs before opening the next; that pins one small device-to-host sync per level, about 800 per fit, each 10 to 20 microseconds on a healthy host. Mapper fitting stays host-side too: its cut points come from a seeded RNG stream, and reproducing that stream on the device would risk the determinism identity for no gain. The cost of the seams is the two things they forbid, a cross-plane fallback and a placement move that changes accumulation order or precision; what they buy is that every model bonsai ships is either bit-reproducible or provably within `1e-4` of the model that is ([determinism](../learn/determinism-as-a-contract.md)).
 
 What this buys is measured on [the perf standings](../results/results/perf.md), which own the digits and are refreshed with each release. At the gpu-tall scenario every bonsai device plane finishes the fit ahead of the reference GPU trainer it is paired with, in about a third of the peak host memory. Much of that margin is ingest rather than boosting: bonsai bins on the device, where the references sketch on the host and ship the result over the bus. The path from 3× slower to ahead is [chapter 11](11-performance-engineering.md).
 

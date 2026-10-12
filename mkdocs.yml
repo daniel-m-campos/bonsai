@@ -138,7 +138,6 @@ nav:
           - C2. Dividing the work: learn/cpu/2-dividing-the-work.md
           - C3. Coordination costs: learn/cpu/3-coordination-costs.md
       - Determinism as a contract: learn/determinism-as-a-contract.md
-      - The HPC tension: learn/the-hpc-tension.md
       - How we got here: learn/timeline.md
   - API:
       - Install: api/install.md
