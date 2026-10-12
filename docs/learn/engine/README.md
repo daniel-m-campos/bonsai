@@ -4,7 +4,7 @@ This track is how an engine whose planes are measured in [code metrics](../../re
 
 ## What this is
 
-The algorithm track teaches how gradient boosting works. This track teaches how bonsai got fast. It is HPC pedagogy told case-method, like a college class. Each chapter is one real engineering episode from the project record, built up slowly, with the discipline as the through-line. The losses and the refutations are the curriculum, not the footnotes.
+The algorithm track teaches how gradient boosting works. This track teaches how bonsai got fast, and the [CPU track](../cpu/README.md) teaches the machine model under the host plane, from the cache line up. It is HPC pedagogy told case-method, like a college class. Each chapter is one real engineering episode from the project record, built up slowly, with the discipline as the through-line. The losses and the refutations are the curriculum, not the footnotes.
 
 ## Who it is for
 
