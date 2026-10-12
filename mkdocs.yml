@@ -132,6 +132,11 @@ nav:
           - E5. The ceiling: learn/engine/5-the-ceiling.md
           - E6. The wide-data wall: learn/engine/6-the-wide-data-wall.md
           - E7. The lane finder: learn/engine/7-the-lane-finder.md
+      - The CPU track:
+          - learn/cpu/README.md
+          - C1. Cache awareness: learn/cpu/1-cache-awareness.md
+          - C2. Dividing the work: learn/cpu/2-dividing-the-work.md
+          - C3. Coordination costs: learn/cpu/3-coordination-costs.md
       - Determinism as a contract: learn/determinism-as-a-contract.md
       - The HPC tension: learn/the-hpc-tension.md
       - How we got here: learn/timeline.md
