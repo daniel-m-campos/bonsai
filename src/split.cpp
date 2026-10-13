@@ -341,22 +341,50 @@ struct LanePrefix
     lane_i active;
 };
 
+struct LaneCandidate
+{
+    lane_i feasible;
+    lane_d children;
+};
+
 template <bool DefaultLeft>
-[[gnu::always_inline]] inline void offer_direction(LaneBest &best, LaneSums const &s,
-                                                   LanePrefix const &p,
-                                                   LaneRule const &rule, int64_t b)
+[[gnu::always_inline]] inline void
+lane_candidate(LaneSums const &s, LanePrefix const &p, LaneRule const &rule,
+               LaneCandidate &c)
 {
     lane_d const none       = 0.0;
     lane_d const grad_left  = p.left_grad + (DefaultLeft ? s.miss_grad : none);
     lane_d const hess_left  = p.left_hess + (DefaultLeft ? s.miss_hess : none);
     lane_d const grad_right = p.right_grad + (DefaultLeft ? none : s.miss_grad);
     lane_d const hess_right = p.right_hess + (DefaultLeft ? none : s.miss_hess);
-    lane_i const feasible =
+    c.feasible =
         p.active & ~((hess_left < rule.min_hess) | (hess_right < rule.min_hess));
-    lane_d children;
     lane_children_score(grad_left, hess_left, grad_right, hess_right, rule.l1, rule.l2,
-                        children);
-    best.offer(feasible, children - rule.node_score, b, DefaultLeft, rule.min_gain);
+                        c.children);
+}
+
+template <bool DefaultLeft>
+[[gnu::always_inline]] inline void offer_direction(LaneBest &best, LaneSums const &s,
+                                                   LanePrefix const &p,
+                                                   LaneRule const &rule, int64_t b)
+{
+    LaneCandidate c;
+    lane_candidate<DefaultLeft>(s, p, rule, c);
+    best.offer(c.feasible, c.children - rule.node_score, b, DefaultLeft, rule.min_gain);
+}
+
+[[gnu::always_inline]] inline void gather_cells(LaneGroup const &g, size_t b,
+                                                lane_d &cell_grad, lane_d &cell_hess,
+                                                lane_i &active)
+{
+    for (size_t l = 0; l < k_scan_lanes; ++l)
+    {
+        bool const     in   = b < g.cuts[l];
+        HistCell const cell = g.cells[l][in ? b : 0];
+        cell_grad[l]        = in ? cell.sum_grad : 0.0F;
+        cell_hess[l]        = in ? cell.sum_hess : 0.0F;
+        active[l]           = in ? -1 : 0;
+    }
 }
 
 template <bool TwoDirs>
@@ -369,14 +397,7 @@ template <bool TwoDirs>
     {
         lane_d cell_grad;
         lane_d cell_hess;
-        for (size_t l = 0; l < k_scan_lanes; ++l)
-        {
-            bool const     in   = b < g.cuts[l];
-            HistCell const cell = g.cells[l][in ? b : 0];
-            cell_grad[l]        = in ? cell.sum_grad : 0.0F;
-            cell_hess[l]        = in ? cell.sum_hess : 0.0F;
-            p.active[l]         = in ? -1 : 0;
-        }
+        gather_cells(g, b, cell_grad, cell_hess, p.active);
         p.left_grad += cell_grad;
         p.left_hess += cell_hess;
         p.right_grad = s.real_grad - p.left_grad;
@@ -385,6 +406,53 @@ template <bool TwoDirs>
         if constexpr (TwoDirs)
         {
             offer_direction<false>(best, s, p, rule, static_cast<int64_t>(b));
+        }
+    }
+}
+
+using lane_f = float __attribute__((ext_vector_type(k_scan_lanes)));
+
+[[gnu::always_inline]] inline void narrow_lanes(lane_d const &wide, lane_d &out)
+{
+    out = __builtin_convertvector(__builtin_convertvector(wide, lane_f), lane_d);
+}
+
+template <bool DefaultLeft>
+[[gnu::always_inline]] inline void
+accumulate_direction(lane_d &acc, LaneSums const &s, LanePrefix const &p,
+                     LaneRule const &rule, double parent_score)
+{
+    LaneCandidate c;
+    lane_candidate<DefaultLeft>(s, p, rule, c);
+    acc += c.feasible ? c.children : lane_d(parent_score);
+}
+
+template <bool TwoDirs>
+[[gnu::always_inline]] inline void
+accumulate_lanes_body(LaneGroup const &g, LaneRule const &rule, double parent_score,
+                      lane_d *acc)
+{
+    constexpr size_t n_dirs = TwoDirs ? 2 : 1;
+    LaneSums const  &s      = g.sums;
+    LanePrefix       p{};
+    lane_d           sum_grad = 0.0;
+    lane_d           sum_hess = 0.0;
+    for (size_t b = 0; b < g.max_cuts; ++b)
+    {
+        lane_d cell_grad;
+        lane_d cell_hess;
+        gather_cells(g, b, cell_grad, cell_hess, p.active);
+        sum_grad += cell_grad;
+        sum_hess += cell_hess;
+        narrow_lanes(sum_grad, p.left_grad);
+        narrow_lanes(sum_hess, p.left_hess);
+        p.right_grad = s.real_grad - p.left_grad;
+        p.right_hess = s.real_hess - p.left_hess;
+        accumulate_direction<true>(acc[b * n_dirs], s, p, rule, parent_score);
+        if constexpr (TwoDirs)
+        {
+            accumulate_direction<false>(acc[(b * n_dirs) + 1], s, p, rule,
+                                        parent_score);
         }
     }
 }
@@ -416,6 +484,22 @@ BONSAI_LANE_TARGET void scan_lanes(LaneGroup const &g, LaneRule const &rule,
     scan_lanes_body<TwoDirs>(g, rule, best);
 }
 
+inline void merge_lanes(LaneBest const &lanes, std::span<feature_id_t const> fids,
+                        SplitOutput &best)
+{
+    for (size_t l = 0; l < fids.size(); ++l)
+    {
+        if (lanes.gain[l] > best.gain)
+        {
+            best = {.gain         = lanes.gain[l],
+                    .feature_id   = fids[l],
+                    .bin_id       = static_cast<bin_id_t>(lanes.bin[l]),
+                    .default_left = lanes.left[l] != 0,
+                    .valid        = true};
+        }
+    }
+}
+
 inline void flush_lanes(LaneGroup &g, LaneRule const &rule, SplitOutput &best)
 {
     if (g.n == 0)
@@ -431,18 +515,117 @@ inline void flush_lanes(LaneGroup &g, LaneRule const &rule, SplitOutput &best)
     {
         scan_lanes<false>(g, rule, lanes);
     }
-    for (size_t l = 0; l < g.n; ++l)
+    merge_lanes(lanes, std::span(g.fids).first(g.n), best);
+    g.clear();
+}
+
+struct LevelGroup
+{
+    std::array<feature_id_t, k_scan_lanes> fids{};
+    std::array<size_t, k_scan_lanes>       cuts{};
+    size_t                                 n        = 0;
+    size_t                                 max_cuts = 0;
+    bool                                   two_dirs = false;
+};
+
+inline bool missing_anywhere(FrontierInput frontier, feature_id_t fid)
+{
+    return std::ranges::any_of(frontier, [fid](SplitInput const &parent)
+                               { return !missing_empty(parent.hists[fid].missing()); });
+}
+
+inline LevelGroup level_group(FrontierInput frontier, feature_id_t f0, feature_id_t f1)
+{
+    LevelGroup g;
+    for (feature_id_t fid = f0; fid < f1; ++fid)
     {
-        if (lanes.gain[l] > best.gain)
+        g.fids[g.n] = fid;
+        g.cuts[g.n] = frontier.front().hists[fid].prefix_size();
+        g.max_cuts  = std::max(g.max_cuts, g.cuts[g.n]);
+        g.two_dirs  = g.two_dirs || missing_anywhere(frontier, fid);
+        ++g.n;
+    }
+    return g;
+}
+
+template <bool TwoDirs>
+BONSAI_LANE_TARGET double
+accumulate_level(FrontierInput frontier, std::span<HistCell const> totals,
+                 LevelGroup const &lg, LaneRule const &rule, lane_d *acc)
+{
+    double sum_parent_score = 0.0;
+    for (size_t p = 0; p < frontier.size(); ++p)
+    {
+        LaneGroup g;
+        g.clear();
+        for (size_t l = 0; l < lg.n; ++l)
         {
-            best = {.gain         = lanes.gain[l],
-                    .feature_id   = g.fids[l],
-                    .bin_id       = static_cast<bin_id_t>(lanes.bin[l]),
-                    .default_left = lanes.left[l] != 0,
-                    .valid        = true};
+            g.add(lg.fids[l], frontier[p].hists[lg.fids[l]], totals[p]);
+        }
+        double const parent_score =
+            score(totals[p].sum_grad, totals[p].sum_hess, rule.l1, rule.l2);
+        sum_parent_score += parent_score;
+        accumulate_lanes_body<TwoDirs>(g, rule, parent_score, acc);
+    }
+    return sum_parent_score;
+}
+
+template <bool TwoDirs>
+BONSAI_LANE_TARGET void offer_level(LevelGroup const &lg, lane_d const *acc,
+                                    double sum_parent_score, LaneRule const &rule,
+                                    LaneBest &best)
+{
+    constexpr size_t n_dirs = TwoDirs ? 2 : 1;
+    for (size_t b = 0; b < lg.max_cuts; ++b)
+    {
+        lane_i active;
+        for (size_t l = 0; l < k_scan_lanes; ++l)
+        {
+            active[l] = b < lg.cuts[l] ? -1 : 0;
+        }
+        auto const bin = static_cast<int64_t>(b);
+        best.offer(active, acc[b * n_dirs] - sum_parent_score, bin, true,
+                   rule.min_gain);
+        if constexpr (TwoDirs)
+        {
+            best.offer(active, acc[(b * n_dirs) + 1] - sum_parent_score, bin, false,
+                       rule.min_gain);
         }
     }
-    g.clear();
+}
+
+template <bool TwoDirs>
+inline void scan_level_lanes(FrontierInput frontier, std::span<HistCell const> totals,
+                             LevelGroup const &lg, LaneRule const &rule, LaneBest &best)
+{
+    static thread_local std::vector<lane_d> acc;
+    acc.assign(lg.max_cuts * (TwoDirs ? 2 : 1), lane_d(0.0));
+    double const sum_parent_score =
+        accumulate_level<TwoDirs>(frontier, totals, lg, rule, acc.data());
+    offer_level<TwoDirs>(lg, acc.data(), sum_parent_score, rule, best);
+}
+
+SplitOutput scan_level_group(FrontierInput frontier, std::span<HistCell const> totals,
+                             feature_id_t f0, feature_id_t f1, TreeConfig const &config)
+{
+    LevelGroup const lg = level_group(frontier, f0, f1);
+    SplitOutput      best;
+    if (lg.max_cuts == 0)
+    {
+        return best;
+    }
+    LaneRule const rule = lane_rule(config, 0.0);
+    LaneBest       lanes;
+    if (lg.two_dirs)
+    {
+        scan_level_lanes<true>(frontier, totals, lg, rule, lanes);
+    }
+    else
+    {
+        scan_level_lanes<false>(frontier, totals, lg, rule, lanes);
+    }
+    merge_lanes(lanes, std::span(lg.fids).first(lg.n), best);
+    return best;
 }
 
 inline bool scans_in_lanes(SplitInput const &input, feature_id_t fid,
@@ -572,6 +755,21 @@ SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
     for (size_t p = 0; p < frontier.size(); ++p)
     {
         node_totals[p] = cell_totals(frontier[p]);
+    }
+    if (lanes_available())
+    {
+        size_t const groups = (n_features + k_scan_lanes - 1) / k_scan_lanes;
+        std::vector<SplitOutput> per_group(groups);
+        parallel::for_each_index(
+            groups,
+            [&](size_t g)
+            {
+                auto const f0 = static_cast<feature_id_t>(g * k_scan_lanes);
+                auto const f1 = static_cast<feature_id_t>(
+                    std::min<size_t>((g + 1) * k_scan_lanes, n_features));
+                per_group[g] = scan_level_group(frontier, node_totals, f0, f1, config);
+            });
+        return reduce_in_feature_order(per_group);
     }
     std::vector<SplitOutput> per_feature(n_features);
     parallel::for_each_index(n_features,
