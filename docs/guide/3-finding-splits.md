@@ -98,8 +98,12 @@ All of it is [`src/split.cpp`](../../src/split.cpp):
   leaf plane and the host level step drive `find_parallel`, so a node's
   features spread across every worker even when the frontier holds one
   node. There is also a *level* finder used by the levelwise grower which
-  scores one shared split summed across a whole frontier
-  (`update_best_for_feature_for_level`).
+  scores one shared split summed across a whole frontier: eight features
+  per task, each parent walked once on the same lanes, every lane adding
+  its parent's children score (or the parent's own score when the cut is
+  infeasible there) into a per-bin accumulator in parent order, and the
+  summed gains offered after the last parent. A host without AVX2 keeps
+  the per-feature scalar scan (`update_best_for_feature_for_level`).
 - Applying the winner: `split_node` in
   [`src/grower.cpp`](../../src/grower.cpp): a stable two-pass scatter of
   the parent's rows (bin-compare against the split bin, missing routed by
