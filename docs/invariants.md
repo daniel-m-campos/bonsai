@@ -110,6 +110,12 @@ A multiclass booster's init scores are one per output or none: the score broadca
 
 - enforced by: [`MulticlassBooster: init scores of the wrong length are refused`](../tests/unit/test_booster.cpp)
 
+### lane-level-scan-matches-scalar-scan
+
+
+
+- enforced by: [`HistogramLevelSplitFinder: lanes match the scalar level scan to the bit`](../tests/unit/test_split_level.cpp)
+
 ### lane-scan-matches-scalar-scan
 
 

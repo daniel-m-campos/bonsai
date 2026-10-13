@@ -1,6 +1,11 @@
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cstddef>
+#include <cstdint>
+#include <random>
 #include <utility>
 #include <vector>
 
@@ -19,6 +24,186 @@ SplitInput make_node_with_one_hist(Histogram h)
     SplitInput node{.hists = {}, .rows = {}};
     node.hists.push_back(std::move(h));
     return node;
+}
+
+struct ParentScan
+{
+    std::vector<HistCell> prefix;
+    HistCell              missing;
+    double                real_grad;
+    double                real_hess;
+    double                parent_score;
+};
+
+ParentScan parent_scan(SplitInput const &parent, feature_id_t fid,
+                       HistCell const &totals, TreeConfig const &cfg)
+{
+    Histogram const &hist    = parent.hists[fid];
+    HistCell const  &missing = hist.missing();
+    ParentScan       scan{.prefix       = std::vector<HistCell>(hist.prefix_size()),
+                          .missing      = missing,
+                          .real_grad    = totals.sum_grad - missing.sum_grad,
+                          .real_hess    = totals.sum_hess - missing.sum_hess,
+                          .parent_score = score(totals.sum_grad, totals.sum_hess,
+                                                cfg.lambda_l1, cfg.lambda_l2)};
+    hist.fill_prefix(scan.prefix);
+    return scan;
+}
+
+double children_or_parent(ParentScan const &p, size_t b, bool default_left,
+                          TreeConfig const &cfg)
+{
+    double const left_grad  = p.prefix[b].sum_grad;
+    double const left_hess  = p.prefix[b].sum_hess;
+    double const right_grad = p.real_grad - left_grad;
+    double const right_hess = p.real_hess - left_hess;
+    double const grad_left  = left_grad + (default_left ? p.missing.sum_grad : 0.0);
+    double const hess_left  = left_hess + (default_left ? p.missing.sum_hess : 0.0);
+    double const grad_right = right_grad + (!default_left ? p.missing.sum_grad : 0.0);
+    double const hess_right = right_hess + (!default_left ? p.missing.sum_hess : 0.0);
+    if (hess_left < cfg.min_child_hess || hess_right < cfg.min_child_hess)
+    {
+        return p.parent_score;
+    }
+    return score(grad_left, hess_left, cfg.lambda_l1, cfg.lambda_l2) +
+           score(grad_right, hess_right, cfg.lambda_l1, cfg.lambda_l2);
+}
+
+void scalar_level_offer(SplitOutput &best, double gain, feature_id_t fid, size_t b,
+                        bool default_left, TreeConfig const &cfg)
+{
+    if (gain > best.gain && gain >= cfg.min_gain_to_split)
+    {
+        best = {.gain         = gain,
+                .feature_id   = fid,
+                .bin_id       = static_cast<bin_id_t>(b),
+                .default_left = default_left,
+                .valid        = true};
+    }
+}
+
+SplitOutput scalar_level_feature(FrontierInput frontier, feature_id_t fid,
+                                 std::vector<HistCell> const &totals,
+                                 TreeConfig const            &cfg)
+{
+    SplitOutput  best;
+    size_t const n_bins = frontier.front().hists[fid].prefix_size();
+    if (n_bins == 0)
+    {
+        return best;
+    }
+    std::vector<ParentScan> scans;
+    double                  sum_parent_score = 0.0;
+    bool                    two_dirs         = false;
+    for (size_t p = 0; p < frontier.size(); ++p)
+    {
+        scans.push_back(parent_scan(frontier[p], fid, totals[p], cfg));
+        sum_parent_score += scans.back().parent_score;
+        HistCell const &m = scans.back().missing;
+        two_dirs          = two_dirs || m.sum_grad != 0.0F || m.sum_hess != 0.0F;
+    }
+    for (size_t b = 0; b < n_bins; ++b)
+    {
+        for (size_t d = 0; d < (two_dirs ? 2U : 1U); ++d)
+        {
+            double sum_children_score = 0.0;
+            for (ParentScan const &scan : scans)
+            {
+                sum_children_score += children_or_parent(scan, b, d == 0, cfg);
+            }
+            scalar_level_offer(best, sum_children_score - sum_parent_score, fid, b,
+                               d == 0, cfg);
+        }
+    }
+    return best;
+}
+
+SplitOutput scalar_level_scan(FrontierInput frontier, TreeConfig const &cfg)
+{
+    std::vector<HistCell> totals(frontier.size());
+    for (size_t p = 0; p < frontier.size(); ++p)
+    {
+        NodeTotals const t = frontier[p].totals();
+        totals[p]          = {.sum_grad = static_cast<float>(t.sum_grad),
+                              .sum_hess = static_cast<float>(t.sum_hess)};
+    }
+    SplitOutput best;
+    for (feature_id_t fid = 0; fid < frontier.front().hists.size(); ++fid)
+    {
+        SplitOutput const mine = scalar_level_feature(frontier, fid, totals, cfg);
+        if (mine.valid && mine.gain > best.gain)
+        {
+            best = mine;
+        }
+    }
+    return best;
+}
+
+std::vector<size_t> random_bins(std::mt19937 &rng, size_t n_features)
+{
+    std::vector<size_t> bins(n_features);
+    for (size_t &n : bins)
+    {
+        n = rng() % 8 == 0 ? 1 : std::uniform_int_distribution<size_t>(2, 256)(rng);
+    }
+    return bins;
+}
+
+SplitInput random_parent(std::mt19937 &rng, std::vector<size_t> const &bins,
+                         bool with_missing)
+{
+    size_t const rows = std::uniform_int_distribution<size_t>(0, 200)(rng);
+    SplitInput   node{.hists = {}, .rows = {}};
+    std::normal_distribution<float> grad(0.0F, 1.0F);
+    for (size_t const n_bins : bins)
+    {
+        Histogram h{n_bins};
+        for (size_t r = 0; r < rows && n_bins > 1; ++r)
+        {
+            size_t bin = rng() % 4 == 0 ? std::min<size_t>(rng() % 3, n_bins - 2)
+                                        : rng() % (n_bins - 1);
+            if (with_missing && rng() % 5 == 0)
+            {
+                bin = n_bins - 1;
+            }
+            float const hess = rng() % 4 == 0 ? 0.0F : 1.0F;
+            h.add(static_cast<bin_id_t>(bin), grad(rng) * (rng() % 2 ? 1.0F : 100.0F),
+                  hess);
+        }
+        node.hists.push_back(std::move(h));
+    }
+    return node;
+}
+
+std::vector<SplitInput> random_frontier(std::mt19937 &rng)
+{
+    size_t const n_parents    = std::uniform_int_distribution<size_t>(1, 24)(rng);
+    size_t const n_features   = std::uniform_int_distribution<size_t>(1, 20)(rng);
+    auto const   bins         = random_bins(rng, n_features);
+    bool const   with_missing = rng() % 2 == 0;
+    std::vector<SplitInput> frontier;
+    for (size_t p = 0; p < n_parents; ++p)
+    {
+        frontier.push_back(random_parent(rng, bins, with_missing));
+    }
+    return frontier;
+}
+
+TreeConfig random_level_rule(std::mt19937 &rng)
+{
+    TreeConfig cfg{.min_data_in_leaf = 0};
+    cfg.lambda_l1         = rng() % 2 ? 0.0F : 0.7F;
+    cfg.lambda_l2         = rng() % 3 ? 1.0F : 0.0F;
+    cfg.min_child_hess    = rng() % 2 ? 0.0F : 2.0F;
+    cfg.min_gain_to_split = rng() % 3 ? 0.0F : 0.25F;
+    return cfg;
+}
+
+bool same_split(SplitOutput const &a, SplitOutput const &b)
+{
+    return std::bit_cast<uint64_t>(a.gain) == std::bit_cast<uint64_t>(b.gain) &&
+           a.feature_id == b.feature_id && a.bin_id == b.bin_id &&
+           a.default_left == b.default_left && a.valid == b.valid;
 }
 
 } // namespace
@@ -264,4 +449,22 @@ TEST_CASE("gain and leaf math survive an empty node side at lambda_l2 = 0",
     CHECK(bounded_leaf_weight(3.0, 2.0, 0.0, 1.0, -1e30, 1e30) == Catch::Approx(-1.0));
     // An empty side under a monotone bound still lands inside the bound.
     CHECK(bounded_leaf_weight(0.0, 0.0, 0.0, 0.0, 0.5, 2.0) == 0.5);
+}
+
+// INVARIANT: lane-level-scan-matches-scalar-scan
+TEST_CASE("HistogramLevelSplitFinder: lanes match the scalar level scan to the bit",
+          "[split][level][edge]")
+{
+    std::mt19937 rng(2026);
+    size_t       valid = 0;
+    for (int trial = 0; trial < 300; ++trial)
+    {
+        std::vector<SplitInput> const frontier = random_frontier(rng);
+        TreeConfig const              cfg      = random_level_rule(rng);
+        SplitOutput const             want     = scalar_level_scan(frontier, cfg);
+        SplitOutput const got = HistogramLevelSplitFinder::find(frontier, cfg);
+        REQUIRE(same_split(got, want));
+        valid += want.valid ? 1 : 0;
+    }
+    CHECK(valid > 200);
 }
