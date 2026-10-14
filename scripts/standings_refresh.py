@@ -505,14 +505,14 @@ def supersede(args: argparse.Namespace) -> int:
     files = _stage_axis_files(src, axes)
     if files is None:
         return 1
+    ab = _stage_ab_files(src, files)
+    if ab is None:
+        return 1
     _restamp_and_render(
         axes,
         files,
-        _copy_evidence(src / "parity.jsonl", files.get(PARITY_AXIS), "parity"),
-        {
-            axis: _copy_evidence(src / AB_FILES[plane], files.get(axis), f"ab-{plane}")
-            for plane, axis in AB_AXES.items()
-        },
+        _copy_evidence(src / "parity.jsonl", _month_stamp(files.get(PARITY_AXIS)), "parity"),
+        ab,
     )
     verdict = _ab_verdicts(src)
     print(verdict or "A/B skipped (no ab-*.jsonl)")
@@ -619,12 +619,49 @@ def _row_host(path: pathlib.Path) -> str:
     return ""
 
 
-def _copy_evidence(path: pathlib.Path, axis_file: str | None, prefix: str) -> str | None:
-    """Copy ``path`` to RESULTS as ``<prefix>-<stamp>.jsonl``, dated from
-    the axis file it was measured beside; None when either is absent."""
-    if not axis_file or not path.exists():
+def _stage_ab_files(src: pathlib.Path, files: dict) -> dict | None:
+    """Copy each measured plane's A/B in, keyed by the axis it registers under.
+
+    An A/B is named by the release its new arm fitted, so a second release
+    inside one month cannot overwrite the first's rows and the claim gate
+    reads the entry that measured the cells it checks. None when a plane's
+    A/B is there but its rows carry no version to name it by.
+    """
+    staged = {}
+    for plane, axis in AB_AXES.items():
+        path = src / AB_FILES[plane]
+        if not files.get(axis) or not path.exists():
+            continue
+        version = _new_arm_version(path)
+        if version is None:
+            print(
+                f"ERROR: {path.name} carries no version on its new arm, so it "
+                "cannot be named by the release it measured",
+                file=sys.stderr,
+            )
+            return None
+        staged[axis] = _copy_evidence(path, version, f"ab-{plane}")
+    return staged
+
+
+def _new_arm_version(ab_path: pathlib.Path) -> str | None:
+    """The release the A/B's new arm fitted, without its +source suffix."""
+    version = check_standings.ab_versions(check_standings.ab_rows(ab_path)).get("new")
+    return version.split("+")[0] if version else None
+
+
+def _month_stamp(axis_file: str | None) -> str | None:
+    """The year and month an axis file is named by, or None without one."""
+    if not axis_file:
         return None
-    stamp = "-".join(pathlib.Path(axis_file).stem.split("-")[-2:])
+    return "-".join(pathlib.Path(axis_file).stem.split("-")[-2:])
+
+
+def _copy_evidence(path: pathlib.Path, stamp: str | None, prefix: str) -> str | None:
+    """Copy ``path`` to RESULTS as ``<prefix>-<stamp>.jsonl``; None when
+    either the file or the stamp is absent."""
+    if not stamp or not path.exists():
+        return None
     name = f"{prefix}-{stamp}.jsonl"
     shutil.copy2(path, RESULTS / name)
     return name

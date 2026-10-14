@@ -171,10 +171,11 @@ def _ab_row(arm: str, fit_s, peak_rss_gb, rows: int = 4000000, version: str | No
 
 
 def _three_arms(anchor, old, new, rss=4.0, rows: int = 4000000) -> list[dict]:
+    """The three arms at one cell, each naming the build it fitted."""
     return [
-        _ab_row("anchor", anchor, rss, rows),
-        _ab_row("old", old, rss, rows),
-        _ab_row("new", new, rss, rows),
+        _ab_row("anchor", anchor, rss, rows, "1.15.0"),
+        _ab_row("old", old, rss, rows, "2.0.0"),
+        _ab_row("new", new, rss, rows, "2.1.0+source"),
     ]
 
 
@@ -674,6 +675,10 @@ def test_supersede_notes_no_cpu_host_when_no_cpu_axis_ran(monkeypatch, tmp_path)
 
 
 def test_supersede_commits_each_plane_ab_with_its_tall_axis(monkeypatch, tmp_path):
+    """An A/B is named by the release its new arm fitted, not by the month
+    its axis file carries: 2.2.0, 2.3.0 and 2.4.0 all shipped in one month
+    and each overwrote the last's rows under the month name, so the claim
+    gate passed the later releases on the earlier entries."""
     repo = _fake_repo(monkeypatch, tmp_path)
     src = _session(tmp_path)
     _jsonl(src / "ab-gpu.jsonl", *_three_arms(10.0, 10.0, 10.1))
@@ -682,8 +687,8 @@ def test_supersede_commits_each_plane_ab_with_its_tall_axis(monkeypatch, tmp_pat
     assert standings_refresh.supersede(_args(src, "gpu-tall,cpu-tall")) == 0
 
     results = standings_refresh.RESULTS
-    assert (results / "ab-gpu-2026-09.jsonl").read_text() == ((src / "ab-gpu.jsonl").read_text())
-    assert (results / "ab-cpu-2026-09.jsonl").read_text() == ((src / "ab-cpu.jsonl").read_text())
+    assert (results / "ab-gpu-2.1.0.jsonl").read_text() == ((src / "ab-gpu.jsonl").read_text())
+    assert (results / "ab-cpu-2.1.0.jsonl").read_text() == ((src / "ab-cpu.jsonl").read_text())
     assert [json.loads(ln) for ln in (repo / "calls.jsonl").read_text().splitlines()] == [
         [
             "--axis",
@@ -693,13 +698,26 @@ def test_supersede_commits_each_plane_ab_with_its_tall_axis(monkeypatch, tmp_pat
             "--companion",
             "parity-2026-09.jsonl",
             "--ab",
-            "ab-gpu-2026-09.jsonl",
+            "ab-gpu-2.1.0.jsonl",
         ],
-        ["--axis", "cpu-tall", "--file", "cpu-tall-2026-09.jsonl", "--ab", "ab-cpu-2026-09.jsonl"],
+        ["--axis", "cpu-tall", "--file", "cpu-tall-2026-09.jsonl", "--ab", "ab-cpu-2.1.0.jsonl"],
     ]
     committed = _git(repo, "show", "--name-only", "--pretty=", "HEAD")
-    assert "benchmarks/results/ab-gpu-2026-09.jsonl" in committed
-    assert "benchmarks/results/ab-cpu-2026-09.jsonl" in committed
+    assert "benchmarks/results/ab-gpu-2.1.0.jsonl" in committed
+    assert "benchmarks/results/ab-cpu-2.1.0.jsonl" in committed
+
+
+def test_supersede_refuses_an_ab_whose_new_arm_names_no_release(monkeypatch, tmp_path, capsys):
+    """A versionless A/B cannot be named by what it measured, and staging it
+    under a guess would be the month collision again."""
+    _fake_repo(monkeypatch, tmp_path)
+    src = _session(tmp_path)
+    _jsonl(src / "ab-gpu.jsonl", _ab_row("old", 10.0, 4.0), _ab_row("new", 10.1, 4.0))
+
+    assert standings_refresh.supersede(_args(src, "gpu-tall")) == 1
+
+    assert "ab-gpu.jsonl carries no version on its new arm" in capsys.readouterr().err
+    assert not list(standings_refresh.RESULTS.glob("ab-*.jsonl"))
 
 
 def test_supersede_leaves_a_plane_ab_behind_when_its_axis_did_not_run(monkeypatch, tmp_path):
@@ -711,8 +729,8 @@ def test_supersede_leaves_a_plane_ab_behind_when_its_axis_did_not_run(monkeypatc
     assert standings_refresh.supersede(_args(src, "gpu-tall")) == 0
 
     results = standings_refresh.RESULTS
-    assert (results / "ab-gpu-2026-09.jsonl").exists()
-    assert not (results / "ab-cpu-2026-09.jsonl").exists()
+    assert (results / "ab-gpu-2.1.0.jsonl").exists()
+    assert not (results / "ab-cpu-2.1.0.jsonl").exists()
     assert [json.loads(ln) for ln in (repo / "calls.jsonl").read_text().splitlines()] == [
         [
             "--axis",
@@ -722,6 +740,6 @@ def test_supersede_leaves_a_plane_ab_behind_when_its_axis_did_not_run(monkeypatc
             "--companion",
             "parity-2026-09.jsonl",
             "--ab",
-            "ab-gpu-2026-09.jsonl",
+            "ab-gpu-2.1.0.jsonl",
         ]
     ]
