@@ -1,10 +1,7 @@
-#include <algorithm>
 #include <array>
-#include <bit>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
-#include <cstdint>
 #include <random>
 #include <utility>
 #include <vector>
@@ -13,18 +10,13 @@
 #include "bonsai/histogram.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
+#include "test_split_helpers.hpp"
 
-using namespace bonsai; // NOLINT
+using namespace bonsai;       // NOLINT
+using namespace bonsai::test; // NOLINT
 
 namespace
 {
-
-SplitInput make_node_with_one_hist(Histogram h)
-{
-    SplitInput node{.hists = {}, .rows = {}};
-    node.hists.push_back(std::move(h));
-    return node;
-}
 
 struct ParentScan
 {
@@ -69,19 +61,6 @@ double children_or_parent(ParentScan const &p, size_t b, bool default_left,
            score(grad_right, hess_right, cfg.lambda_l1, cfg.lambda_l2);
 }
 
-void scalar_level_offer(SplitOutput &best, double gain, feature_id_t fid, size_t b,
-                        bool default_left, TreeConfig const &cfg)
-{
-    if (gain > best.gain && gain >= cfg.min_gain_to_split)
-    {
-        best = {.gain         = gain,
-                .feature_id   = fid,
-                .bin_id       = static_cast<bin_id_t>(b),
-                .default_left = default_left,
-                .valid        = true};
-    }
-}
-
 SplitOutput scalar_level_feature(FrontierInput frontier, feature_id_t fid,
                                  std::vector<HistCell> const &totals,
                                  TreeConfig const            &cfg)
@@ -111,8 +90,8 @@ SplitOutput scalar_level_feature(FrontierInput frontier, feature_id_t fid,
             {
                 sum_children_score += children_or_parent(scan, b, d == 0, cfg);
             }
-            scalar_level_offer(best, sum_children_score - sum_parent_score, fid, b,
-                               d == 0, cfg);
+            offer_split(best, sum_children_score - sum_parent_score, fid,
+                        static_cast<bin_id_t>(b), d == 0, cfg);
         }
     }
     return best;
@@ -123,9 +102,7 @@ SplitOutput scalar_level_scan(FrontierInput frontier, TreeConfig const &cfg)
     std::vector<HistCell> totals(frontier.size());
     for (size_t p = 0; p < frontier.size(); ++p)
     {
-        NodeTotals const t = frontier[p].totals();
-        totals[p]          = {.sum_grad = static_cast<float>(t.sum_grad),
-                              .sum_hess = static_cast<float>(t.sum_hess)};
+        totals[p] = cell_totals(frontier[p]);
     }
     SplitOutput best;
     for (feature_id_t fid = 0; fid < frontier.front().hists.size(); ++fid)
@@ -152,25 +129,12 @@ std::vector<size_t> random_bins(std::mt19937 &rng, size_t n_features)
 SplitInput random_parent(std::mt19937 &rng, std::vector<size_t> const &bins,
                          bool with_missing)
 {
-    size_t const rows = std::uniform_int_distribution<size_t>(0, 200)(rng);
-    SplitInput   node{.hists = {}, .rows = {}};
-    std::normal_distribution<float> grad(0.0F, 1.0F);
+    size_t const  rows = std::uniform_int_distribution<size_t>(0, 200)(rng);
+    SplitInput    node{.hists = {}, .rows = {}};
+    HistogramDraw draw{rng, rows, with_missing};
     for (size_t const n_bins : bins)
     {
-        Histogram h{n_bins};
-        for (size_t r = 0; r < rows && n_bins > 1; ++r)
-        {
-            size_t bin = rng() % 4 == 0 ? std::min<size_t>(rng() % 3, n_bins - 2)
-                                        : rng() % (n_bins - 1);
-            if (with_missing && rng() % 5 == 0)
-            {
-                bin = n_bins - 1;
-            }
-            float const hess = rng() % 4 == 0 ? 0.0F : 1.0F;
-            h.add(static_cast<bin_id_t>(bin), grad(rng) * (rng() % 2 ? 1.0F : 100.0F),
-                  hess);
-        }
-        node.hists.push_back(std::move(h));
+        node.hists.push_back(draw(n_bins));
     }
     return node;
 }
@@ -189,34 +153,12 @@ std::vector<SplitInput> random_frontier(std::mt19937 &rng)
     return frontier;
 }
 
-TreeConfig random_level_rule(std::mt19937 &rng)
-{
-    TreeConfig cfg{.min_data_in_leaf = 0};
-    cfg.lambda_l1         = rng() % 2 ? 0.0F : 0.7F;
-    cfg.lambda_l2         = rng() % 3 ? 1.0F : 0.0F;
-    cfg.min_child_hess    = rng() % 2 ? 0.0F : 2.0F;
-    cfg.min_gain_to_split = rng() % 3 ? 0.0F : 0.25F;
-    return cfg;
-}
-
-bool same_split(SplitOutput const &a, SplitOutput const &b)
-{
-    return std::bit_cast<uint64_t>(a.gain) == std::bit_cast<uint64_t>(b.gain) &&
-           a.feature_id == b.feature_id && a.bin_id == b.bin_id &&
-           a.default_left == b.default_left && a.valid == b.valid;
-}
-
 } // namespace
 
 TEST_CASE("HistogramLevelSplitFinder: single-parent frontier reproduces node finder",
           "[split][level][single-parent]")
 {
-    // The obvious-cut fixture from test_split_node.cpp.
-    Histogram h{3};
-    h.add(0, -1.0, 1.0);
-    h.add(1, +1.0, 1.0);
-
-    auto                node = make_node_with_one_hist(std::move(h));
+    auto                node = obvious_cut_node();
     FrontierInput const span{&node, 1};
 
     TreeConfig cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
@@ -235,19 +177,10 @@ TEST_CASE("HistogramLevelSplitFinder: single-parent frontier reproduces node fin
 TEST_CASE("HistogramLevelSplitFinder: sums per-parent gains across the frontier",
           "[split][level][sum]")
 {
-    // Two identical parents; each has the obvious cut at bin 0.
-    // Per-parent gain = score(-1,1,1) + score(+1,1,1) - score(0,2,1) = 1.0.
+    // Two identical parents; each has the obvious cut at bin 0, gain 1.0.
     // Summed level gain = 2.0.
-    auto make_parent = []
-    {
-        Histogram h{3};
-        h.add(0, -1.0, 1.0);
-        h.add(1, +1.0, 1.0);
-        return make_node_with_one_hist(std::move(h));
-    };
-
-    auto const          frontier_arr = std::array{make_parent(), make_parent()};
-    FrontierInput const span         = frontier_arr;
+    auto const frontier_arr  = std::array{obvious_cut_node(), obvious_cut_node()};
+    FrontierInput const span = frontier_arr;
 
     TreeConfig cfg{.min_child_hess = 0.0F, .lambda_l2 = 1.0F, .min_data_in_leaf = 0};
 
@@ -288,7 +221,7 @@ TEST_CASE(
         h.add(0, -2.0, 1.0);
         h.add(1, 0.0, 1.0);
         h.add(2, 0.0, 1.0);
-        return make_node_with_one_hist(std::move(h));
+        return node_of(std::move(h));
     };
     auto make_b = []
     {
@@ -296,7 +229,7 @@ TEST_CASE(
         h.add(0, 0.0, 1.0);
         h.add(1, 0.0, 1.0);
         h.add(2, -4.0, 1.0);
-        return make_node_with_one_hist(std::move(h));
+        return node_of(std::move(h));
     };
 
     auto const          frontier_arr = std::array{make_a(), make_b()};
@@ -333,22 +266,15 @@ TEST_CASE("HistogramLevelSplitFinder: an infeasible parent scores zero, not a ve
     // Parent A and B both have the obvious cut at bin 0, but B's children
     // hess (0.5) is below min_child_hess (0.8): B contributes its parent
     // score and A's gain carries the cut.
-    auto make_a = []
-    {
-        Histogram h{3};
-        h.add(0, -1.0, 1.0);
-        h.add(1, +1.0, 1.0);
-        return make_node_with_one_hist(std::move(h));
-    };
     auto make_b = []
     {
         Histogram h{3};
         h.add(0, -1.0, 0.5);
         h.add(1, +1.0, 0.5);
-        return make_node_with_one_hist(std::move(h));
+        return node_of(std::move(h));
     };
 
-    auto const          frontier_arr = std::array{make_a(), make_b()};
+    auto const          frontier_arr = std::array{obvious_cut_node(), make_b()};
     FrontierInput const span         = frontier_arr;
 
     TreeConfig cfg{.min_child_hess = 0.8F, .lambda_l2 = 1.0F, .min_data_in_leaf = 0};
@@ -359,7 +285,7 @@ TEST_CASE("HistogramLevelSplitFinder: an infeasible parent scores zero, not a ve
     CHECK(s.feature_id == 0);
     CHECK(s.bin_id == 0);
     // Gain = A's children score minus A's parent score only (B nets zero).
-    auto const        only_a = std::array{make_a()};
+    auto const        only_a = std::array{obvious_cut_node()};
     SplitOutput const a_alone =
         HistogramLevelSplitFinder::find(FrontierInput{only_a}, cfg);
     CHECK(s.gain == Catch::Approx(a_alone.gain));
@@ -369,17 +295,9 @@ TEST_CASE(
     "HistogramLevelSplitFinder: min_gain_to_split rejects sub-threshold summed gain",
     "[split][level][min_gain_to_split]")
 {
-    // Two identical parents → summed gain = 2.0. Threshold 3.0 rejects.
-    auto make_parent = []
-    {
-        Histogram h{3};
-        h.add(0, -1.0, 1.0);
-        h.add(1, +1.0, 1.0);
-        return make_node_with_one_hist(std::move(h));
-    };
-
-    auto const          frontier_arr = std::array{make_parent(), make_parent()};
-    FrontierInput const span         = frontier_arr;
+    // Two identical parents, summed gain = 2.0. Threshold 3.0 rejects.
+    auto const frontier_arr  = std::array{obvious_cut_node(), obvious_cut_node()};
+    FrontierInput const span = frontier_arr;
 
     TreeConfig cfg{.min_child_hess    = 0.0F,
                    .min_gain_to_split = 3.0F,
@@ -411,7 +329,7 @@ TEST_CASE("HistogramLevelSplitFinder: degenerate prefix_size == 0 returns invali
     {
         Histogram h{1};
         h.add(0, 1.0, 1.0);
-        return make_node_with_one_hist(std::move(h));
+        return node_of(std::move(h));
     };
 
     auto const          frontier_arr = std::array{make_parent(), make_parent()};
@@ -460,7 +378,7 @@ TEST_CASE("HistogramLevelSplitFinder: lanes match the scalar level scan to the b
     for (int trial = 0; trial < 300; ++trial)
     {
         std::vector<SplitInput> const frontier = random_frontier(rng);
-        TreeConfig const              cfg      = random_level_rule(rng);
+        TreeConfig const              cfg      = random_rule(rng);
         SplitOutput const             want     = scalar_level_scan(frontier, cfg);
         SplitOutput const got = HistogramLevelSplitFinder::find(frontier, cfg);
         REQUIRE(same_split(got, want));

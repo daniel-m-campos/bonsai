@@ -1,9 +1,6 @@
-#include <algorithm>
 #include <array>
-#include <bit>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-#include <cstdint>
 #include <random>
 #include <utility>
 #include <vector>
@@ -12,21 +9,17 @@
 #include "bonsai/histogram.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
+#include "test_split_helpers.hpp"
 
-using namespace bonsai; // NOLINT
+using namespace bonsai;       // NOLINT
+using namespace bonsai::test; // NOLINT
 
 TEST_CASE("HistogramNodeSplitFinder: picks the obvious cut on a single feature",
           "[split][basic]")
 {
-    // 3 cells: bins 0,1 real; bin 2 missing (zero).
-    Histogram h{3};
-    h.add(0, -1.0, 1.0);
-    h.add(1, +1.0, 1.0);
-
-    TreeConfig cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
-    SplitInput node{.hists = {}, .rows = {}};
-    node.hists.push_back(std::move(h));
-    SplitOutput const s = HistogramNodeSplitFinder::find(node, cfg);
+    TreeConfig        cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
+    auto const        node = obvious_cut_node();
+    SplitOutput const s    = HistogramNodeSplitFinder::find(node, cfg);
 
     REQUIRE(s.valid);
     CHECK(s.feature_id == feature_id_t{0});
@@ -70,15 +63,12 @@ TEST_CASE("HistogramNodeSplitFinder: missing cell prefers default_left when its 
     // Real bins symmetric so the cut alone has zero net pull;
     // missing cell's grad matches the left bin's sign, so sending it
     // left (default_left=true) increases |g_left| and hence gain.
-    Histogram h{3};
-    h.add(0, -1.0, 1.0); // real
-    h.add(1, +1.0, 1.0); // real
+    Histogram h = obvious_cut_histogram();
     h.add(2, -1.0, 1.0); // missing (last)
 
-    TreeConfig cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
-    SplitInput node{.hists = {}, .rows = {}};
-    node.hists.push_back(std::move(h));
-    SplitOutput const s = HistogramNodeSplitFinder::find(node, cfg);
+    TreeConfig        cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
+    auto const        node = node_of(std::move(h));
+    SplitOutput const s    = HistogramNodeSplitFinder::find(node, cfg);
 
     REQUIRE(s.valid);
     CHECK(s.default_left == true);
@@ -97,15 +87,12 @@ TEST_CASE("HistogramNodeSplitFinder: missing cell prefers default_right when its
           "[split][missing]")
 {
     // Mirror of the prior test: missing grad matches right bin sign.
-    Histogram h{3};
-    h.add(0, -1.0, 1.0);
-    h.add(1, +1.0, 1.0);
+    Histogram h = obvious_cut_histogram();
     h.add(2, +1.0, 1.0); // missing
 
-    TreeConfig cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
-    SplitInput node{.hists = {}, .rows = {}};
-    node.hists.push_back(std::move(h));
-    SplitOutput const s = HistogramNodeSplitFinder::find(node, cfg);
+    TreeConfig        cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
+    auto const        node = node_of(std::move(h));
+    SplitOutput const s    = HistogramNodeSplitFinder::find(node, cfg);
 
     REQUIRE(s.valid);
     CHECK(s.default_left == false);
@@ -133,8 +120,7 @@ TEST_CASE(
 
     constexpr float lambda = 1.0F;
     TreeConfig      cfg{.lambda_l2 = lambda, .min_data_in_leaf = 0};
-    SplitInput      node{.hists = {}, .rows = {}};
-    node.hists.push_back(std::move(h));
+    auto const      node = node_of(std::move(h));
 
     SplitOutput const s = HistogramNodeSplitFinder::find(node, cfg);
 
@@ -175,10 +161,9 @@ TEST_CASE("HistogramNodeSplitFinder: skips the degenerate all-real-on-left cut",
     h.add(1, -1.0, 1.0);
     h.add(2, +5.0, 0.01); // missing: tiny hess, big grad
 
-    TreeConfig cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
-    SplitInput node{.hists = {}, .rows = {}};
-    node.hists.push_back(std::move(h));
-    SplitOutput const s = HistogramNodeSplitFinder::find(node, cfg);
+    TreeConfig        cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
+    auto const        node = node_of(std::move(h));
+    SplitOutput const s    = HistogramNodeSplitFinder::find(node, cfg);
 
     REQUIRE(s.valid);
     CHECK(s.bin_id == bin_id_t{0});
@@ -203,8 +188,7 @@ TEST_CASE(
     h.add(1, +1.0, 2.0); // real, heavy
     // bin 2: zero, missing: zero
 
-    SplitInput node{.hists = {}, .rows = {}};
-    node.hists.push_back(std::move(h));
+    auto const node = node_of(std::move(h));
 
     SplitOutput const guarded =
         HistogramNodeSplitFinder::find(node, TreeConfig{.min_data_in_leaf = 0});
@@ -231,8 +215,7 @@ TEST_CASE("HistogramNodeSplitFinder: lambda_l2 changes the chosen cut",
     h.add(2, -3.0, 4.0);  // bin 2
     // bin 3 missing, zero
 
-    SplitInput node{.hists = {}, .rows = {}};
-    node.hists.push_back(std::move(h));
+    auto const node = node_of(std::move(h));
 
     SplitOutput const lo = HistogramNodeSplitFinder::find(
         node,
@@ -247,28 +230,10 @@ TEST_CASE("HistogramNodeSplitFinder: lambda_l2 changes the chosen cut",
     CHECK(hi.bin_id == bin_id_t{1});
 }
 
-// The "obvious cut" fixture: 3-bin histogram, opposing grads at bins 0 and 1,
-// missing bin zero. Only one valid cut (bin_id=0); its gain equals
-//   score(-1, 1, 1) + score(+1, 1, 1) - score(0, 2, 1) = 0.5 + 0.5 - 0 = 1.0.
-namespace
-{
-
-SplitInput make_obvious_node()
-{
-    Histogram h{3};
-    h.add(0, -1.0, 1.0);
-    h.add(1, +1.0, 1.0);
-    SplitInput node{.hists = {}, .rows = {}};
-    node.hists.push_back(std::move(h));
-    return node;
-}
-
-} // namespace
-
 TEST_CASE("HistogramNodeSplitFinder: min_gain_to_split rejects sub-threshold cuts",
           "[split][min_gain_to_split]")
 {
-    auto       node = make_obvious_node();
+    auto       node = obvious_cut_node();
     TreeConfig cfg{.min_child_hess    = 0.0F,
                    .min_gain_to_split = 1.5F,
                    .lambda_l2         = 1.0F,
@@ -285,7 +250,7 @@ TEST_CASE(
     "HistogramNodeSplitFinder: min_gain_to_split accepts at-or-above-threshold cuts",
     "[split][min_gain_to_split]")
 {
-    auto       node = make_obvious_node();
+    auto       node = obvious_cut_node();
     TreeConfig cfg{.min_child_hess    = 0.0F,
                    .min_gain_to_split = 0.5F,
                    .lambda_l2         = 1.0F,
@@ -302,7 +267,7 @@ TEST_CASE("HistogramNodeSplitFinder: min_data_in_leaf rejects when parent has "
           "<2*threshold rows",
           "[split][min_data_in_leaf]")
 {
-    auto node = make_obvious_node();
+    auto node = obvious_cut_node();
     node.rows = std::vector<row_id_t>(9, 0); // size only; values don't matter
 
     TreeConfig cfg{
@@ -318,7 +283,7 @@ TEST_CASE("HistogramNodeSplitFinder: min_data_in_leaf accepts when parent has "
           ">=2*threshold rows",
           "[split][min_data_in_leaf]")
 {
-    auto node = make_obvious_node();
+    auto node = obvious_cut_node();
     node.rows = std::vector<row_id_t>(100, 0);
 
     TreeConfig cfg{
@@ -371,14 +336,7 @@ void scalar_offer(SplitOutput &best, ScalarChildren const &c, feature_id_t fid,
     double const gain =
         score(c.grad_left, c.hess_left, cfg.lambda_l1, cfg.lambda_l2) +
         score(c.grad_right, c.hess_right, cfg.lambda_l1, cfg.lambda_l2) - node_score;
-    if (gain > best.gain && gain >= cfg.min_gain_to_split)
-    {
-        best = {.gain         = gain,
-                .feature_id   = fid,
-                .bin_id       = b,
-                .default_left = default_left,
-                .valid        = true};
-    }
+    offer_split(best, gain, fid, b, default_left, cfg);
 }
 
 bool scalar_scannable(SplitInput const &node, feature_id_t fid)
@@ -416,10 +374,8 @@ void scalar_scan_feature(SplitInput const &node, feature_id_t fid,
 
 SplitOutput scalar_scan(SplitInput const &node, TreeConfig const &cfg)
 {
-    NodeTotals const t = node.totals();
-    HistCell const   totals{.sum_grad = static_cast<float>(t.sum_grad),
-                            .sum_hess = static_cast<float>(t.sum_hess)};
-    double const     node_score =
+    HistCell const totals = cell_totals(node);
+    double const   node_score =
         score(totals.sum_grad, totals.sum_hess, cfg.lambda_l1, cfg.lambda_l2);
     SplitOutput best;
     for (feature_id_t fid = 0; fid < node.hists.size(); ++fid)
@@ -434,11 +390,11 @@ SplitOutput scalar_scan(SplitInput const &node, TreeConfig const &cfg)
 
 SplitInput random_node(std::mt19937 &rng)
 {
-    size_t const n_features   = std::uniform_int_distribution<size_t>(1, 40)(rng);
-    size_t const rows         = std::uniform_int_distribution<size_t>(1, 400)(rng);
-    bool const   with_missing = rng() % 2 == 0;
-    SplitInput   node{.hists = {}, .rows = {}};
-    std::normal_distribution<float> grad(0.0F, 1.0F);
+    size_t const  n_features   = std::uniform_int_distribution<size_t>(1, 40)(rng);
+    size_t const  rows         = std::uniform_int_distribution<size_t>(1, 400)(rng);
+    bool const    with_missing = rng() % 2 == 0;
+    SplitInput    node{.hists = {}, .rows = {}};
+    HistogramDraw draw{rng, rows, with_missing};
     for (size_t f = 0; f < n_features; ++f)
     {
         if (rng() % 8 == 0)
@@ -446,21 +402,7 @@ SplitInput random_node(std::mt19937 &rng)
             node.hists.push_back(Histogram{});
             continue;
         }
-        size_t const n_bins = std::uniform_int_distribution<size_t>(2, 256)(rng);
-        Histogram    h{n_bins};
-        for (size_t r = 0; r < rows; ++r)
-        {
-            size_t bin = rng() % 4 == 0 ? std::min<size_t>(rng() % 3, n_bins - 2)
-                                        : rng() % (n_bins - 1);
-            if (with_missing && rng() % 5 == 0)
-            {
-                bin = n_bins - 1;
-            }
-            float const hess = rng() % 4 == 0 ? 0.0F : 1.0F;
-            h.add(static_cast<bin_id_t>(bin), grad(rng) * (rng() % 2 ? 1.0F : 100.0F),
-                  hess);
-        }
-        node.hists.push_back(std::move(h));
+        node.hists.push_back(draw(std::uniform_int_distribution<size_t>(2, 256)(rng)));
     }
     if (rng() % 3 == 0)
     {
@@ -471,23 +413,6 @@ SplitInput random_node(std::mt19937 &rng)
         }
     }
     return node;
-}
-
-TreeConfig random_rule(std::mt19937 &rng)
-{
-    TreeConfig cfg{.min_data_in_leaf = 0};
-    cfg.lambda_l1         = rng() % 2 ? 0.0F : 0.7F;
-    cfg.lambda_l2         = rng() % 3 ? 1.0F : 0.0F;
-    cfg.min_child_hess    = rng() % 2 ? 0.0F : 2.0F;
-    cfg.min_gain_to_split = rng() % 3 ? 0.0F : 0.25F;
-    return cfg;
-}
-
-bool same_split(SplitOutput const &a, SplitOutput const &b)
-{
-    return std::bit_cast<uint64_t>(a.gain) == std::bit_cast<uint64_t>(b.gain) &&
-           a.feature_id == b.feature_id && a.bin_id == b.bin_id &&
-           a.default_left == b.default_left && a.valid == b.valid;
 }
 
 } // namespace
