@@ -31,6 +31,20 @@ std::atomic<uint64_t> &identity_counter()
     static std::atomic<uint64_t> counter{1};
     return counter;
 }
+size_t label_width(size_t n_labels, size_t n_rows)
+{
+    if (n_labels == 0)
+    {
+        return 1;
+    }
+    if (n_rows == 0 || n_labels % n_rows != 0)
+    {
+        throw std::invalid_argument("Dataset: " + std::to_string(n_labels) +
+                                    " labels for " + std::to_string(n_rows) +
+                                    " rows; the label block is rows x targets");
+    }
+    return n_labels / n_rows;
+}
 } // namespace
 
 LabelsId Dataset::mint_labels_id()
@@ -47,12 +61,14 @@ Dataset Dataset::mint(std::shared_ptr<BinStore const> store, std::vector<float> 
                       std::vector<float> weights)
 {
     Dataset ds;
-    ds.rows_  = RowView::all(store->n_rows());
-    ds.store_ = std::move(store);
-    ds.id_    = mint_fit_id();
-    ds.meta_  = std::make_shared<Meta const>(Meta{.labels  = std::move(labels),
-                                                  .weights = std::move(weights),
-                                                  .id      = mint_labels_id()});
+    ds.rows_               = RowView::all(store->n_rows());
+    ds.store_              = std::move(store);
+    ds.id_                 = mint_fit_id();
+    size_t const n_targets = label_width(labels.size(), ds.store_->n_rows());
+    ds.meta_ = std::make_shared<Meta const>(Meta{.labels    = std::move(labels),
+                                                 .weights   = std::move(weights),
+                                                 .n_targets = n_targets,
+                                                 .id        = mint_labels_id()});
     return ds;
 }
 
@@ -150,11 +166,11 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     require_n_features(X.extent(1), mappers.size(), "the input to Dataset::bin");
     if (plane)
     {
-        return bin(labels.size(), X.extent(1), labels, mappers, cfg, std::move(plane),
+        return bin(X.extent(0), X.extent(1), labels, mappers, cfg, std::move(plane),
                    weights);
     }
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
-    size_t const                                  n = labels.size();
+    size_t const                                  n = X.extent(0);
     return mint_binned(n, mappers,
                        bin_columns(mappers, X.extent(1), n,
                                    [&](size_t f, size_t r) { return X[r, f]; }),
@@ -188,7 +204,7 @@ Dataset Dataset::from_bins(BinColumns cols, BinMappers mappers, floats_view labe
             (mappers.size() == 1 ? "" : "s") + " for " + std::to_string(n_features) +
             " binned columns");
     }
-    size_t const n_rows = labels.size();
+    size_t const n_rows = std::visit([](auto const &c) { return c[0].size(); }, cols);
     std::visit(
         [&](auto const &c)
         {
@@ -211,7 +227,8 @@ Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
 {
     std::vector<row_id_t> const ids =
         rows_.is_identity() ? std::vector<row_id_t>{} : rows_.materialize();
-    return mint(store_->select_columns(keep, ids), rows_.gather(meta_->labels),
+    return mint(store_->select_columns(keep, ids),
+                rows_.gather(meta_->labels, meta_->n_targets),
                 meta_->weights.empty() ? std::vector<float>{}
                                        : rows_.gather(meta_->weights));
 }
@@ -258,6 +275,11 @@ size_t Dataset::n_features() const
 floats_view Dataset::labels() const
 {
     return meta_->labels;
+}
+
+size_t Dataset::n_targets() const
+{
+    return meta_->n_targets;
 }
 
 floats_view Dataset::weights() const
