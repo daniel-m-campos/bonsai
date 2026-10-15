@@ -236,6 +236,12 @@ Oblivious trees densify into a perfect shape, so a trained model really does car
 
 - enforced by: [`a densified levelwise model carries dead slots nothing can reach`](../tests/unit/test_cuda_shap.cpp)
 
+### zero-parent-moves-no-level-split
+
+An oblivious level's shared split applies to every frontier node, so a node whose rows all routed one way leaves an empty child in the next frontier. That child contributes nothing to any candidate: its parent score and both children's scores are zero, so the level split chosen with it in the frontier is the split chosen without it, gain bit for bit.
+
+- enforced by: [`HistogramLevelSplitFinder: a parent of zeros moves no level split`](../tests/unit/test_split_level.cpp)
+
 ## Asserted in prose
 
 Two kinds sit here. Some cannot have a unit test: build flags, packaging matrices, claims about nondeterminism, decisions. Others are testable and simply are not marked yet, which makes this section the backlog: promoting one is writing its test and adding the marker. The `code:` lines name the source carrying each claim, and docs-check fails when one stops resolving.
