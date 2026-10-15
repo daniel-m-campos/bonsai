@@ -69,6 +69,18 @@ inline HistCell cell_totals(SplitInput const &input)
             .sum_hess = static_cast<float>(t.sum_hess)};
 }
 
+struct LevelParents
+{
+    FrontierInput             frontier;
+    std::span<size_t const>   populated;
+    std::span<HistCell const> totals;
+
+    SplitInput const &front() const
+    {
+        return frontier[populated.front()];
+    }
+};
+
 inline bool missing_empty(HistCell const &missing)
 {
     return missing.sum_grad == 0.0F && missing.sum_hess == 0.0F;
@@ -147,13 +159,12 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
     }
 }
 
-inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id_t fid,
-                                              std::vector<HistCell> const &node_totals,
-                                              TreeConfig const            &config,
-                                              SplitOutput                 &best)
+inline void update_best_for_feature_for_level(LevelParents const &lp, feature_id_t fid,
+                                              TreeConfig const &config,
+                                              SplitOutput      &best)
 {
-    size_t const n_parents = frontier.size();
-    size_t const n_bins    = frontier.front().hists[fid].prefix_size();
+    size_t const n_parents = lp.frontier.size();
+    size_t const n_bins    = lp.front().hists[fid].prefix_size();
     if (n_bins == 0)
     {
         return;
@@ -172,16 +183,16 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
     parent_score.resize(n_parents);
     double sum_parent_score  = 0.0;
     bool   all_missing_empty = true;
-    for (size_t p = 0; p < n_parents; ++p)
+    for (size_t const p : lp.populated)
     {
-        auto const &hist    = frontier[p].hists[fid];
+        auto const &hist    = lp.frontier[p].hists[fid];
         auto const &missing = hist.missing();
         hist.fill_prefix(std::span(&prefix[p, 0], n_bins));
-        parent_score[p] = score(node_totals[p].sum_grad, node_totals[p].sum_hess,
+        parent_score[p] = score(lp.totals[p].sum_grad, lp.totals[p].sum_hess,
                                 config.lambda_l1, config.lambda_l2);
         sum_parent_score += parent_score[p];
-        real_grad[p]      = node_totals[p].sum_grad - missing.sum_grad;
-        real_hess[p]      = node_totals[p].sum_hess - missing.sum_hess;
+        real_grad[p]      = lp.totals[p].sum_grad - missing.sum_grad;
+        real_hess[p]      = lp.totals[p].sum_hess - missing.sum_hess;
         all_missing_empty = all_missing_empty && missing_empty(missing);
     }
     size_t const n_dirs = all_missing_empty ? 1 : 2;
@@ -192,12 +203,12 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
         {
             bool const default_left       = d == 0;
             double     sum_children_score = 0.0;
-            for (size_t p = 0; p < n_parents; ++p)
+            for (size_t const p : lp.populated)
             {
-                auto const     &hist = frontier[p].hists[fid];
-                HistCell const &lp   = prefix[p, b];
+                auto const     &hist = lp.frontier[p].hists[fid];
+                HistCell const &left = prefix[p, b];
                 auto const      c =
-                    score_candidate(lp.sum_grad, lp.sum_hess, hist.missing(),
+                    score_candidate(left.sum_grad, left.sum_hess, hist.missing(),
                                     real_grad[p], real_hess[p], default_left, config);
                 // perf: An infeasible node contributes its parent score instead
                 // of vetoing the candidate; at depth >= 5 some frontier node is
@@ -528,42 +539,42 @@ struct LevelGroup
     bool                                   two_dirs = false;
 };
 
-inline bool missing_anywhere(FrontierInput frontier, feature_id_t fid)
+inline bool missing_anywhere(LevelParents const &lp, feature_id_t fid)
 {
-    return std::ranges::any_of(frontier, [fid](SplitInput const &parent)
-                               { return !missing_empty(parent.hists[fid].missing()); });
+    return std::ranges::any_of(
+        lp.populated, [&lp, fid](size_t p)
+        { return !missing_empty(lp.frontier[p].hists[fid].missing()); });
 }
 
-inline LevelGroup level_group(FrontierInput frontier, feature_id_t f0, feature_id_t f1)
+inline LevelGroup level_group(LevelParents const &lp, feature_id_t f0, feature_id_t f1)
 {
     LevelGroup g;
     for (feature_id_t fid = f0; fid < f1; ++fid)
     {
         g.fids[g.n] = fid;
-        g.cuts[g.n] = frontier.front().hists[fid].prefix_size();
+        g.cuts[g.n] = lp.front().hists[fid].prefix_size();
         g.max_cuts  = std::max(g.max_cuts, g.cuts[g.n]);
-        g.two_dirs  = g.two_dirs || missing_anywhere(frontier, fid);
+        g.two_dirs  = g.two_dirs || missing_anywhere(lp, fid);
         ++g.n;
     }
     return g;
 }
 
 template <bool TwoDirs>
-BONSAI_LANE_TARGET double
-accumulate_level(FrontierInput frontier, std::span<HistCell const> totals,
-                 LevelGroup const &lg, LaneRule const &rule, lane_d *acc)
+BONSAI_LANE_TARGET double accumulate_level(LevelParents const &lp, LevelGroup const &lg,
+                                           LaneRule const &rule, lane_d *acc)
 {
     double sum_parent_score = 0.0;
-    for (size_t p = 0; p < frontier.size(); ++p)
+    for (size_t const p : lp.populated)
     {
         LaneGroup g;
         g.clear();
         for (size_t l = 0; l < lg.n; ++l)
         {
-            g.add(lg.fids[l], frontier[p].hists[lg.fids[l]], totals[p]);
+            g.add(lg.fids[l], lp.frontier[p].hists[lg.fids[l]], lp.totals[p]);
         }
         double const parent_score =
-            score(totals[p].sum_grad, totals[p].sum_hess, rule.l1, rule.l2);
+            score(lp.totals[p].sum_grad, lp.totals[p].sum_hess, rule.l1, rule.l2);
         sum_parent_score += parent_score;
         accumulate_lanes_body<TwoDirs>(g, rule, parent_score, acc);
     }
@@ -595,20 +606,19 @@ BONSAI_LANE_TARGET void offer_level(LevelGroup const &lg, lane_d const *acc,
 }
 
 template <bool TwoDirs>
-inline void scan_level_lanes(FrontierInput frontier, std::span<HistCell const> totals,
-                             LevelGroup const &lg, LaneRule const &rule, LaneBest &best)
+inline void scan_level_lanes(LevelParents const &lp, LevelGroup const &lg,
+                             LaneRule const &rule, LaneBest &best)
 {
     static thread_local std::vector<lane_d> acc;
     acc.assign(lg.max_cuts * (TwoDirs ? 2 : 1), lane_d(0.0));
-    double const sum_parent_score =
-        accumulate_level<TwoDirs>(frontier, totals, lg, rule, acc.data());
+    double const sum_parent_score = accumulate_level<TwoDirs>(lp, lg, rule, acc.data());
     offer_level<TwoDirs>(lg, acc.data(), sum_parent_score, rule, best);
 }
 
-SplitOutput scan_level_group(FrontierInput frontier, std::span<HistCell const> totals,
-                             feature_id_t f0, feature_id_t f1, TreeConfig const &config)
+SplitOutput scan_level_group(LevelParents const &lp, feature_id_t f0, feature_id_t f1,
+                             TreeConfig const &config)
 {
-    LevelGroup const lg = level_group(frontier, f0, f1);
+    LevelGroup const lg = level_group(lp, f0, f1);
     SplitOutput      best;
     if (lg.max_cuts == 0)
     {
@@ -618,11 +628,11 @@ SplitOutput scan_level_group(FrontierInput frontier, std::span<HistCell const> t
     LaneBest       lanes;
     if (lg.two_dirs)
     {
-        scan_level_lanes<true>(frontier, totals, lg, rule, lanes);
+        scan_level_lanes<true>(lp, lg, rule, lanes);
     }
     else
     {
-        scan_level_lanes<false>(frontier, totals, lg, rule, lanes);
+        scan_level_lanes<false>(lp, lg, rule, lanes);
     }
     merge_lanes(lanes, std::span(lg.fids).first(lg.n), best);
     return best;
@@ -746,16 +756,23 @@ void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
 SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
                                             TreeConfig const &config)
 {
-    if (frontier.empty())
-    {
-        return {};
-    }
-    feature_id_t const    n_features = frontier.front().hists.size();
+    std::vector<size_t>   populated;
     std::vector<HistCell> node_totals(frontier.size());
     for (size_t p = 0; p < frontier.size(); ++p)
     {
-        node_totals[p] = cell_totals(frontier[p]);
+        if (!frontier[p].hists.empty())
+        {
+            populated.push_back(p);
+            node_totals[p] = cell_totals(frontier[p]);
+        }
     }
+    if (populated.empty())
+    {
+        return {};
+    }
+    LevelParents const lp{
+        .frontier = frontier, .populated = populated, .totals = node_totals};
+    feature_id_t const n_features = lp.front().hists.size();
     if (lanes_available())
     {
         size_t const groups = (n_features + k_scan_lanes - 1) / k_scan_lanes;
@@ -767,7 +784,7 @@ SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
                 auto const f0 = static_cast<feature_id_t>(g * k_scan_lanes);
                 auto const f1 = static_cast<feature_id_t>(
                     std::min<size_t>((g + 1) * k_scan_lanes, n_features));
-                per_group[g] = scan_level_group(frontier, node_totals, f0, f1, config);
+                per_group[g] = scan_level_group(lp, f0, f1, config);
             });
         return reduce_in_feature_order(per_group);
     }
@@ -776,8 +793,8 @@ SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
                              [&](size_t fid)
                              {
                                  update_best_for_feature_for_level(
-                                     frontier, static_cast<feature_id_t>(fid),
-                                     node_totals, config, per_feature[fid]);
+                                     lp, static_cast<feature_id_t>(fid), config,
+                                     per_feature[fid]);
                              });
     return reduce_in_feature_order(per_feature);
 }

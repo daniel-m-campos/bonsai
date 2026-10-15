@@ -323,6 +323,15 @@ class NodeHistograms
         return true;
     }
 
+    // A node with no rows carries no histograms: no slot table, no arena, so
+    // nothing zeroes, fills or scans on its behalf, and every reader asks
+    // empty() first (pins: level-fill-matches-lone-nodes).
+    void clear()
+    {
+        hists_.clear();
+        arena_ = {};
+    }
+
     void push_back(Histogram h)
     {
         hists_.push_back(std::move(h));

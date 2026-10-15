@@ -124,13 +124,22 @@ inline void settle_split(PendingSplit &p)
     }
 }
 
+inline bool carries_histograms(SplitInput const &node)
+{
+    return !node.hists.empty();
+}
+
 inline void finish_split_totals(PendingSplit &p, feature_id_t feature)
 {
     adopt_parent_histograms(p);
-    larger_child(p).hists[feature] -= smaller_child(p).hists[feature];
+    if (carries_histograms(smaller_child(p)))
+    {
+        larger_child(p).hists[feature] -= smaller_child(p).hists[feature];
+    }
     for (SplitInput *child : {&p.left, &p.right})
     {
-        HistCell const t = child->hists[feature].totals();
+        HistCell const t =
+            carries_histograms(*child) ? child->hists[feature].totals() : HistCell{};
         child->sums      = {.sum_grad = t.sum_grad, .sum_hess = t.sum_hess};
         child->row_count = child->rows.size();
     }
@@ -139,7 +148,7 @@ inline void finish_split_totals(PendingSplit &p, feature_id_t feature)
 inline void finish_split(Dataset const &ds, PendingSplit &p, bool fused = false)
 {
     adopt_parent_histograms(p);
-    if (!fused)
+    if (!fused && carries_histograms(smaller_child(p)))
     {
         SplitInput &small = smaller_child(p);
         SplitInput &large = larger_child(p);
@@ -302,6 +311,10 @@ inline void subtract_level(std::span<DeferredSplit> splits, size_t n_features)
                              {
                                  PendingSplit &p = splits[j / n_features].p;
                                  size_t const  f = j % n_features;
+                                 if (!carries_histograms(smaller_child(p)))
+                                 {
+                                     return;
+                                 }
                                  larger_child(p).hists[f] -= smaller_child(p).hists[f];
                              });
     settle_splits(splits);
