@@ -345,8 +345,9 @@ TEST_CASE("ModelIo: a multiclass tree count off the class grid refuses to load",
     }
     rewrite_corrupted(tmp.str(), [](nlohmann::json &root)
                       { root["trees"].push_back(root["trees"].back()); });
-    REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
-                        Catch::Matchers::ContainsSubstring("multiple of n_classes"));
+    REQUIRE_THROWS_WITH(
+        io::load_booster(tmp.str()),
+        Catch::Matchers::ContainsSubstring("multiple of the output count"));
 }
 
 TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
