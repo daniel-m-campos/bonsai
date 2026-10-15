@@ -118,7 +118,11 @@ class Dataset
     // worth it when the same selection is fit repeatedly.
     Dataset materialize() const;
 
+    // The label block, n_rows x n_targets row-major (target k of row r at
+    // r * n_targets + k), and its width; a view gathers whole rows of it
+    // (pins: "a label block of K targets keeps its width through a view").
     floats_view       labels() const;
+    size_t            n_targets() const;
     floats_view       weights() const; // empty if uniform
     BinMappers const &mappers() const;
     size_t            n_bins(size_t fid) const;
@@ -195,6 +199,7 @@ class Dataset
     {
         std::vector<float> labels;
         std::vector<float> weights;
+        size_t             n_targets = 1;
         LabelsId           id{};
     };
 

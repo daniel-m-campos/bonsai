@@ -110,6 +110,12 @@ A multiclass booster's init scores are one per output or none: the score broadca
 
 - enforced by: [`MulticlassBooster: init scores of the wrong length are refused`](../tests/unit/test_booster.cpp)
 
+### label-block-rows-by-targets
+
+The label block is n_rows x n_targets row-major: target k of row r sits at r * n_targets + k, and a view gathers whole rows of it, so a rewrite of the view's rows carries every target of every selected row in view order. A vector y is the block at width 1, which is why every single-target reader of labels() is untouched by the width.
+
+- enforced by: [`Dataset: a label block of K targets keeps its width through a view`](../tests/unit/test_dataset.cpp)
+
 ### lane-level-scan-matches-scalar-scan
 
 

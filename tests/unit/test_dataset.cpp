@@ -1060,3 +1060,73 @@ TEST_CASE("Dataset: binning refuses a width the mappers do not describe",
     REQUIRE_THROWS_WITH(Dataset::bin(narrow, mappers, {}),
                         Catch::Matchers::ContainsSubstring("columns must match"));
 }
+
+// INVARIANT: label-block-rows-by-targets
+// The label block is n_rows x n_targets row-major: target k of row r sits at
+// r * n_targets + k, and a view gathers whole rows of it, so a rewrite of the
+// view's rows carries every target of every selected row in view order. A
+// vector y is the block at width 1, which is why every single-target reader
+// of labels() is untouched by the width.
+TEST_CASE("Dataset: a label block of K targets keeps its width through a view",
+          "[dataset][labels]")
+{
+    size_t const       n       = 16;
+    size_t const       k       = 3;
+    auto const         batch   = two_feature_batch(n);
+    BinMappers const   mappers = BinMappers::fit(batch, BinMapperConfig{});
+    std::vector<float> block(n * k);
+    for (size_t i = 0; i < block.size(); ++i)
+    {
+        block[i] = static_cast<float>(i);
+    }
+    std::vector<float> flat(n * 2);
+    for (size_t r = 0; r < n; ++r)
+    {
+        flat[(r * 2) + 0] = batch.features[0][r];
+        flat[(r * 2) + 1] = batch.features[1][r];
+    }
+    features_view const X{flat.data(), n, 2};
+
+    Dataset const wide = Dataset::bin(X, block, mappers, {});
+    CHECK(wide.n_targets() == k);
+    CHECK(wide.plane_n_rows() == n);
+    CHECK(wide.labels().size() == n * k);
+
+    SECTION("a vector y is width 1 and the rows come from the matrix")
+    {
+        Dataset const narrow = Dataset::bin(X, batch.labels, mappers, {});
+        CHECK(narrow.n_targets() == 1);
+        CHECK(narrow.plane_n_rows() == n);
+    }
+
+    SECTION("a view gathers whole rows of the block")
+    {
+        std::vector<row_id_t> const rows{5, 2, 11};
+        Dataset const view = wide.with_rows(RowView::encode(rows, n)).materialize();
+        REQUIRE(view.n_targets() == k);
+        REQUIRE(view.labels().size() == rows.size() * k);
+        for (size_t i = 0; i < rows.size(); ++i)
+        {
+            for (size_t j = 0; j < k; ++j)
+            {
+                CHECK(view.labels()[(i * k) + j] == block[(rows[i] * k) + j]);
+            }
+        }
+    }
+
+    SECTION("from_bins reads its rows off the columns")
+    {
+        Bins const    bins    = bins_of(wide);
+        Dataset const rebuilt = Dataset::from_bins(BinColumns{bins.u8}, mappers, block);
+        CHECK(rebuilt.n_targets() == k);
+        CHECK(rebuilt.plane_n_rows() == n);
+    }
+
+    SECTION("a block that is not whole rows is refused")
+    {
+        std::vector<float> ragged(block.begin(), block.end() - 1);
+        CHECK_THROWS_AS(Dataset::bin(X, ragged, mappers, {}), std::invalid_argument);
+        CHECK_THROWS_WITH(Dataset::bin(X, ragged, mappers, {}),
+                          Catch::Matchers::ContainsSubstring("47 labels for 16 rows"));
+    }
+}
