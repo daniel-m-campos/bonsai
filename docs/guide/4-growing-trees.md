@@ -55,6 +55,8 @@ graph TD
   B -->|b1=1| T
 ```
 
+A shared split can route every row of some node one way, so an oblivious frontier carries empty nodes, and an empty node's whole subtree stays empty down to the last level. Such a node carries no histograms: the level fill gives it no arena and the level finder skips it, which is where a fifth of the deepest level's fills went on the wide CPU cell (decision 159).
+
 ## The math
 
 There's no new math, only a queue discipline over the same gain scores:
