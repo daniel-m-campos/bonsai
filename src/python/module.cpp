@@ -156,18 +156,35 @@ MatrixArg resolve_matrix(nb::handle X, uint32_t device_id)
 struct VectorArg
 {
     std::optional<array_1d> host;
+    std::optional<array_2d> block;
     std::vector<float>      owned;
+    size_t                  width = 1;
 
     bonsai::floats_view view() const
     {
-        return host ? bonsai::floats_view{host->data(), host->shape(0)}
-                    : bonsai::floats_view{owned};
+        if (host)
+        {
+            return {host->data(), host->shape(0)};
+        }
+        if (block)
+        {
+            return {block->data(), block->shape(0) * block->shape(1)};
+        }
+        return bonsai::floats_view{owned};
     }
-    size_t size() const
+    size_t rows() const
     {
-        return host ? host->shape(0) : owned.size();
+        return host ? host->shape(0) : block ? block->shape(0) : owned.size() / width;
     }
 };
+
+void require_target_columns(size_t n_targets)
+{
+    if (n_targets == 0)
+    {
+        throw std::invalid_argument("y has no columns; a 2-D y is n_rows x n_targets");
+    }
+}
 
 VectorArg resolve_vector(nb::handle v, uint32_t device_id, char const *what)
 {
@@ -192,6 +209,29 @@ VectorArg resolve_vector(nb::handle v, uint32_t device_id, char const *what)
     return out;
 }
 
+VectorArg resolve_targets(nb::handle y, uint32_t device_id)
+{
+    if (cuda_2d device; nb::try_cast(y, device))
+    {
+        place_device_array(device, device_id, "y");
+        require_target_columns(device.shape(1));
+        VectorArg out;
+        out.width = device.shape(1);
+        out.owned.resize(device.shape(0) * device.shape(1));
+        bonsai::cuda_download(device.data(), out.owned.size(), out.owned.data());
+        return out;
+    }
+    if (array_2d block; nb::try_cast(y, block))
+    {
+        require_target_columns(block.shape(1));
+        VectorArg out;
+        out.block = block;
+        out.width = block.shape(1);
+        return out;
+    }
+    return resolve_vector(y, device_id, "y");
+}
+
 struct Inputs
 {
     MatrixArg                xarg;
@@ -203,18 +243,18 @@ Inputs resolve_inputs(nb::handle X, nb::handle y, nb::handle weight, uint32_t de
                       char const *weight_name, std::string_view where)
 {
     Inputs in{.xarg = resolve_matrix(X, device_id),
-              .yarg = resolve_vector(y, device_id, "y"),
+              .yarg = resolve_targets(y, device_id),
               .warg = std::nullopt};
     if (!weight.is_none())
     {
         in.warg = resolve_vector(weight, device_id, weight_name);
     }
-    if (in.yarg.size() != in.xarg.n_rows)
+    if (in.yarg.rows() != in.xarg.n_rows)
     {
         throw std::invalid_argument(
             std::format("{}len(y) must equal the row count", where));
     }
-    if (in.warg && in.warg->size() != in.xarg.n_rows)
+    if (in.warg && in.warg->rows() != in.xarg.n_rows)
     {
         throw std::invalid_argument(
             std::format("{}len({}) must equal the row count", where, weight_name));
@@ -716,6 +756,10 @@ class Dataset
     size_t n_rows() const
     {
         return bins().view_n_rows();
+    }
+    size_t n_targets() const
+    {
+        return bins().n_targets();
     }
     size_t n_features() const
     {
@@ -1936,9 +1980,9 @@ NB_MODULE(_bonsai, m)
             "    Row-major features; any DLPack producer. A device-resident X "
             "(cupy, torch, jax) is binned on the GPU in place, with no host "
             "round trip.\n"
-            "y : float32 array, shape (n_rows,)\n"
-            "    Labels. May be device-resident; downloaded once, because "
-            "bonsai keeps labels on the host.\n"
+            "y : float32 array, shape (n_rows,) or (n_rows, n_targets)\n"
+            "    Labels, one per row or a row of targets per row. May be "
+            "device-resident; downloaded once, labels stay on the host.\n"
             "weight : float32 array, shape (n_rows,), optional\n"
             "    Per-row weights; the same device rules as ``y``.\n"
             "max_bin, n_samples, seed, min_data_in_bin : optional\n"
@@ -2000,6 +2044,8 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("n_rows", &Dataset::n_rows,
                      "Rows a fit visits: the binned matrix's, or the "
                      "selection's on a view.")
+        .def_prop_ro("n_targets", &Dataset::n_targets,
+                     "Targets per row: 1 for a vector ``y``, the columns of a 2-D one.")
         .def_prop_ro("n_features", &Dataset::n_features,
                      "Feature columns in the binned matrix.")
         .def_prop_ro("feature_names", &Dataset::feature_names,

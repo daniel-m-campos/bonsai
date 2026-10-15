@@ -156,9 +156,9 @@ class RowView
         return size_ == 0 || static_cast<size_t>(last_) < n;
     }
 
-    // The values this view names, in view order: out[k] = values[rows[k]].
-    // Declared here, defined after RowIndex, which does the indexing.
-    std::vector<float> gather(std::span<float const> values) const;
+    // The values this view names, in view order, `width` per row. Declared
+    // here, defined after RowIndex, which does the indexing.
+    std::vector<float> gather(std::span<float const> values, size_t width = 1) const;
 
     // Whether this view is exactly [0, parent_rows). Answered in constant
     // time, which is the whole reason the descriptor exists: the fills index
@@ -284,14 +284,16 @@ struct RowSelection
     RowSelection(row_index_view r, RowShape s) : rows(r), shape(s) {}
 };
 
-inline std::vector<float> RowView::gather(std::span<float const> values) const
+inline std::vector<float> RowView::gather(std::span<float const> values,
+                                          size_t                 width) const
 {
     RowIndex const     rows{*this};
     std::vector<float> out;
-    out.reserve(rows.size());
+    out.reserve(rows.size() * width);
     for (size_t k = 0; k < rows.size(); ++k)
     {
-        out.push_back(values[rows[k]]);
+        auto const row = values.subspan(rows[k] * width, width);
+        out.insert(out.end(), row.begin(), row.end());
     }
     return out;
 }

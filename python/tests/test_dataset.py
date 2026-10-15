@@ -414,3 +414,17 @@ def test_dataset_reference_inherits_the_device():
     inherited = np.asarray(bonsai.train(pairs, train_ds, eval_set=valid_ds).eval_history)
     host = np.asarray(bonsai.train(pairs, train_ds, eval_set=explicit).eval_history)
     np.testing.assert_allclose(inherited, host, rtol=0, atol=1e-4)
+
+
+def test_dataset_takes_a_2d_y_as_a_block_of_targets():
+    X, y = _reg_data(n=64)
+    Y = np.stack([y, 2 * y, y - 1], axis=1).astype(np.float32)
+    ds = bonsai.Dataset(X, Y)
+    assert ds.n_rows == 64
+    assert ds.n_targets == 3
+    assert bonsai.Dataset(X, y).n_targets == 1
+    with pytest.raises(ValueError, match="len\\(y\\) must equal the row count"):
+        bonsai.Dataset(X, Y[:-1])
+    with pytest.raises(ValueError, match="no columns"):
+        bonsai.Dataset(X, Y[:, :0])
+    assert bonsai.Dataset(X, Y.astype(np.float64)).n_targets == 3
