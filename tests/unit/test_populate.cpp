@@ -118,6 +118,16 @@ std::vector<std::vector<HistCell>> reference_hists(Fixture const               &
     return out;
 }
 
+// The parent a level fill subtracts from: every row, filled by this engine.
+SplitInput populated_parent(Fixture const &fx, CpuHistogramEngine &engine)
+{
+    SplitInput parent;
+    parent.rows           = test::iota_rows(fx.ds.plane_n_rows());
+    parent.shape.identity = true;
+    engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
+    return parent;
+}
+
 // The level plane's fill of one node, or — for a nonzero id, as the leaf
 // plane drives it — the fused lone fill against a sibling holding the
 // parent's histograms.
@@ -137,12 +147,151 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
         engine.populate(fx.ds, fx.grad, fx.hess, node, fx.selected);
         return node;
     }
-    SplitInput parent;
-    parent.rows           = test::iota_rows(fx.ds.plane_n_rows());
-    parent.shape.identity = true;
-    engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
+    SplitInput parent = populated_parent(fx, engine);
     engine.populate_lone(fx.ds, fx.grad, fx.hess, node, fx.selected, parent.hists);
     return node;
+}
+
+// Rows first, first + step, ... below n_rows, at most count of them.
+std::vector<row_id_t> every_kth(Fixture const &fx, row_id_t first, row_id_t step,
+                                size_t count = static_cast<size_t>(-1))
+{
+    std::vector<row_id_t> rows;
+    for (row_id_t r = first; r < fx.ds.plane_n_rows() && rows.size() < count; r += step)
+    {
+        rows.push_back(r);
+    }
+    return rows;
+}
+
+std::vector<HistCell> cells_of(NodeHistograms const &hists, feature_id_t f)
+{
+    auto const c = hists[f].all_cells();
+    return std::vector<HistCell>(c.begin(), c.end());
+}
+
+// Cell by cell for the diagnostic, then the bytes for the claim.
+void require_same_cells(cell_view_t got, cell_view_t want)
+{
+    REQUIRE(got.size() == want.size());
+    for (size_t b = 0; b < got.size(); ++b)
+    {
+        REQUIRE(got[b].sum_grad == want[b].sum_grad);
+        REQUIRE(got[b].sum_hess == want[b].sum_hess);
+    }
+    REQUIRE(std::memcmp(got.data(), want.data(), got.size() * sizeof(HistCell)) == 0);
+}
+
+void check_cells_close(cell_view_t got, cell_view_t want)
+{
+    REQUIRE(got.size() == want.size());
+    for (size_t b = 0; b < got.size(); ++b)
+    {
+        check_cell_close(got[b], want[b]);
+    }
+}
+
+// One level of pending splits, each off its own populated parent, with the
+// parents' cells kept for the sibling check.
+struct PendingLevel
+{
+    std::vector<grower_detail::DeferredSplit>       splits;
+    std::vector<std::vector<std::vector<HistCell>>> parents;
+    std::vector<NodeTotals>                         parent_sums;
+};
+
+PendingLevel pending_level(Fixture const &fx, CpuHistogramEngine &engine,
+                           std::vector<std::vector<row_id_t>> const &smalls_rows)
+{
+    size_t const n = fx.ds.plane_n_rows();
+    PendingLevel lv;
+    lv.splits.resize(smalls_rows.size());
+    lv.parents.resize(smalls_rows.size());
+    for (size_t i = 0; i < smalls_rows.size(); ++i)
+    {
+        SplitInput parent = populated_parent(fx, engine);
+        lv.parent_sums.push_back(parent.totals());
+        for (feature_id_t const f : fx.selected)
+        {
+            lv.parents[i].push_back(cells_of(parent.hists, f));
+        }
+        grower_detail::PendingSplit &p = lv.splits[i].p;
+        p.left.rows                    = smalls_rows[i];
+        p.left.shape.identity          = rows_are_identity(p.left.rows, n);
+        p.right.rows                   = test::iota_rows(n);
+        p.right.shape.identity         = true;
+        p.parent_hists                 = std::move(parent.hists);
+        REQUIRE(&grower_detail::smaller_child(p) == &p.left);
+    }
+    return lv;
+}
+
+// After populate_level: the small child matches the node filled alone (to
+// the bit when `exact`, else within rounding), a child with no rows carries
+// no histograms, and the large child is the parent minus the small child.
+void check_level_split(Fixture const &fx, grower_detail::DeferredSplit const &split,
+                       std::vector<row_id_t> const              &small_rows,
+                       std::vector<std::vector<HistCell>> const &above, size_t stride,
+                       bool exact);
+
+// One level fill at the current thread count, every split checked: `stride`
+// thins the features compared, `exact` demands the bytes.
+void fill_level_and_check(Fixture const                            &fx,
+                          std::vector<std::vector<row_id_t>> const &smalls_rows,
+                          size_t stride, bool exact)
+{
+    CpuHistogramEngine engine;
+    engine.begin_tree(fx.ds, fx.grad, fx.hess);
+    PendingLevel lv = pending_level(fx, engine, smalls_rows);
+    grower_detail::populate_level(fx.ds, fx.grad, fx.hess, lv.splits, fx.selected,
+                                  engine);
+    for (size_t i = 0; i < lv.splits.size(); ++i)
+    {
+        check_level_split(fx, lv.splits[i], smalls_rows[i], lv.parents[i], stride,
+                          exact);
+    }
+}
+
+void check_level_split(Fixture const &fx, grower_detail::DeferredSplit const &split,
+                       std::vector<row_id_t> const              &small_rows,
+                       std::vector<std::vector<HistCell>> const &above, size_t stride,
+                       bool exact)
+{
+    SplitInput const &small = split.p.left;
+    SplitInput const &large = split.p.right;
+    SplitInput const  alone = populate_node(fx, small_rows);
+    bool const        none  = small_rows.empty();
+    REQUIRE(small.hists.empty() == none);
+    REQUIRE(alone.hists.empty() == none);
+    for (size_t s = 0; s < fx.selected.size(); s += stride)
+    {
+        feature_id_t const f   = fx.selected[s];
+        auto const         big = cells_of(large.hists, f);
+        REQUIRE(big.size() == above[s].size());
+        if (none)
+        {
+            require_same_cells(big, above[s]);
+            continue;
+        }
+        auto const got  = cells_of(small.hists, f);
+        auto const want = cells_of(alone.hists, f);
+        if (exact)
+        {
+            require_same_cells(got, want);
+        }
+        else
+        {
+            check_cells_close(got, want);
+        }
+        for (size_t b = 0; b < got.size(); ++b)
+        {
+            REQUIRE(big[b].sum_grad == above[s][b].sum_grad - got[b].sum_grad);
+            REQUIRE(big[b].sum_hess == above[s][b].sum_hess - got[b].sum_hess);
+        }
+    }
+    REQUIRE(small.sums.sum_hess == small.totals().sum_hess);
+    REQUIRE(small.row_count == small_rows.size());
+    REQUIRE(large.row_count == fx.ds.plane_n_rows());
 }
 
 // Block-aware mirror lookup: feature f lives in block f / width at column
@@ -178,14 +327,9 @@ TEST_CASE("row-wise multi-block fill matches serial sums within tolerance",
     auto const ref  = reference_hists(fx, test::iota_rows(fx.ds.plane_n_rows()));
     for (size_t s = 0; s < fx.selected.size(); ++s)
     {
-        auto const cells = node.hists[fx.selected[s]].all_cells();
-        REQUIRE(cells.size() == ref[s].size());
-        for (size_t b = 0; b < cells.size(); ++b)
-        {
-            // Blocked f32 accumulation vs the serial f32 order: rounding
-            // differs by O(cell_sum * eps); real fill bugs miss whole rows.
-            check_cell_close(cells[b], ref[s][b]);
-        }
+        // Blocked f32 accumulation vs the serial f32 order: rounding
+        // differs by O(cell_sum * eps); real fill bugs miss whole rows.
+        check_cells_close(node.hists[fx.selected[s]].all_cells(), ref[s]);
     }
     parallel::set_n_threads(0);
 }
@@ -198,18 +342,12 @@ TEST_CASE("row-wise single-block fill is bit-identical to the serial order",
     REQUIRE(fx.ds.bins_are_u8());
 
     // A sparse, non-contiguous subset small enough for one block.
-    std::vector<row_id_t> rows;
-    for (row_id_t r = 1; r < fx.ds.plane_n_rows(); r += 17)
-    {
-        rows.push_back(r);
-    }
+    auto const rows = every_kth(fx, 1, 17);
     auto const node = populate_node(fx, rows);
     auto const ref  = reference_hists(fx, rows);
     for (size_t s = 0; s < fx.selected.size(); ++s)
     {
-        auto const cells = node.hists[fx.selected[s]].all_cells();
-        REQUIRE(std::memcmp(cells.data(), ref[s].data(),
-                            cells.size() * sizeof(HistCell)) == 0);
+        require_same_cells(node.hists[fx.selected[s]].all_cells(), ref[s]);
     }
     parallel::set_n_threads(0);
 }
@@ -223,11 +361,7 @@ TEST_CASE("sparse fill sums its per-thread partials into the node arena", "[popu
     auto const fx = make_fixture(40960, 3);
     REQUIRE(fx.ds.bins_are_u8());
 
-    std::vector<row_id_t> rows;
-    for (row_id_t r = 0; r < fx.ds.plane_n_rows(); r += 5)
-    {
-        rows.push_back(r);
-    }
+    auto const rows = every_kth(fx, 0, 5);
     REQUIRE(rows.size() == 8192);
     REQUIRE(rows.size() * 4 < fx.ds.plane_n_rows());
 
@@ -262,11 +396,7 @@ TEST_CASE("a lone node fills feature-major in serial order in one row block",
     auto const fx = make_fixture(40960, 3);
     REQUIRE(fx.ds.bins_are_u8());
 
-    std::vector<row_id_t> rows;
-    for (row_id_t r = 0; r < fx.ds.plane_n_rows(); r += 5)
-    {
-        rows.push_back(r);
-    }
+    auto const rows = every_kth(fx, 0, 5);
     REQUIRE(rows.size() * 4 < fx.ds.plane_n_rows());
 
     parallel::set_n_threads(1);
@@ -278,12 +408,8 @@ TEST_CASE("a lone node fills feature-major in serial order in one row block",
     for (size_t s = 0; s < fx.selected.size(); ++s)
     {
         auto const cells = four.hists[fx.selected[s]].all_cells();
-        auto const c1    = one.hists[fx.selected[s]].all_cells();
-        REQUIRE(cells.size() == ref[s].size());
-        REQUIRE(std::memcmp(cells.data(), ref[s].data(),
-                            cells.size() * sizeof(HistCell)) == 0);
-        REQUIRE(std::memcmp(cells.data(), c1.data(), cells.size() * sizeof(HistCell)) ==
-                0);
+        require_same_cells(cells, ref[s]);
+        require_same_cells(cells, one.hists[fx.selected[s]].all_cells());
     }
     parallel::set_n_threads(0);
 }
@@ -301,11 +427,7 @@ TEST_CASE("a lone node cut into row blocks is reproducible and serial at one "
     auto const fx = make_fixture(262144, 8);
     REQUIRE(fx.ds.bins_are_u8());
 
-    std::vector<row_id_t> rows;
-    for (row_id_t r = 0; r < fx.ds.plane_n_rows(); r += 8)
-    {
-        rows.push_back(r);
-    }
+    auto const rows = every_kth(fx, 0, 8);
     REQUIRE(rows.size() * 4 < fx.ds.plane_n_rows());
 
     parallel::set_n_threads(1);
@@ -317,15 +439,12 @@ TEST_CASE("a lone node cut into row blocks is reproducible and serial at one "
 
     for (size_t s = 0; s < fx.selected.size(); ++s)
     {
-        auto const c1  = one.hists[fx.selected[s]].all_cells();
-        auto const c4  = four.hists[fx.selected[s]].all_cells();
-        auto const c4b = again.hists[fx.selected[s]].all_cells();
+        auto const c4 = four.hists[fx.selected[s]].all_cells();
         REQUIRE(c4.size() == ref[s].size());
         // One thread is one row block, which is the serial order.
-        REQUIRE(std::memcmp(c1.data(), ref[s].data(), c1.size() * sizeof(HistCell)) ==
-                0);
+        require_same_cells(one.hists[fx.selected[s]].all_cells(), ref[s]);
         // Four threads repeat themselves byte for byte.
-        REQUIRE(std::memcmp(c4.data(), c4b.data(), c4.size() * sizeof(HistCell)) == 0);
+        require_same_cells(c4, again.hists[fx.selected[s]].all_cells());
         for (size_t b = 0; b < c4.size(); ++b)
         {
             check_cell_close(c4[b], ref[s][b]);
@@ -345,11 +464,7 @@ TEST_CASE("the column fill gathers a lone node in serial order", "[populate]")
         auto const fx = make_fixture(n_rows, 3);
         REQUIRE(fx.ds.bins_are_u8());
 
-        std::vector<row_id_t> rows;
-        for (row_id_t r = 1; r < fx.ds.plane_n_rows(); r += stride)
-        {
-            rows.push_back(r);
-        }
+        auto const rows = every_kth(fx, 1, static_cast<row_id_t>(stride));
         REQUIRE(rows.size() * 4 >= fx.ds.plane_n_rows()); // routes to the column fill
         REQUIRE(rows.size() < fx.ds.plane_n_rows());      // and gathers, not in place
 
@@ -360,10 +475,7 @@ TEST_CASE("the column fill gathers a lone node in serial order", "[populate]")
             auto const node = populate_node(fx, rows, 1);
             for (size_t s = 0; s < fx.selected.size(); ++s)
             {
-                auto const cells = node.hists[fx.selected[s]].all_cells();
-                REQUIRE(cells.size() == ref[s].size());
-                REQUIRE(std::memcmp(cells.data(), ref[s].data(),
-                                    cells.size() * sizeof(HistCell)) == 0);
+                require_same_cells(node.hists[fx.selected[s]].all_cells(), ref[s]);
             }
         }
         parallel::set_n_threads(0);
@@ -437,11 +549,7 @@ TEST_CASE("CpuHistogramEngine: the totals fill reproduces the full fill's sums",
     feature_id_t const feature = SplitInput::totals_feature(fx.selected);
     REQUIRE(feature == 1);
 
-    std::vector<row_id_t> sparse;
-    for (row_id_t r = 0; r < fx.ds.plane_n_rows(); r += 5)
-    {
-        sparse.push_back(r);
-    }
+    auto const sparse = every_kth(fx, 0, 5);
     parallel::set_n_threads(4);
     for (auto const &rows : {sparse, test::iota_rows(fx.ds.plane_n_rows())})
     {
@@ -454,14 +562,8 @@ TEST_CASE("CpuHistogramEngine: the totals fill reproduces the full fill's sums",
         std::array one = {std::ref(node)};
         engine.populate_totals(fx.ds, fx.grad, fx.hess, one, feature);
 
-        auto const want = full.hists[feature].all_cells();
-        auto const got  = node.hists[feature].all_cells();
-        REQUIRE(got.size() == want.size());
-        for (size_t b = 0; b < got.size(); ++b)
-        {
-            REQUIRE(got[b].sum_grad == want[b].sum_grad);
-            REQUIRE(got[b].sum_hess == want[b].sum_hess);
-        }
+        require_same_cells(node.hists[feature].all_cells(),
+                           full.hists[feature].all_cells());
         REQUIRE(node.totals().sum_grad == full.totals().sum_grad);
         REQUIRE(node.totals().sum_hess == full.totals().sum_hess);
         CHECK(node.hists[3].size() == 0);
@@ -482,11 +584,7 @@ TEST_CASE("CpuHistogramEngine: the lone totals fill reproduces the lone fill's s
     fx.selected                = {1, 3, 4};
     feature_id_t const feature = SplitInput::totals_feature(fx.selected);
 
-    std::vector<row_id_t> sparse;
-    for (row_id_t r = 0; r < fx.ds.plane_n_rows(); r += 5)
-    {
-        sparse.push_back(r);
-    }
+    auto const sparse = every_kth(fx, 0, 5);
     parallel::set_n_threads(4);
     SplitInput const full = populate_node(fx, sparse, 1);
 
@@ -495,29 +593,17 @@ TEST_CASE("CpuHistogramEngine: the lone totals fill reproduces the lone fill's s
     node.rows = sparse;
     CpuHistogramEngine engine;
     engine.begin_tree(fx.ds, fx.grad, fx.hess);
-    SplitInput parent;
-    parent.rows           = test::iota_rows(fx.ds.plane_n_rows());
-    parent.shape.identity = true;
-    engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
+    SplitInput parent = populated_parent(fx, engine);
     engine.populate_lone_totals(fx.ds, fx.grad, fx.hess, node, fx.selected,
                                 parent.hists, feature);
 
-    auto const want = full.hists[feature].all_cells();
-    auto const got  = node.hists[feature].all_cells();
-    REQUIRE(got.size() == want.size());
-    for (size_t b = 0; b < got.size(); ++b)
-    {
-        REQUIRE(got[b].sum_grad == want[b].sum_grad);
-        REQUIRE(got[b].sum_hess == want[b].sum_hess);
-    }
+    require_same_cells(node.hists[feature].all_cells(),
+                       full.hists[feature].all_cells());
     REQUIRE(node.totals().sum_grad == full.totals().sum_grad);
     CHECK(node.hists[3].size() == 0);
 
-    SplitInput whole;
-    whole.rows           = parent.rows;
-    whole.shape.identity = true;
-    engine.populate(fx.ds, fx.grad, fx.hess, whole, fx.selected);
-    Histogram &rest = whole.hists[feature];
+    SplitInput whole = populated_parent(fx, engine);
+    Histogram &rest  = whole.hists[feature];
     rest -= full.hists[feature];
     auto const sib = parent.hists[feature].all_cells();
     auto const ref = rest.all_cells();
@@ -554,9 +640,7 @@ TEST_CASE("populate is reproducible at a fixed thread count", "[populate]")
     auto const b = populate_node(fx, test::iota_rows(fx.ds.plane_n_rows()));
     for (feature_id_t const fid : fx.selected)
     {
-        auto const ca = a.hists[fid].all_cells();
-        auto const cb = b.hists[fid].all_cells();
-        REQUIRE(std::memcmp(ca.data(), cb.data(), ca.size() * sizeof(HistCell)) == 0);
+        require_same_cells(a.hists[fid].all_cells(), b.hists[fid].all_cells());
     }
     parallel::set_n_threads(0);
 }
@@ -571,9 +655,7 @@ TEST_CASE("u16 fallback fill is bit-identical to the serial order", "[populate]"
     auto const ref  = reference_hists(fx, test::iota_rows(fx.ds.plane_n_rows()));
     for (size_t s = 0; s < fx.selected.size(); ++s)
     {
-        auto const cells = node.hists[fx.selected[s]].all_cells();
-        REQUIRE(std::memcmp(cells.data(), ref[s].data(),
-                            cells.size() * sizeof(HistCell)) == 0);
+        require_same_cells(node.hists[fx.selected[s]].all_cells(), ref[s]);
     }
     parallel::set_n_threads(0);
 }
@@ -593,103 +675,33 @@ TEST_CASE("CpuHistogramEngine: the level fill at u16 bins matches lone nodes",
         test::iota_rows(n / 64),
         {},
     };
-    auto const cells_of = [](NodeHistograms const &hists, feature_id_t f)
-    {
-        auto const c = hists[f].all_cells();
-        return std::vector<HistCell>(c.begin(), c.end());
-    };
     parallel::set_n_threads(4);
-    CpuHistogramEngine engine;
-    engine.begin_tree(fx.ds, fx.grad, fx.hess);
-    std::vector<grower_detail::DeferredSplit>       splits(smalls_rows.size());
-    std::vector<std::vector<std::vector<HistCell>>> parents(smalls_rows.size());
-    for (size_t i = 0; i < splits.size(); ++i)
-    {
-        SplitInput parent;
-        parent.rows           = test::iota_rows(n);
-        parent.shape.identity = true;
-        engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
-        for (feature_id_t const f : fx.selected)
-        {
-            parents[i].push_back(cells_of(parent.hists, f));
-        }
-        grower_detail::PendingSplit &p = splits[i].p;
-        p.left.rows                    = smalls_rows[i];
-        p.left.shape.identity          = rows_are_identity(p.left.rows, n);
-        p.right.rows                   = test::iota_rows(n);
-        p.right.shape.identity         = true;
-        p.parent_hists                 = std::move(parent.hists);
-    }
-    grower_detail::populate_level(fx.ds, fx.grad, fx.hess, splits, fx.selected, engine);
-    for (size_t i = 0; i < splits.size(); ++i)
-    {
-        SplitInput const alone = populate_node(fx, smalls_rows[i]);
-        bool const       none  = smalls_rows[i].empty();
-        REQUIRE(splits[i].p.left.hists.empty() == none);
-        REQUIRE(alone.hists.empty() == none);
-        for (size_t s = 0; s < fx.selected.size(); ++s)
-        {
-            feature_id_t const f   = fx.selected[s];
-            auto const         big = cells_of(splits[i].p.right.hists, f);
-            if (none)
-            {
-                REQUIRE(std::memcmp(big.data(), parents[i][s].data(),
-                                    big.size() * sizeof(HistCell)) == 0);
-                continue;
-            }
-            auto const got  = cells_of(splits[i].p.left.hists, f);
-            auto const want = cells_of(alone.hists, f);
-            REQUIRE(got.size() == want.size());
-            REQUIRE(std::memcmp(got.data(), want.data(),
-                                got.size() * sizeof(HistCell)) == 0);
-            for (size_t b = 0; b < got.size(); ++b)
-            {
-                REQUIRE(big[b].sum_grad == parents[i][s][b].sum_grad - got[b].sum_grad);
-                REQUIRE(big[b].sum_hess == parents[i][s][b].sum_hess - got[b].sum_hess);
-            }
-        }
-    }
+    fill_level_and_check(fx, smalls_rows, 1, true);
     parallel::set_n_threads(0);
 }
 
 TEST_CASE("CpuHistogramEngine: a child with no rows carries no histograms",
           "[populate][edge]")
 {
-    auto const         fx       = make_fixture(4096, 3);
-    size_t const       n        = fx.ds.plane_n_rows();
-    feature_id_t const tf       = SplitInput::totals_feature(fx.selected);
-    auto const         cells_of = [](NodeHistograms const &hists, feature_id_t f)
-    {
-        auto const c = hists[f].all_cells();
-        return std::vector<HistCell>(c.begin(), c.end());
-    };
-    auto const same_cells =
+    auto const         fx = make_fixture(4096, 3);
+    size_t const       n  = fx.ds.plane_n_rows();
+    feature_id_t const tf = SplitInput::totals_feature(fx.selected);
+    auto const         same_cells =
         [&](NodeHistograms const &hists, std::vector<std::vector<HistCell>> const &want)
     {
         for (size_t s = 0; s < fx.selected.size(); ++s)
         {
-            auto const got = cells_of(hists, fx.selected[s]);
-            REQUIRE(got.size() == want[s].size());
-            REQUIRE(std::memcmp(got.data(), want[s].data(),
-                                got.size() * sizeof(HistCell)) == 0);
+            require_same_cells(cells_of(hists, fx.selected[s]), want[s]);
         }
     };
-    SplitInput                         parent = populate_node(fx, test::iota_rows(n));
-    std::vector<std::vector<HistCell>> above;
-    for (feature_id_t const f : fx.selected)
-    {
-        above.push_back(cells_of(parent.hists, f));
-    }
-    NodeTotals const   parent_sums = parent.totals();
     CpuHistogramEngine engine;
     engine.begin_tree(fx.ds, fx.grad, fx.hess);
-    grower_detail::PendingSplit p;
-    p.left.id              = 1;
-    p.right.id             = 2;
-    p.right.rows           = test::iota_rows(n);
-    p.right.shape.identity = true;
-    p.parent_hists         = std::move(parent.hists);
-    REQUIRE(&grower_detail::smaller_child(p) == &p.left);
+    PendingLevel                             lv    = pending_level(fx, engine, {{}});
+    grower_detail::PendingSplit             &p     = lv.splits.front().p;
+    std::vector<std::vector<HistCell>> const above = lv.parents.front();
+    NodeTotals const                         parent_sums = lv.parent_sums.front();
+    p.left.id                                            = 1;
+    p.right.id                                           = 2;
 
     SECTION("the lone fill and finish_split")
     {
@@ -746,12 +758,7 @@ TEST_CASE("wide multi-slice fill matches serial sums within tolerance", "[popula
     // Probe features from both blocks, straddling the boundary.
     for (size_t const s : {0UL, 1024UL, 2046UL, 2047UL, 2048UL, 2049UL, 2111UL})
     {
-        auto const cells = node.hists[fx.selected[s]].all_cells();
-        REQUIRE(cells.size() == ref[s].size());
-        for (size_t b = 0; b < cells.size(); ++b)
-        {
-            check_cell_close(cells[b], ref[s][b]);
-        }
+        check_cells_close(node.hists[fx.selected[s]].all_cells(), ref[s]);
     }
     parallel::set_n_threads(0);
 }
@@ -811,102 +818,17 @@ TEST_CASE("CpuHistogramEngine: the level fill matches the nodes filled alone",
     REQUIRE(fx.ds.n_features() > Dataset::mirror_tile_width());
     size_t const n = fx.ds.plane_n_rows();
 
-    auto const every_kth = [&](row_id_t first, row_id_t step, size_t count)
-    {
-        std::vector<row_id_t> rows;
-        for (row_id_t r = first; r < n && rows.size() < count; r += step)
-        {
-            rows.push_back(r);
-        }
-        return rows;
-    };
     std::vector<std::vector<row_id_t>> const smalls_rows = {
         test::iota_rows(n / 4),
-        every_kth(1, 3, 2500),
-        every_kth(2, 5, 1200),
-        every_kth(3, 7, 100),
+        every_kth(fx, 1, 3, 2500),
+        every_kth(fx, 2, 5, 1200),
+        every_kth(fx, 3, 7, 100),
         {},
     };
-    auto const cells_of = [](NodeHistograms const &hists, feature_id_t f)
-    {
-        auto const c = hists[f].all_cells();
-        return std::vector<HistCell>(c.begin(), c.end());
-    };
-
     for (int const threads : {1, 4})
     {
         parallel::set_n_threads(threads);
-        CpuHistogramEngine engine;
-        engine.begin_tree(fx.ds, fx.grad, fx.hess);
-
-        std::vector<grower_detail::DeferredSplit>       splits(smalls_rows.size());
-        std::vector<std::vector<std::vector<HistCell>>> parents(smalls_rows.size());
-        for (size_t i = 0; i < splits.size(); ++i)
-        {
-            SplitInput parent;
-            parent.rows           = test::iota_rows(n);
-            parent.shape.identity = true;
-            engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
-            for (feature_id_t const f : fx.selected)
-            {
-                parents[i].push_back(cells_of(parent.hists, f));
-            }
-            grower_detail::PendingSplit &p = splits[i].p;
-            p.left.rows                    = smalls_rows[i];
-            p.left.shape.identity          = rows_are_identity(p.left.rows, n);
-            p.right.rows                   = test::iota_rows(n);
-            p.right.shape.identity         = true;
-            p.parent_hists                 = std::move(parent.hists);
-            REQUIRE(&grower_detail::smaller_child(p) == &p.left);
-        }
-        grower_detail::populate_level(fx.ds, fx.grad, fx.hess, splits, fx.selected,
-                                      engine);
-
-        for (size_t i = 0; i < splits.size(); ++i)
-        {
-            SplitInput const &small = splits[i].p.left;
-            SplitInput const &large = splits[i].p.right;
-            SplitInput const  alone = populate_node(fx, smalls_rows[i]);
-            bool const        none  = smalls_rows[i].empty();
-            REQUIRE(small.hists.empty() == none);
-            REQUIRE(alone.hists.empty() == none);
-            for (size_t s = 0; s < fx.selected.size(); s += 97)
-            {
-                feature_id_t const f     = fx.selected[s];
-                auto const         big   = cells_of(large.hists, f);
-                auto const        &above = parents[i][s];
-                REQUIRE(big.size() == above.size());
-                if (none)
-                {
-                    for (size_t b = 0; b < big.size(); ++b)
-                    {
-                        REQUIRE(big[b].sum_grad == above[b].sum_grad);
-                        REQUIRE(big[b].sum_hess == above[b].sum_hess);
-                    }
-                    continue;
-                }
-                auto const got  = cells_of(small.hists, f);
-                auto const want = cells_of(alone.hists, f);
-                REQUIRE(got.size() == want.size());
-                for (size_t b = 0; b < got.size(); ++b)
-                {
-                    if (threads == 1)
-                    {
-                        REQUIRE(got[b].sum_grad == want[b].sum_grad);
-                        REQUIRE(got[b].sum_hess == want[b].sum_hess);
-                    }
-                    else
-                    {
-                        check_cell_close(got[b], want[b]);
-                    }
-                    REQUIRE(big[b].sum_grad == above[b].sum_grad - got[b].sum_grad);
-                    REQUIRE(big[b].sum_hess == above[b].sum_hess - got[b].sum_hess);
-                }
-            }
-            REQUIRE(small.sums.sum_hess == small.totals().sum_hess);
-            REQUIRE(small.row_count == smalls_rows[i].size());
-            REQUIRE(large.row_count == n);
-        }
+        fill_level_and_check(fx, smalls_rows, 97, threads == 1);
     }
     parallel::set_n_threads(0);
 }
