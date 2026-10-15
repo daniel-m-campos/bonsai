@@ -148,7 +148,7 @@ The plane is picked per fit from the node arena's size: below k_level_plane_aren
 
 ### level-fill-matches-lone-nodes
 
-The level plane fills a level's smaller children in one call and derives each larger child by subtracting its sibling from the parent's histograms. Whatever order the level fill zeroes, scatters and subtracts in, every small child's cells equal the node filled alone (bit for bit at one thread, where no partial arenas exist), a child with no rows holds zeros, and every large child's cell is the parent's cell minus the small child's cell in float, once per cell.
+The level plane fills a level's smaller children in one call and derives each larger child by subtracting its sibling from the parent's histograms. Whatever order the level fill zeroes, scatters and subtracts in, every small child's cells equal the node filled alone (bit for bit at one thread, where no partial arenas exist), a child with no rows carries no histograms and leaves its sibling the parent's cells untouched, and every other large child's cell is the parent's cell minus the small child's cell in float, once per cell.
 
 - enforced by: [`CpuHistogramEngine: the level fill matches the nodes filled alone`](../tests/unit/test_populate.cpp)
 
@@ -238,7 +238,7 @@ Oblivious trees densify into a perfect shape, so a trained model really does car
 
 ### zero-parent-moves-no-level-split
 
-An oblivious level's shared split applies to every frontier node, so a node whose rows all routed one way leaves an empty child in the next frontier. That child contributes nothing to any candidate: its parent score and both children's scores are zero, so the level split chosen with it in the frontier is the split chosen without it, gain bit for bit.
+An oblivious level's shared split applies to every frontier node, so a node whose rows all routed one way leaves an empty child in the next frontier. That child contributes nothing to any candidate: its parent score and both children's scores are zero, so the level split chosen with it in the frontier is the split chosen without it, gain bit for bit; and a child that carries no histograms at all scans as that parent of zeros, wherever it sits in the frontier.
 
 - enforced by: [`HistogramLevelSplitFinder: a parent of zeros moves no level split`](../tests/unit/test_split_level.cpp)
 

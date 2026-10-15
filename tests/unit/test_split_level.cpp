@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -26,6 +27,12 @@ struct ParentScan
     double                real_hess;
     double                parent_score;
 };
+
+SplitInput const &populated_front(FrontierInput frontier)
+{
+    return *std::ranges::find_if(frontier,
+                                 [](SplitInput const &p) { return !p.hists.empty(); });
+}
 
 ParentScan parent_scan(SplitInput const &parent, feature_id_t fid,
                        HistCell const &totals, TreeConfig const &cfg)
@@ -66,7 +73,7 @@ SplitOutput scalar_level_feature(FrontierInput frontier, feature_id_t fid,
                                  TreeConfig const            &cfg)
 {
     SplitOutput  best;
-    size_t const n_bins = frontier.front().hists[fid].prefix_size();
+    size_t const n_bins = populated_front(frontier).hists[fid].prefix_size();
     if (n_bins == 0)
     {
         return best;
@@ -76,6 +83,10 @@ SplitOutput scalar_level_feature(FrontierInput frontier, feature_id_t fid,
     bool                    two_dirs         = false;
     for (size_t p = 0; p < frontier.size(); ++p)
     {
+        if (frontier[p].hists.empty())
+        {
+            continue;
+        }
         scans.push_back(parent_scan(frontier[p], fid, totals[p], cfg));
         sum_parent_score += scans.back().parent_score;
         HistCell const &m = scans.back().missing;
@@ -105,7 +116,12 @@ SplitOutput scalar_level_scan(FrontierInput frontier, TreeConfig const &cfg)
         totals[p] = cell_totals(frontier[p]);
     }
     SplitOutput best;
-    for (feature_id_t fid = 0; fid < frontier.front().hists.size(); ++fid)
+    if (std::ranges::all_of(frontier,
+                            [](SplitInput const &p) { return p.hists.empty(); }))
+    {
+        return best;
+    }
+    for (feature_id_t fid = 0; fid < populated_front(frontier).hists.size(); ++fid)
     {
         SplitOutput const mine = scalar_level_feature(frontier, fid, totals, cfg);
         if (mine.valid && mine.gain > best.gain)
@@ -158,7 +174,8 @@ std::vector<SplitInput> random_frontier(std::mt19937 &rng)
     std::vector<SplitInput> frontier;
     for (size_t p = 0; p < n_parents; ++p)
     {
-        frontier.push_back(random_parent(rng, bins, with_missing));
+        frontier.push_back(rng() % 5 == 0 ? SplitInput{}
+                                          : random_parent(rng, bins, with_missing));
     }
     return frontier;
 }
@@ -384,7 +401,9 @@ TEST_CASE("gain and leaf math survive an empty node side at lambda_l2 = 0",
 // node whose rows all routed one way leaves an empty child in the next
 // frontier. That child contributes nothing to any candidate: its parent
 // score and both children's scores are zero, so the level split chosen
-// with it in the frontier is the split chosen without it, gain bit for bit.
+// with it in the frontier is the split chosen without it, gain bit for bit;
+// and a child that carries no histograms at all scans as that parent of
+// zeros, wherever it sits in the frontier.
 TEST_CASE("HistogramLevelSplitFinder: a parent of zeros moves no level split",
           "[split][level][edge]")
 {
@@ -396,11 +415,15 @@ TEST_CASE("HistogramLevelSplitFinder: a parent of zeros moves no level split",
         TreeConfig const        cfg      = random_rule(rng);
         SplitOutput const       want = HistogramLevelSplitFinder::find(frontier, cfg);
         std::vector<size_t>     bins;
-        for (Histogram const &h : frontier.front().hists)
+        for (Histogram const &h : populated_front(frontier).hists)
         {
             bins.push_back(h.size());
         }
         frontier.push_back(zero_parent(bins));
+        REQUIRE(same_split(HistogramLevelSplitFinder::find(frontier, cfg), want));
+        frontier.back().hists.clear();
+        REQUIRE(same_split(HistogramLevelSplitFinder::find(frontier, cfg), want));
+        frontier.insert(frontier.begin(), SplitInput{});
         REQUIRE(same_split(HistogramLevelSplitFinder::find(frontier, cfg), want));
         valid += want.valid ? 1 : 0;
     }

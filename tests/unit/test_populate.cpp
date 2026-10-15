@@ -624,12 +624,21 @@ TEST_CASE("CpuHistogramEngine: the level fill at u16 bins matches lone nodes",
     for (size_t i = 0; i < splits.size(); ++i)
     {
         SplitInput const alone = populate_node(fx, smalls_rows[i]);
+        bool const       none  = smalls_rows[i].empty();
+        REQUIRE(splits[i].p.left.hists.empty() == none);
+        REQUIRE(alone.hists.empty() == none);
         for (size_t s = 0; s < fx.selected.size(); ++s)
         {
-            feature_id_t const f    = fx.selected[s];
-            auto const         got  = cells_of(splits[i].p.left.hists, f);
-            auto const         want = cells_of(alone.hists, f);
-            auto const         big  = cells_of(splits[i].p.right.hists, f);
+            feature_id_t const f   = fx.selected[s];
+            auto const         big = cells_of(splits[i].p.right.hists, f);
+            if (none)
+            {
+                REQUIRE(std::memcmp(big.data(), parents[i][s].data(),
+                                    big.size() * sizeof(HistCell)) == 0);
+                continue;
+            }
+            auto const got  = cells_of(splits[i].p.left.hists, f);
+            auto const want = cells_of(alone.hists, f);
             REQUIRE(got.size() == want.size());
             REQUIRE(std::memcmp(got.data(), want.data(),
                                 got.size() * sizeof(HistCell)) == 0);
@@ -641,6 +650,69 @@ TEST_CASE("CpuHistogramEngine: the level fill at u16 bins matches lone nodes",
         }
     }
     parallel::set_n_threads(0);
+}
+
+TEST_CASE("CpuHistogramEngine: a child with no rows carries no histograms",
+          "[populate][edge]")
+{
+    auto const         fx       = make_fixture(4096, 3);
+    size_t const       n        = fx.ds.plane_n_rows();
+    feature_id_t const tf       = SplitInput::totals_feature(fx.selected);
+    auto const         cells_of = [](NodeHistograms const &hists, feature_id_t f)
+    {
+        auto const c = hists[f].all_cells();
+        return std::vector<HistCell>(c.begin(), c.end());
+    };
+    auto const same_cells =
+        [&](NodeHistograms const &hists, std::vector<std::vector<HistCell>> const &want)
+    {
+        for (size_t s = 0; s < fx.selected.size(); ++s)
+        {
+            auto const got = cells_of(hists, fx.selected[s]);
+            REQUIRE(got.size() == want[s].size());
+            REQUIRE(std::memcmp(got.data(), want[s].data(),
+                                got.size() * sizeof(HistCell)) == 0);
+        }
+    };
+    SplitInput                         parent = populate_node(fx, test::iota_rows(n));
+    std::vector<std::vector<HistCell>> above;
+    for (feature_id_t const f : fx.selected)
+    {
+        above.push_back(cells_of(parent.hists, f));
+    }
+    NodeTotals const   parent_sums = parent.totals();
+    CpuHistogramEngine engine;
+    engine.begin_tree(fx.ds, fx.grad, fx.hess);
+    grower_detail::PendingSplit p;
+    p.left.id              = 1;
+    p.right.id             = 2;
+    p.right.rows           = test::iota_rows(n);
+    p.right.shape.identity = true;
+    p.parent_hists         = std::move(parent.hists);
+    REQUIRE(&grower_detail::smaller_child(p) == &p.left);
+
+    SECTION("the lone fill and finish_split")
+    {
+        bool const fused = engine.populate_lone(fx.ds, fx.grad, fx.hess, p.left,
+                                                fx.selected, p.parent_hists);
+        REQUIRE_FALSE(fused);
+        REQUIRE(p.left.hists.empty());
+        grower_detail::finish_split(fx.ds, p, fused);
+        same_cells(p.right.hists, above);
+    }
+    SECTION("the totals fill and finish_split_totals")
+    {
+        engine.populate_lone_totals(fx.ds, fx.grad, fx.hess, p.left, fx.selected,
+                                    p.parent_hists, tf);
+        REQUIRE(p.left.hists.empty());
+        grower_detail::finish_split_totals(p, tf);
+        same_cells(p.right.hists, above);
+    }
+    REQUIRE(p.left.row_count == 0);
+    REQUIRE(p.left.sums.sum_grad == 0.0);
+    REQUIRE(p.left.sums.sum_hess == 0.0);
+    REQUIRE(p.right.row_count == n);
+    REQUIRE(p.right.sums.sum_hess == parent_sums.sum_hess);
 }
 
 TEST_CASE("row-major mirror matches the binned columns", "[dataset]")
@@ -723,9 +795,10 @@ TEST_CASE("wide single-block fill with a selection spanning the block boundary "
 // each larger child by subtracting its sibling from the parent's histograms.
 // Whatever order the level fill zeroes, scatters and subtracts in, every
 // small child's cells equal the node filled alone (bit for bit at one thread,
-// where no partial arenas exist), a child with no rows holds zeros, and every
-// large child's cell is the parent's cell minus the small child's cell in
-// float, once per cell.
+// where no partial arenas exist), a child with no rows carries no histograms
+// and leaves its sibling the parent's cells untouched, and every other large
+// child's cell is the parent's cell minus the small child's cell in float,
+// once per cell.
 TEST_CASE("CpuHistogramEngine: the level fill matches the nodes filled alone",
           "[populate][invariant]")
 {
@@ -794,18 +867,30 @@ TEST_CASE("CpuHistogramEngine: the level fill matches the nodes filled alone",
             SplitInput const &small = splits[i].p.left;
             SplitInput const &large = splits[i].p.right;
             SplitInput const  alone = populate_node(fx, smalls_rows[i]);
+            bool const        none  = smalls_rows[i].empty();
+            REQUIRE(small.hists.empty() == none);
+            REQUIRE(alone.hists.empty() == none);
             for (size_t s = 0; s < fx.selected.size(); s += 97)
             {
                 feature_id_t const f     = fx.selected[s];
-                auto const         got   = cells_of(small.hists, f);
-                auto const         want  = cells_of(alone.hists, f);
                 auto const         big   = cells_of(large.hists, f);
                 auto const        &above = parents[i][s];
-                REQUIRE(got.size() == want.size());
                 REQUIRE(big.size() == above.size());
+                if (none)
+                {
+                    for (size_t b = 0; b < big.size(); ++b)
+                    {
+                        REQUIRE(big[b].sum_grad == above[b].sum_grad);
+                        REQUIRE(big[b].sum_hess == above[b].sum_hess);
+                    }
+                    continue;
+                }
+                auto const got  = cells_of(small.hists, f);
+                auto const want = cells_of(alone.hists, f);
+                REQUIRE(got.size() == want.size());
                 for (size_t b = 0; b < got.size(); ++b)
                 {
-                    if (threads == 1 || smalls_rows[i].empty())
+                    if (threads == 1)
                     {
                         REQUIRE(got[b].sum_grad == want[b].sum_grad);
                         REQUIRE(got[b].sum_hess == want[b].sum_hess);

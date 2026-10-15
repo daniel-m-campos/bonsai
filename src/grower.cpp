@@ -46,7 +46,11 @@ void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
         [&](size_t i)
         {
             SplitInput &node = nodes[i];
-            if (node.rows.empty() || selected.empty())
+            if (node.rows.empty())
+            {
+                node.hists.clear();
+            }
+            else if (selected.empty())
             {
                 node.hists.carve(sp.layout, selected, ds.n_features(), alone);
             }
@@ -94,9 +98,14 @@ void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
         fd::fill_sparse(ds, grad, hess, sparse_nodes, selected, sp, sparse_sibs);
     }
     lap(grower_detail::GrowProfiler::instance().fill_s);
-    assert(std::ranges::all_of(
-        nodes, [&](SplitInput const &node)
-        { return node.hists.all_runs_carved(sp.layout, selected); }));
+    assert(std::ranges::all_of(nodes,
+                               [&](SplitInput const &node)
+                               {
+                                   return node.rows.empty()
+                                              ? node.hists.empty()
+                                              : node.hists.all_runs_carved(sp.layout,
+                                                                           selected);
+                               }));
 }
 
 void fill_lone_routed(Dataset const &ds, floats_view grad, floats_view hess,
@@ -159,7 +168,10 @@ void CpuHistogramEngine::populate_lone_totals(Dataset const &ds, floats_view gra
     {
         std::array node = {std::ref(split_input)};
         populate_totals(ds, grad, hess, node, feature);
-        sibling[feature] -= split_input.hists[feature];
+        if (!split_input.hists.empty())
+        {
+            sibling[feature] -= split_input.hists[feature];
+        }
         return;
     }
     fill_lone_routed(ds, grad, hess, split_input, one, fd::totals_plan(ds, feature),
