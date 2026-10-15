@@ -139,6 +139,16 @@ SplitInput random_parent(std::mt19937 &rng, std::vector<size_t> const &bins,
     return node;
 }
 
+SplitInput zero_parent(std::vector<size_t> const &bins)
+{
+    SplitInput node{.hists = {}, .rows = {}};
+    for (size_t const n_bins : bins)
+    {
+        node.hists.push_back(Histogram{n_bins});
+    }
+    return node;
+}
+
 std::vector<SplitInput> random_frontier(std::mt19937 &rng)
 {
     size_t const n_parents    = std::uniform_int_distribution<size_t>(1, 24)(rng);
@@ -367,6 +377,34 @@ TEST_CASE("gain and leaf math survive an empty node side at lambda_l2 = 0",
     CHECK(bounded_leaf_weight(3.0, 2.0, 0.0, 1.0, -1e30, 1e30) == Catch::Approx(-1.0));
     // An empty side under a monotone bound still lands inside the bound.
     CHECK(bounded_leaf_weight(0.0, 0.0, 0.0, 0.0, 0.5, 2.0) == 0.5);
+}
+
+// INVARIANT: zero-parent-moves-no-level-split
+// An oblivious level's shared split applies to every frontier node, so a
+// node whose rows all routed one way leaves an empty child in the next
+// frontier. That child contributes nothing to any candidate: its parent
+// score and both children's scores are zero, so the level split chosen
+// with it in the frontier is the split chosen without it, gain bit for bit.
+TEST_CASE("HistogramLevelSplitFinder: a parent of zeros moves no level split",
+          "[split][level][edge]")
+{
+    std::mt19937 rng(2027);
+    size_t       valid = 0;
+    for (int trial = 0; trial < 200; ++trial)
+    {
+        std::vector<SplitInput> frontier = random_frontier(rng);
+        TreeConfig const        cfg      = random_rule(rng);
+        SplitOutput const       want = HistogramLevelSplitFinder::find(frontier, cfg);
+        std::vector<size_t>     bins;
+        for (Histogram const &h : frontier.front().hists)
+        {
+            bins.push_back(h.size());
+        }
+        frontier.push_back(zero_parent(bins));
+        REQUIRE(same_split(HistogramLevelSplitFinder::find(frontier, cfg), want));
+        valid += want.valid ? 1 : 0;
+    }
+    CHECK(valid > 120);
 }
 
 // INVARIANT: lane-level-scan-matches-scalar-scan
