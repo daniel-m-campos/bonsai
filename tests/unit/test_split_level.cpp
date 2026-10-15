@@ -414,7 +414,13 @@ TEST_CASE("HistogramLevelSplitFinder: a parent of zeros moves no level split",
         std::vector<SplitInput> frontier = random_frontier(rng);
         TreeConfig const        cfg      = random_rule(rng);
         SplitOutput const       want = HistogramLevelSplitFinder::find(frontier, cfg);
-        std::vector<size_t>     bins;
+        if (std::ranges::all_of(frontier,
+                                [](SplitInput const &p) { return p.hists.empty(); }))
+        {
+            REQUIRE_FALSE(want.valid);
+            continue;
+        }
+        std::vector<size_t> bins;
         for (Histogram const &h : populated_front(frontier).hists)
         {
             bins.push_back(h.size());
