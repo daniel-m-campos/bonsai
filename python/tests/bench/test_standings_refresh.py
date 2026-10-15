@@ -743,3 +743,39 @@ def test_supersede_leaves_a_plane_ab_behind_when_its_axis_did_not_run(monkeypatc
             "ab-gpu-2.1.0.jsonl",
         ]
     ]
+
+
+def test_create_pod_walks_the_cpu_flavors_in_order(monkeypatch):
+    tried = []
+
+    def api(url, key, payload=None, method="POST"):
+        assert payload is not None
+        tried.append((payload["cpu"]["id"], payload["cpu"]["vcpuCount"], payload["disk"]))
+        if payload["cpu"]["id"] != "cpu3c":
+            raise OSError("500: no instances with the requested specifications")
+        return {"id": "pod-cpu3c"}
+
+    monkeypatch.setattr(standings_refresh, "_api", api)
+    monkeypatch.setattr(standings_refresh, "_pod_named", lambda key, name: "")
+    pod = standings_refresh._create_pod("k", "pub", plane="cpu", vcpu=16, gpus=())
+    assert pod == "pod-cpu3c"
+    assert tried == [("cpu5g", 16, 30), ("cpu5c", 16, 30), ("cpu3g", 16, 20), ("cpu3c", 16, 20)]
+
+
+def test_create_pod_gives_up_on_the_cpu_ladder_at_the_deadline(monkeypatch):
+    def refuse(url, key, payload=None, method="POST"):
+        raise OSError("500: no instances")
+
+    clock = iter([0.0, 0.0, 10.0**9])
+    monkeypatch.setattr(standings_refresh, "_api", refuse)
+    monkeypatch.setattr(standings_refresh, "_pod_named", lambda key, name: "")
+    monkeypatch.setattr(standings_refresh.time, "sleep", lambda s: None)
+    monkeypatch.setattr(standings_refresh.time, "time", lambda: next(clock))
+    with pytest.raises(SystemExit, match="no usable cpu pod after 2 passes over 4 candidates"):
+        standings_refresh._create_pod("k", "pub", plane="cpu", vcpu=16, gpus=())
+
+
+def test_dry_run_prints_the_cpu_ladder(capsys):
+    standings_refresh._dry_run_datacenters(None, [("cpu", [])], ())
+    out = capsys.readouterr().out
+    assert "cpu: the flavors, in order, each unpinned: cpu5g, cpu5c, cpu3g, cpu3c" in out

@@ -117,15 +117,17 @@ BANNED_DATACENTERS = ("EUR-IS-2",)
 STOCK_ORDER = ("HIGH", "MEDIUM", "LOW")
 
 # The CPU rental: the cpu A/B's host, and the cpu axes' under
-# --cpu-plane-host cpupod. cpu5g is the general-purpose CPU5 flavor at 4GB of
-# RAM per vCPU, which covers both cpu cells with room to spare. Not a knob:
-# CPU_DISK_GB below is pinned at the CPU5 disk cap, so any other flavor fails
-# at create.
-CPU_FLAVOR = "cpu5g"
+# --cpu-plane-host cpupod. The create ladder, tried in order, each unpinned:
+# a cpu flavor has no per-region stock reading, and an unpinned create is
+# refused only once every region is. cpu5g is the general-purpose CPU5 flavor
+# at 4GB of RAM per vCPU, which covers both cpu cells with room to spare; the
+# later rungs are the compute-optimised CPU5 and the CPU3 pair, where three
+# release refreshes landed by hand once cpu5g was out of stock everywhere.
+CPU_FLAVORS = ("cpu5g", "cpu5c", "cpu3g", "cpu3c")
 CPU_VCPU = 16
 # CPU pods cap the container disk far below a GPU pod's 80GB: the API refuses
 # anything over 20GB on the CPU3 flavors and 30GB on the CPU5 ones.
-CPU_DISK_GB = 30
+CPU_DISK_GB = {"cpu5": 30, "cpu3": 20}
 GPU_DISK_GB = 80
 PLANE_GPU = "gpu"
 PLANE_CPU = "cpu"
@@ -368,7 +370,7 @@ def _cpu_pod_sized(sessions: list[tuple[str, list[str]]], cpu_vcpu: int) -> bool
     print(
         f"cpu plane: {what} at {needed}t need >= {needed} vCPU (one "
         f"per thread, because a cpu pod caps by cpuset); renting "
-        f"{cpu_vcpu} x {CPU_FLAVOR}"
+        f"{cpu_vcpu} vCPU on the first stocked of {', '.join(CPU_FLAVORS)}"
     )
     if cpu_vcpu < needed:
         print(
@@ -589,14 +591,22 @@ def _refresh_title(axes: list[str]) -> str:
     return f"bench(standings): refresh {len(axes)} axes"
 
 
+def cpu_disk_gb(flavor: str) -> int:
+    """The container disk a CPU flavor's family caps at."""
+    return CPU_DISK_GB[flavor[:4]]
+
+
 def _dry_run_datacenters(
     key: str | None, sessions: list[tuple[str, list[str]]], gpus: tuple[str, ...]
 ):
-    """Print the datacenters each GPU create would try, renting nothing.
+    """Print what each create would try, renting nothing.
 
-    This is the only way to exercise the stock reading without buying a
-    pod, so it hits the live catalog rather than reporting a plan.
+    The CPU ladder is a list, printed as one. The GPU stock reading is the
+    only way to exercise the catalog without buying a pod, so it hits the
+    live catalog rather than reporting a plan.
     """
+    if any(plane == PLANE_CPU for plane, _ in sessions):
+        print(f"cpu: the flavors, in order, each unpinned: {', '.join(CPU_FLAVORS)}")
     if not any(plane == PLANE_GPU for plane, _ in sessions):
         return
     if not key:
@@ -939,8 +949,10 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int, gpus: tuple[str
 
     The GPU create walks the cards in ``gpus`` in order, one create per
     stocked datacenter then unpinned, so a later card is tried only once
-    the one before it is exhausted everywhere. The CPU create is unpinned:
-    a cpu flavor is not a device with a per-region stock reading.
+    the one before it is exhausted everywhere. The CPU create walks
+    ``CPU_FLAVORS`` in order, each unpinned: a cpu flavor is not a device
+    with a per-region stock reading, and an unpinned create is refused only
+    once every region is.
     """
     name = f"bonsai-standings-{plane}-{time.strftime('%Y%m%d-%H%M')}"
     body: dict[str, Any] = {
@@ -950,15 +962,17 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int, gpus: tuple[str
         "ports": ["22/tcp"],
         "env": {"PUBLIC_KEY": pubkey},
     }
+    bodies: list[dict[str, Any]] = []
     if plane == PLANE_CPU:
-        body |= {"cpu": {"id": CPU_FLAVOR, "vcpuCount": vcpu}, "disk": CPU_DISK_GB}
-        bodies = [body]
+        for flavor in CPU_FLAVORS:
+            bodies.append(
+                body | {"cpu": {"id": flavor, "vcpuCount": vcpu}, "disk": cpu_disk_gb(flavor)}
+            )
     else:
         # One datacenter per attempt: a multi-entry dataCenterIds list can
         # 400 on the create schema. Per card, the unpinned body stays last
         # so an empty or failed stock reading is never worse than not
         # pinning.
-        bodies = []
         for gpu in gpus:
             card = body | {"gpu": {"id": gpu, "count": 1}, "disk": GPU_DISK_GB}
             bodies += [card | {"dataCenterIds": [dc]} for dc in stocked_datacenters(gpu, key)]
@@ -969,7 +983,7 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int, gpus: tuple[str
         attempt += 1
         for candidate in bodies:
             where = ",".join(candidate.get("dataCenterIds", ["unpinned"]))
-            hardware = (candidate.get("gpu") or {}).get("id", CPU_FLAVOR)
+            hardware = (candidate.get("gpu") or candidate["cpu"])["id"]
             try:
                 out = _api(f"{REST}/pods", key, candidate)
                 if out.get("id"):
