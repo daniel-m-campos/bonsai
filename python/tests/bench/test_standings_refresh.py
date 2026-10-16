@@ -779,3 +779,12 @@ def test_dry_run_prints_the_cpu_ladder(capsys):
     standings_refresh._dry_run_datacenters(None, [("cpu", [])], ())
     out = capsys.readouterr().out
     assert "cpu: the flavors, in order, each unpinned: cpu5g, cpu5c, cpu3g, cpu3c" in out
+
+
+def test_the_pod_env_carries_the_cpu_ab_cells():
+    """The pod script reads its cells from the driver, so a session with no
+    axes still fits both cpu A/B cells at the stated commit."""
+    env = standings_refresh._pod_env([], "abc123", "2.7.0", standings_refresh.PLANE_CPU)
+    assert env.startswith("env AXES='' GIT_SHA='abc123' PREV_VERSION='2.7.0' ")
+    assert f"ANCHOR_VERSION='{standings_refresh.ANCHOR_VERSION}' PLANE='cpu' " in env
+    assert env.endswith("AB_CPU_AXES='cpu-tall cpu-wide'")

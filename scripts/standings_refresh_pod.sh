@@ -135,8 +135,20 @@ AB_GPU_CELLS=("1000000 100" "16000000 100")
 AB_GPU_GROWERS=(cuda_depthwise cuda_levelwise)
 AB_GPU_REPS=2
 AB_CPU_GROWERS=(levelwise depthwise leafwise)
-AB_CPU_REPS=6
+# The cells, one per axis, the driver's AB_CPU_AXES; the A/B registers
+# under the first and rides behind it when that axis runs here.
+AB_CPU_AXES="${AB_CPU_AXES:-cpu-tall cpu-wide}"
 CPU_AB_AXIS=cpu-tall
+# Reps per cell: the tall cell's fits are seconds and its 6-rep min settles a
+# 2% band (18 reps once put a 4-rep +14% at -2%); the wide cell's fits run a
+# minute or more per arm on a cpuset host that spread 0.7% at tall, so its
+# min is over 2 like the gpu cells'.
+ab_cpu_reps() {  # <axis>
+    case "$1" in
+        cpu-wide) echo 2 ;;
+        *) echo 6 ;;
+    esac
+}
 if [ "$PLANE" = cpu ]; then AB_ENV=(env OMP_WAIT_POLICY=passive); else AB_ENV=(env); fi
 
 wheel_python() {  # <version>; the interpreter of a venv holding that wheel
@@ -185,12 +197,14 @@ fi
 run_cpu_ab() {  # <threads>
     [ "$PLANE" = cpu ] || return 0
     [ "${#AB_ARMS[@]}" -gt 1 ] || return 0
-    rows=$(spec_field "$CPU_AB_AXIS" "s['cells'][0]['rows']")
-    cols=$(spec_field "$CPU_AB_AXIS" "s['cells'][0]['cols']")
     : > /root/standings/ab-cpu.jsonl
-    for rep in $(seq "$AB_CPU_REPS"); do
-        for grower in "${AB_CPU_GROWERS[@]}"; do
-            ab_arms /root/standings/ab-cpu.jsonl "$grower" "$rows" "$cols" "$1"
+    for axis in $AB_CPU_AXES; do
+        rows=$(spec_field "$axis" "s['cells'][0]['rows']")
+        cols=$(spec_field "$axis" "s['cells'][0]['cols']")
+        for rep in $(seq "$(ab_cpu_reps "$axis")"); do
+            for grower in "${AB_CPU_GROWERS[@]}"; do
+                ab_arms /root/standings/ab-cpu.jsonl "$grower" "$rows" "$cols" "$1"
+            done
         done
     done
 }

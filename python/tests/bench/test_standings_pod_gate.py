@@ -348,3 +348,59 @@ def test_the_driver_registers_the_cpu_ab_under_the_axis_the_pod_fits_it_at():
     assert match, "the pod script names no CPU_AB_AXIS"
     assert standings_refresh.AB_AXES[standings_refresh.PLANE_CPU] == match.group(1)
     assert standings_refresh.AB_AXES[standings_refresh.PLANE_GPU] == (standings_refresh.PARITY_AXIS)
+
+
+def _pod_cpu_ab_cells() -> list[str]:
+    """The cells the pod fits when the driver names none, lifted from the script."""
+    match = re.search(r'^AB_CPU_AXES="\$\{AB_CPU_AXES:-([^}]+)\}"$', POD_SCRIPT.read_text(), re.M)
+    assert match, "the pod script reads no AB_CPU_AXES"
+    return match.group(1).split()
+
+
+def _pod_cpu_ab_reps(axis: str) -> int:
+    """The reps the pod fits one cpu A/B cell for, by running its own function."""
+    text = POD_SCRIPT.read_text()
+    match = re.search(r"^ab_cpu_reps\(\) \{.*?^\}$", text, re.M | re.S)
+    assert match, "the pod script has no ab_cpu_reps"
+    out = subprocess.run(
+        ["bash", "-c", f"{match.group(0)}\nab_cpu_reps {axis}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return int(out.stdout.strip())
+
+
+def test_the_cpu_ab_fits_the_tall_and_wide_cells_the_driver_names():
+    """The wide cell is where the host levers land, so the A/B fits it by
+    default; the driver and the pod script's fallback name the same cells,
+    the first of them the axis the A/B registers under."""
+    cells = _pod_cpu_ab_cells()
+    assert cells == list(standings_refresh.AB_CPU_AXES) == ["cpu-tall", "cpu-wide"]
+    assert cells[0] == standings_refresh.AB_AXES[standings_refresh.PLANE_CPU]
+    assert _pod_cpu_ab_reps("cpu-tall") == 6
+    assert _pod_cpu_ab_reps("cpu-wide") == 2
+
+
+def test_the_cpu_ab_takes_its_cells_from_the_environment():
+    """The driver passes AB_CPU_AXES; a one-cell value fits that cell only."""
+    text = POD_SCRIPT.read_text()
+    match = re.search(r"^run_cpu_ab\(\) \{.*?^\}$", text, re.M | re.S)
+    assert match, "the pod script has no run_cpu_ab"
+    stub = (
+        "AB_ARMS=(old new); AB_CPU_GROWERS=(levelwise); PLANE=cpu\n"
+        'spec_field() { echo "$1:$2"; }\n'
+        "ab_cpu_reps() { echo 1; }\n"
+        'ab_arms() { echo "$2 $3 $4 $5"; }\n'
+        "mkdir -p /root/standings 2>/dev/null || true\n"
+    )
+    fn = match.group(0).replace("/root/standings/ab-cpu.jsonl", "/dev/null")
+    out = subprocess.run(
+        ["bash", "-c", f"{stub}{fn}\nAB_CPU_AXES='cpu-wide' run_cpu_ab 12"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert out.stdout.splitlines() == [
+        "levelwise cpu-wide:s['cells'][0]['rows'] cpu-wide:s['cells'][0]['cols'] 12"
+    ]
