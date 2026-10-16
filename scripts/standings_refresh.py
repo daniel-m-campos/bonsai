@@ -146,6 +146,12 @@ PARITY_BAND_PCT = AB_BAND_PCT
 
 AB_FILES = {PLANE_GPU: "ab-gpu.jsonl", PLANE_CPU: "ab-cpu.jsonl"}
 AB_AXES = {PLANE_GPU: "gpu-tall", PLANE_CPU: "cpu-tall"}
+# The cells the cpu A/B fits, one per axis, in the order the pod runs them:
+# the tall cell is the gate's original and the wide cell is where the host
+# levers land (decisions 157 and 159 read -40% and -21% there and under 5%
+# at tall), so a release without it has no same-pod number for its own
+# headline. The pod script reads the list from its environment.
+AB_CPU_AXES = ("cpu-tall", "cpu-wide")
 
 # Every axis is the stem of its dated results file AND the name of the
 # branch the pod script runs to produce it.
@@ -365,7 +371,7 @@ def _cpu_pod_sized(sessions: list[tuple[str, list[str]]], cpu_vcpu: int) -> bool
     cpu_session = next((sax for plane, sax in sessions if plane == PLANE_CPU), None)
     if cpu_session is None:
         return True
-    needed = max(spec_threads(axis) for axis in cpu_session or [AB_AXES[PLANE_CPU]])
+    needed = max(spec_threads(axis) for axis in cpu_session or list(AB_CPU_AXES))
     what = ", ".join(cpu_session) or "the cpu A/B"
     print(
         f"cpu plane: {what} at {needed}t need >= {needed} vCPU (one "
@@ -826,6 +832,36 @@ def _open_refresh_pr(
     )
 
 
+def _pod_env(axes: list[str], sha: str, prev_version: str, plane: str) -> str:
+    """The ``env`` prefix that tells the pod script what to measure.
+
+    Parameters
+    ----------
+    axes : list[str]
+        The axes this session fits, empty for the cpu A/B alone.
+    sha : str
+        The commit the pod checks out and the rows are stamped with.
+    prev_version : str
+        The wheel of the A/B's old arm; empty skips that arm.
+    plane : str
+        ``gpu`` or ``cpu``.
+
+    Returns
+    -------
+    str
+        One ``env`` command carrying every variable the pod script reads,
+        the cpu A/B cells included, so the driver is their one home.
+    """
+    return (
+        f"env AXES='{','.join(axes)}' "
+        f"GIT_SHA='{sha}' "
+        f"PREV_VERSION='{prev_version}' "
+        f"ANCHOR_VERSION='{ANCHOR_VERSION}' "
+        f"PLANE='{plane}' "
+        f"AB_CPU_AXES='{' '.join(AB_CPU_AXES)}'"
+    )
+
+
 def _run_session(
     key: str,
     args: argparse.Namespace,
@@ -883,11 +919,7 @@ def _run_session(
         subprocess.run(
             [
                 *ssh,
-                f"nohup env AXES='{','.join(axes)}' "
-                f"GIT_SHA='{sha}' "
-                f"PREV_VERSION='{args.prev_version}' "
-                f"ANCHOR_VERSION='{ANCHOR_VERSION}' "
-                f"PLANE='{plane}' "
+                f"nohup {_pod_env(axes, sha, args.prev_version, plane)} "
                 "bash /root/standings_refresh_pod.sh "
                 "> /root/refresh.log 2>&1 & echo launched",
             ],
