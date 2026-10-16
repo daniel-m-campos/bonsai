@@ -138,6 +138,9 @@ Each plane's tall cell, three wheels interleaved on the pod that measured the pl
 
 | cell | grower | anchor | old | new | vs old | vs anchor | old RSS | new RSS | RSS delta |
 |---|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| 16384x16384 | depthwise | 155.12s | 102.40s | 103.79s | +1.4% | -33.1% **moved** | 7.25GB | 7.35GB | +1.4% |
+| 16384x16384 | leafwise | 103.32s | 70.94s | 71.20s | +0.4% | -31.1% **moved** | 5.77GB | 5.76GB | -0.2% |
+| 16384x16384 | levelwise | 228.47s | 208.97s | 112.87s | -46.0% **moved** | -50.6% **moved** | 7.66GB | 7.64GB | -0.3% |
 | 2097152x128 | depthwise | 13.34s | 11.36s | 11.35s | -0.1% | -14.9% **moved** | 1.83GB | 1.82GB | -0.5% |
 | 2097152x128 | leafwise | 13.83s | 11.23s | 11.32s | +0.8% | -18.2% **moved** | 1.82GB | 1.82GB | +0.0% |
 | 2097152x128 | levelwise | 11.87s | 10.17s | 9.74s | -4.2% | -17.9% **moved** | 1.84GB | 1.83GB | -0.5% |
