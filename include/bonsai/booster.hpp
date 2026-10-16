@@ -658,6 +658,49 @@ void renew_round(Obj const &objective, Tree &tree,
 }
 } // namespace detail
 
+// The resident objective's arming state, one home for the single-target and
+// the K-target boosters. sync() disarms when the runtime gate closed or the
+// fit changed (the device scores come home first, so the host path resumes
+// with the state it would have had) and arms through `arm` when the gate is
+// open and nothing is armed; it answers whether the round may run resident.
+// The fit is a minted token, not an address: a stack Dataset's address
+// repeats every fold iteration deterministically, so an address here would
+// skip re-arming for a DIFFERENT fold at the same depth, leaving the previous
+// fold's labels, scores and rows live (pins: the resident suite's fold and
+// hatch cases).
+struct ResidentArm
+{
+    bool  active = false;
+    FitId fit{};
+
+    template <typename Grower, typename Arm>
+    bool sync(Grower &grower, Dataset const &train, bool runtime_open,
+              std::span<float> host_scores, Arm &&arm)
+    {
+        if (active && (!runtime_open || fit != train.fit_identity()))
+        {
+            grower.resident_end(host_scores);
+            active = false;
+            fit    = FitId{};
+        }
+        if (runtime_open && !active)
+        {
+            active = arm();
+            fit    = active ? train.fit_identity() : FitId{};
+        }
+        return active;
+    }
+};
+
+// The per-fit half of resident-objective-eligibility: no DART, the escape
+// hatch unset, no renewal the host must reproject. A view is eligible: the
+// epilogue walks its rows and leaves the rest untouched.
+inline bool resident_round_open(float dart_drop_rate, bool reproject_on_host)
+{
+    bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
+    return dart_drop_rate <= 0.0F && !host_forced && !reproject_on_host;
+}
+
 // One boosting round in update_one_iter runs in a fixed order that several
 // features depend on: DART drop/rescale first (it rewrites earlier trees'
 // contributions), then gradients, then sampling (so a gradient-reading
@@ -839,22 +882,18 @@ class Booster final : public Ensemble<Gr, Sa>
         if constexpr (has_device_objective<objective_type> &&
                       !sampler_traits<sampler_type>::reads_gradients)
         {
-            bool const runtime_ok = resident_round_available();
-            if (resident_active_ &&
-                (!runtime_ok || resident_fit_ != train.fit_identity()))
-            {
-                grower().resident_end(std::span<float>{scores_});
-                resident_active_ = false;
-                resident_fit_    = FitId{};
-            }
-            if (runtime_ok && !resident_active_)
-            {
-                resident_active_ = grower().resident_begin(
-                    train, device_objective_of(objective_),
-                    std::span<float const>{scores_}, config().learning_rate);
-                resident_fit_ = resident_active_ ? train.fit_identity() : FitId{};
-            }
-            if (resident_active_)
+            bool const open =
+                resident_round_open(config().dart_drop_rate,
+                                    has_renew_leaf && reproject_monotone_on_host());
+            bool const armed = resident_.sync(
+                grower(), train, open, std::span<float>{scores_},
+                [&]
+                {
+                    return grower().resident_begin(
+                        train, device_objective_of(objective_),
+                        std::span<float const>{scores_}, config().learning_rate);
+                });
+            if (armed)
             {
                 resident_round(train);
                 return true;
@@ -865,16 +904,6 @@ class Booster final : public Ensemble<Gr, Sa>
 
     static constexpr bool has_renew_leaf =
         requires(Obj const &o, std::span<float> r) { o.renew_leaf(r); };
-
-    // The per-fit half of resident-objective-eligibility: no DART, the
-    // escape hatch unset, no renewal the host must reproject. A view is
-    // eligible: the epilogue walks its rows and leaves the rest untouched.
-    bool resident_round_available() const
-    {
-        bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
-        return config().dart_drop_rate <= 0.0F && !host_forced &&
-               !(has_renew_leaf && reproject_monotone_on_host());
-    }
 
     bool reproject_monotone_on_host() const
     {
@@ -1096,14 +1125,8 @@ class Booster final : public Ensemble<Gr, Sa>
     objective_type   objective_;
     // Stale while the resident objective is armed (the device copy is
     // authoritative); resident_end syncs it before any host-path read.
-    std::vector<float> scores_;
-    bool               resident_active_ = false;
-    // The fit the resident state is armed for. A minted token, not an
-    // address: a stack Dataset's address repeats every fold iteration
-    // deterministically, so an address here would skip re-arming for a
-    // DIFFERENT fold at the same depth, leaving the previous fold's labels,
-    // scores and rows live.
-    FitId                         resident_fit_{};
+    std::vector<float>            scores_;
+    ResidentArm                   resident_;
     detail::EpochCache<walk_type> walk_;
 };
 
