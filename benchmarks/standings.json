@@ -7,7 +7,7 @@
     "date": "2026-10-15",
     "plane": "gpu",
     "refreshed_for": "2.8.0",
-    "as_of_decision": 155,
+    "as_of_decision": 160,
     "companion": "parity-2026-10.jsonl",
     "hash_set": "cb8c85e2f439f1a2",
     "refs": {
@@ -54,7 +54,7 @@
     "date": "2026-10-15",
     "plane": "cpu",
     "refreshed_for": "2.8.0",
-    "as_of_decision": 155,
+    "as_of_decision": 160,
     "hash_set": "f7e55948330791dd",
     "refs": {
       "xgboost": "3.3.0",
