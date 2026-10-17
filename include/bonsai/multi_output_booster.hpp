@@ -5,11 +5,14 @@
 #include "bonsai/config/errors.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/monotone.hpp"
 #include "bonsai/multi_output_ensemble.hpp"
 #include "bonsai/objective.hpp"
+#include "bonsai/objective_traits.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/row_view.hpp"
 #include "bonsai/sampler.hpp"
+#include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <cassert>
@@ -27,7 +30,11 @@ namespace bonsai
 // of the label block and score matrix through Booster's own compute, renewal
 // and score update, so a fit with every row selected matches K single-target
 // fits bit for bit (pins: "a K-target fit matches K single-target fits bit
-// for bit"). No DART, resident round or device prediction, as for multiclass.
+// for bit"). Under resident-objective-eligibility the round arms the device
+// plane once with the whole block and grows tree k from the device's column
+// k, so it matches K resident single-target fits bit for bit too (pins: "a
+// K-target resident fit matches K resident fits"). No DART or device
+// prediction, as for multiclass.
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
 class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
 {
@@ -69,6 +76,11 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
             this->broadcast_init_scores(n);
             this->replay_warm_start(train, n);
             column_.resize(n);
+        }
+
+        if (try_resident_round(train))
+        {
+            return;
         }
 
         for (size_t k = 0; k < n_k; ++k)
@@ -121,6 +133,39 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
     }
 
   private:
+    static constexpr bool has_renew_leaf =
+        requires(Obj const &o, std::span<float> r) { o.renew_leaf(r); };
+
+    bool try_resident_round(Dataset const &train)
+    {
+        if constexpr (has_device_objective<Obj> && !sampler_traits<Sa>::reads_gradients)
+        {
+            bool const open =
+                resident_round_open(this->config().dart_drop_rate,
+                                    reproject_monotone_on_host<tree_type>(
+                                        has_renew_leaf, monotone_constraints_));
+            if (resident_.sync(this->grower(), train, open,
+                               std::span<float>{this->scores()}, objective_,
+                               this->config().learning_rate))
+            {
+                resident_round(train);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void resident_round(Dataset const &train)
+    {
+        for (size_t k = 0; k < n_outputs(); ++k)
+        {
+            this->grower().resident_select(k);
+            RowSelection const rows = this->select_rows(train);
+            auto res = this->grower().grow(train, floats_view{}, floats_view{}, rows);
+            this->mutable_trees().push_back(std::move(res.tree));
+        }
+    }
+
     void require_width(Dataset const &train) const
     {
         if (train.n_targets() != n_outputs())
@@ -185,6 +230,7 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
     objective_type                  objective_;
     std::vector<std::vector<float>> targets_;
     std::vector<float>              column_;
+    ResidentState                   resident_;
 };
 
 } // namespace bonsai

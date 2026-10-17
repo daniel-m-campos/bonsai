@@ -26,7 +26,7 @@ using namespace bonsai; // NOLINT
 
 namespace
 {
-constexpr size_t k_rows     = 240;
+constexpr size_t k_rows     = 2048;
 constexpr size_t k_features = 4;
 constexpr size_t k_targets  = 3;
 constexpr size_t k_rounds   = 4;
@@ -162,13 +162,13 @@ TEST_CASE("MultiOutputBooster: a K-target fit matches K single-target fits bit f
     require_matches_single_fits(grower, objective, false);
 }
 
-// The CUDA growers take the K-wide fit through the host round trip every
-// multi-output fit makes (host gradients up, leaf ids down), and a device fit
-// is bit-reproducible on one device and build, so the same equality holds
-// against single fits that take the same round trip. A single CUDA fit left
-// to itself arms the device-resident objective instead, whose gradients
-// differ from the host's at rounding level (test_cuda_resident.cpp pins that
-// gap), so the singles here run under the host-objective hatch.
+// A device fit is bit-reproducible on one device and build, so the equality
+// holds on the CUDA growers on both of their paths: under the host-objective
+// hatch every fit takes the host round trip (host gradients up, leaf ids
+// down), and with the hatch unset every fit arms the resident objective,
+// whose gradients differ from the host's at rounding level
+// (test_cuda_resident.cpp pins that gap), the K-target fit arming once with
+// the whole block and growing tree k from the device's column k.
 TEST_CASE("MultiOutputBooster: a K-target fit on a CUDA grower matches K device fits",
           "[cuda][booster][multi_target][fit]")
 {
@@ -181,6 +181,20 @@ TEST_CASE("MultiOutputBooster: a K-target fit on a CUDA grower matches K device 
     auto const objective = GENERATE(as<std::string_view>{}, "mse", "huber");
     CAPTURE(grower, objective);
     require_matches_single_fits(grower, objective, true);
+}
+
+TEST_CASE("MultiOutputBooster: a K-target resident fit matches K resident fits",
+          "[cuda][resident][booster][multi_target][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto const grower    = GENERATE(as<std::string_view>{}, "cuda_depthwise",
+                                    "cuda_levelwise", "cuda_leafwise");
+    auto const objective = GENERATE(as<std::string_view>{}, "mse", "huber", "quantile");
+    CAPTURE(grower, objective);
+    require_matches_single_fits(grower, objective, false);
 }
 
 TEST_CASE("MultiOutputBooster: eval is the objective's loss pooled over the block",

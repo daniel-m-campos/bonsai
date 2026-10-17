@@ -245,10 +245,17 @@ class CudaHistogramEngine
     // --- Device-resident objective, under resident-objective-eligibility.
     // resident_begin uploads labels, weights and seed scores once and returns
     // false when the objective or the capacity does not hold, leaving the
-    // caller on the host path. resident_end downloads the scores so the host
-    // copy is authoritative again.
+    // caller on the host path. The labels and the seed scores are the
+    // Dataset's n x n_targets row-major block (a vector at width 1), held on
+    // the device as n_targets columns; resident_select names the column the
+    // next tree derives its gradients from and fuses its leaves into, column
+    // 0 until called, so a K-target round is K selects and K trees over one
+    // arming (pins: "a K-target resident fit matches K resident fits").
+    // resident_end downloads every column back into the row-major block so
+    // the host copy is authoritative again.
     bool resident_begin(Dataset const &ds, DeviceObjective objective,
                         std::span<float const> initial_scores, float learning_rate);
+    void resident_select(size_t target);
     // The leaf plane's arming: the level plane's gate plus the leaf plane's
     // own, applied once per fit over EVERY feature and the full leaf budget.
     // Feature subsampling can only narrow a tree's demand, so an arming that
