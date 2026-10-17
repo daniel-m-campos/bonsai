@@ -1,10 +1,10 @@
 #pragma once
 
-#include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/errors.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/multi_output_ensemble.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/row_view.hpp"
 #include "bonsai/sampler.hpp"
@@ -28,33 +28,25 @@ namespace bonsai
 // K-class softmax boosting: each round grows one tree per class on the
 // softmax gradients (grad_k = p_k - 1[y == k], hess_k = p_k (1 - p_k), the
 // true diagonal Hessian, not the factor-2 convention that halves every
-// Newton step; invariants: softmax-true-hessian). The Ensemble holds the
-// K-wide trees and answers every query over them; this class owns the round.
-// predict() emits argmax class ids and eval() is the multiclass logloss. The
-// 1-D Objective concept can't
-// express the K-output shape, which is why this is its own booster
-// dispatched via BoosterFor<{softmax, G, Sa}>.
+// Newton step; invariants: softmax-true-hessian). MultiOutputEnsemble holds
+// the K-wide trees and scores and answers every raw query over them; this
+// class owns the round. predict() emits argmax class ids and eval() is the
+// multiclass logloss. The 1-D Objective concept can't express the K-output
+// shape, which is why this is its own booster dispatched via
+// BoosterFor<{softmax, G, Sa}>.
 template <TreeGrower Gr, Sampler Sa>
-class MulticlassBooster final : public Ensemble<Gr, Sa>
+class MulticlassBooster final : public MultiOutputEnsemble<Gr, Sa>
 {
-    using Ensemble<Gr, Sa>::config;
-    using Ensemble<Gr, Sa>::grad;
-    using Ensemble<Gr, Sa>::grower;
-    using Ensemble<Gr, Sa>::hess;
-    using Ensemble<Gr, Sa>::init_score_at;
-    using Ensemble<Gr, Sa>::mutable_trees;
-    using Ensemble<Gr, Sa>::select_rows;
+    using Base = MultiOutputEnsemble<Gr, Sa>;
 
   public:
-    using grower_type  = Gr;
-    using sampler_type = Sa;
-    using tree_type    = typename Gr::Tree;
-    using Ensemble<Gr, Sa>::n_iters;
-    using Ensemble<Gr, Sa>::n_outputs;
-    using Ensemble<Gr, Sa>::trees;
+    using tree_type = typename Gr::Tree;
+    using Base::n_iters;
+    using Base::n_outputs;
+    using Base::trees;
 
     explicit MulticlassBooster(Config const &config)
-        : Ensemble<Gr, Sa>(config, config.objective.n_classes)
+        : Base(config, config.objective.n_classes)
     {
         if (n_outputs() < 2)
         {
@@ -66,20 +58,20 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
     {
         size_t const n   = train.plane_n_rows();
         size_t const n_k = n_outputs();
-        if (scores_.empty())
+        if (this->scores().empty())
         {
-            grad().resize(n);
-            hess().resize(n);
+            this->grad().resize(n);
+            this->hess().resize(n);
             if (trees().empty())
             {
                 seed_class_priors(train);
             }
-            broadcast_init_scores(n);
-            replay_warm_start(train, n);
+            this->broadcast_init_scores(n);
+            this->replay_warm_start(train, n);
         }
 
         std::vector<float> probs(n * n_k);
-        softmax_rows(scores_, n, n_k, probs);
+        softmax_rows(this->scores(), n, n_k, probs);
 
         // Sample weights scale grad/hess, matching the single-output booster;
         // w.empty() multiplies by exactly 1.0F, keeping unweighted fits
@@ -93,20 +85,18 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
                 {
                     float const p = probs[(i * n_k) + k];
                     float const y = class_of(train.labels()[i], n_k) == k ? 1.0F : 0.0F;
-                    float const wi = w.empty() ? 1.0F : w[i];
-                    grad()[i]      = (p - y) * wi;
-                    hess()[i]      = std::max(p * (1.0F - p), 1e-6F) * wi;
+                    float const wi  = w.empty() ? 1.0F : w[i];
+                    this->grad()[i] = (p - y) * wi;
+                    this->hess()[i] = std::max(p * (1.0F - p), 1e-6F) * wi;
                 });
-            auto [tree, leaf_values, leaf_ids, leaf_bounds] =
-                grower().grow(train, grad(), hess(), select_rows(train));
+            auto [tree, leaf_values, leaf_ids, leaf_bounds] = this->grower().grow(
+                train, this->grad(), this->hess(), this->select_rows(train));
             // Over the plane, one slot per (row, class), for the same reason
             // the binary booster gives: a repeated row id must not have its
             // prediction advanced once per occurrence.
-            parallel::for_each_index(
-                n, [&](size_t i)
-                { scores_[(i * n_k) + k] += config().learning_rate * leaf_values[i]; });
-            mutable_trees().push_back(std::move(tree));
-            grower().recycle(std::move(leaf_values), std::move(leaf_ids));
+            this->advance_output(k, n, leaf_values);
+            this->mutable_trees().push_back(std::move(tree));
+            this->grower().recycle(std::move(leaf_values), std::move(leaf_ids));
         }
     }
 
@@ -114,7 +104,7 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
     void predict_at(features_view X, floats_out y_hat, size_t n_rounds) const override
     {
         assert(y_hat.size() == X.extent(0));
-        label_rows(raw_scores(X, n_rounds), y_hat);
+        label_rows(this->raw_scores(X, n_rounds), y_hat);
     }
 
     // Row-wise softmax of the class logits: out is n_rows * K, row-major
@@ -122,88 +112,33 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
     void predict_proba(features_view X, std::span<double> out) const override
     {
         assert(out.size() == X.extent(0) * n_outputs());
-        softmax_rows(raw_scores(X, 0), X.extent(0), n_outputs(), out);
+        softmax_rows(this->raw_scores(X, 0), X.extent(0), n_outputs(), out);
     }
 
     void predict_at_binned(Dataset const &bins, floats_out y_hat,
                            size_t n_rounds) const override
     {
         assert(y_hat.size() == bins.view_n_rows());
-        label_rows(raw_scores_binned(bins, n_rounds), y_hat);
+        label_rows(this->raw_scores_binned(bins, n_rounds), y_hat);
     }
 
     void predict_proba_binned(Dataset const &bins, std::span<double> out) const override
     {
         assert(out.size() == bins.view_n_rows() * n_outputs());
-        softmax_rows(raw_scores_binned(bins, 0), bins.view_n_rows(), n_outputs(), out);
+        softmax_rows(this->raw_scores_binned(bins, 0), bins.view_n_rows(), n_outputs(),
+                     out);
     }
 
     // Multiclass logloss on raw scores.
     float eval(features_view X, floats_view labels) const override
     {
-        return logloss_from_scores(raw_scores(X, 0), labels);
-    }
-
-    // --- Early-stopping seam (IBooster): width-K raw-score matrix.
-    size_t score_width() const override
-    {
-        return n_outputs();
-    }
-
-    void seed_validation_scores(features_view X, std::span<float> out,
-                                size_t n_rounds) const override
-    {
-        if (n_rounds > 0)
-        {
-            auto const scores = raw_scores(X, n_rounds);
-            std::ranges::copy(scores, out.begin());
-            return;
-        }
-        for (size_t i = 0; i < out.size(); ++i)
-        {
-            out[i] = this->init_score_at(i % n_outputs());
-        }
+        return logloss_from_scores(this->raw_scores(X, 0), labels);
     }
 
     float validation_loss(std::span<float const> scores,
                           floats_view            labels) const override
     {
         return logloss_from_scores(scores, labels);
-    }
-
-    void predict_staged(features_view X, floats_out out) const override
-    {
-        size_t const n = X.extent(0);
-        for (size_t r = 0; r < n_iters(); ++r)
-        {
-            predict_at(X, floats_out{out.data() + (r * n), n}, r + 1);
-        }
-    }
-
-    void predict_staged_binned(Dataset const &bins, floats_out out) const override
-    {
-        size_t const n = bins.view_n_rows();
-        for (size_t r = 0; r < n_iters(); ++r)
-        {
-            predict_at_binned(bins, floats_out{out.data() + (r * n), n}, r + 1);
-        }
-    }
-
-    // Save/load accessors: the per-class log priors are the extra the
-    // multiclass envelope carries beyond the trees.
-    std::vector<float> const &init_scores() const
-    {
-        return this->init_scores_per_output();
-    }
-    void load_state(std::vector<tree_type> trees, std::vector<float> init_scores)
-    {
-        if (trees.size() % n_outputs() != 0)
-        {
-            throw std::invalid_argument(
-                "load_state: tree count is not a multiple of n_classes");
-        }
-        this->set_init_scores(std::move(init_scores));
-        mutable_trees() = std::move(trees);
     }
 
   private:
@@ -226,35 +161,6 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
             priors[k] = static_cast<float>(std::log(std::max(counts[k], 1.0) / n_fit));
         }
         this->set_init_scores(std::move(priors));
-    }
-
-    void broadcast_init_scores(size_t n)
-    {
-        size_t const n_k = n_outputs();
-        scores_.assign(n * n_k, 0.0F);
-        for (size_t i = 0; i < n; ++i)
-        {
-            std::ranges::copy(init_scores(),
-                              std::span{scores_}.subspan(i * n_k, n_k).begin());
-        }
-    }
-
-    // Warm start: replay every loaded tree's train contribution into the
-    // scores; a no-op for a fresh booster.
-    void replay_warm_start(Dataset const &train, size_t n)
-    {
-        size_t const n_k = n_outputs();
-        for (size_t t = 0; t < trees().size(); ++t)
-        {
-            std::vector<float> raw(n, 0.0F);
-            detail::accumulate_train_contribution(trees()[t], train, raw);
-            size_t const k      = t % n_k;
-            auto const   scores = std::mdspan(scores_.data(), n, n_k);
-            for (size_t i = 0; i < n; ++i)
-            {
-                scores[i, k] += config().learning_rate * raw[i];
-            }
-        }
     }
 
     static size_t class_of(float label, size_t n_k)
@@ -346,51 +252,7 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
         return static_cast<float>(total / static_cast<double>(n));
     }
 
-    // Raw (init + lr * tree sums) scores, n_rows x K, using the first
-    // n_rounds rounds (0 = all). accumulate(tree, raw) adds one tree's
-    // contribution over the rows; the two callers differ only in whether
-    // that routing reads features or bins.
-    template <typename Accumulate>
-    std::vector<float> raw_scores_over(size_t n, size_t n_rounds,
-                                       Accumulate const &accumulate) const
-    {
-        size_t const rounds = n_rounds == 0 ? n_iters() : std::min(n_rounds, n_iters());
-        std::vector<float> scores(n * n_outputs(), 0.0F);
-        std::vector<float> raw(n);
-        for (size_t k = 0; k < n_outputs(); ++k)
-        {
-            std::ranges::fill(raw, 0.0F);
-            auto const round_trees = std::mdspan(trees().data(), rounds, n_outputs());
-            for (size_t r = 0; r < rounds; ++r)
-            {
-                accumulate(round_trees[r, k], raw);
-            }
-            for (size_t i = 0; i < n; ++i)
-            {
-                scores[(i * n_outputs()) + k] =
-                    init_score_at(k) + (config().learning_rate * raw[i]);
-            }
-        }
-        return scores;
-    }
-
-    std::vector<float> raw_scores(features_view X, size_t n_rounds) const
-    {
-        return raw_scores_over(X.extent(0), n_rounds,
-                               [&](tree_type const &tree, std::vector<float> &raw)
-                               { tree.predict(X, raw); });
-    }
-
-    std::vector<float> raw_scores_binned(Dataset const &bins, size_t n_rounds) const
-    {
-        return raw_scores_over(
-            bins.view_n_rows(), n_rounds,
-            [&](tree_type const &tree, std::vector<float> &raw)
-            { detail::accumulate_view_contribution(tree, bins, raw); });
-    }
-
     // n_rows x K training accumulator.
-    std::vector<float> scores_;
 };
 
 } // namespace bonsai

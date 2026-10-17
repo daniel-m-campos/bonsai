@@ -4,6 +4,7 @@ add_executable(bonsai_tests
     unit/test_bin_mapper.cpp
     unit/test_bin_mappers.cpp
     unit/test_dataset.cpp
+    unit/test_multi_output_booster.cpp
     unit/test_row_view.cpp
     unit/test_csv.cpp
     unit/test_histogram.cpp

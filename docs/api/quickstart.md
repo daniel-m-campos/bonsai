@@ -42,7 +42,7 @@ pred = model.predict(X_test)
 model.save("model.msgpack")
 ```
 
-`BonsaiClassifier` handles binary and multiclass the sklearn way: arbitrary label values in, `classes_` out, `predict_proba` returning `(n, K)` probabilities. Both estimators duck-type the full sklearn contract (`get_params`, `clone`, `Pipeline`, `GridSearchCV`, `cross_val_score`, pickling) without importing sklearn at runtime.
+A 2-D `y` of shape `(n_rows, n_targets)` fits one tree per target per round and `predict` returns `(n_rows, n_targets)`, on both estimator and `Dataset` ([chapter 16](../guide/16-multi-target.md)). `BonsaiClassifier` handles binary and multiclass the sklearn way: arbitrary label values in, `classes_` out, `predict_proba` returning `(n, K)` probabilities. Both estimators duck-type the full sklearn contract (`get_params`, `clone`, `Pipeline`, `GridSearchCV`, `cross_val_score`, pickling) without importing sklearn at runtime.
 
 Constructor arguments are bonsai's own names and nothing else; a parameter dict written for XGBoost, LightGBM, or CatBoost goes through [`bonsai.interop`](reference.md#bonsai.interop) first. Anything without a first-class kwarg goes through `params`, as a `bonsai.Params` or a dict of the dotted keys:
 

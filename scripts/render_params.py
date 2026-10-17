@@ -104,6 +104,7 @@ EFFECTS = {
     # objective
     "objective.huber_delta": "huber objective: residual half-width of the L2 zone. Smaller behaves more like L1 (robust to outliers), larger like L2.",
     "objective.quantile_alpha": "quantile objective: the target quantile in (0, 1). 0.5 is the median; higher tilts predictions toward that upper quantile.",
+    "objective.n_targets": "regression objectives: targets per row, the width of a 2-D y. The Python API sets it from the label block; a fit grows one tree per target per round and predicts one column per target.",
     "objective.n_classes": "softmax objective: number of classes, labels 0 to K-1. Must match the data; sets the trees-per-round multiplier.",
     # metrics
     "metrics.fit": "Metric names reported during fit. Empty uses the objective's defaults. Reporting only, no effect on the model.",

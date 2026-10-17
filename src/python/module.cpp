@@ -156,18 +156,35 @@ MatrixArg resolve_matrix(nb::handle X, uint32_t device_id)
 struct VectorArg
 {
     std::optional<array_1d> host;
+    std::optional<array_2d> block;
     std::vector<float>      owned;
+    size_t                  width = 1;
 
     bonsai::floats_view view() const
     {
-        return host ? bonsai::floats_view{host->data(), host->shape(0)}
-                    : bonsai::floats_view{owned};
+        if (host)
+        {
+            return {host->data(), host->shape(0)};
+        }
+        if (block)
+        {
+            return {block->data(), block->shape(0) * block->shape(1)};
+        }
+        return bonsai::floats_view{owned};
     }
-    size_t size() const
+    size_t rows() const
     {
-        return host ? host->shape(0) : owned.size();
+        return host ? host->shape(0) : block ? block->shape(0) : owned.size() / width;
     }
 };
+
+void require_target_columns(size_t n_targets)
+{
+    if (n_targets == 0)
+    {
+        throw std::invalid_argument("y has no columns; a 2-D y is n_rows x n_targets");
+    }
+}
 
 VectorArg resolve_vector(nb::handle v, uint32_t device_id, char const *what)
 {
@@ -192,6 +209,29 @@ VectorArg resolve_vector(nb::handle v, uint32_t device_id, char const *what)
     return out;
 }
 
+VectorArg resolve_targets(nb::handle y, uint32_t device_id)
+{
+    if (cuda_2d device; nb::try_cast(y, device))
+    {
+        place_device_array(device, device_id, "y");
+        require_target_columns(device.shape(1));
+        VectorArg out;
+        out.width = device.shape(1);
+        out.owned.resize(device.shape(0) * device.shape(1));
+        bonsai::cuda_download(device.data(), out.owned.size(), out.owned.data());
+        return out;
+    }
+    if (array_2d block; nb::try_cast(y, block))
+    {
+        require_target_columns(block.shape(1));
+        VectorArg out;
+        out.block = block;
+        out.width = block.shape(1);
+        return out;
+    }
+    return resolve_vector(y, device_id, "y");
+}
+
 struct Inputs
 {
     MatrixArg                xarg;
@@ -203,18 +243,18 @@ Inputs resolve_inputs(nb::handle X, nb::handle y, nb::handle weight, uint32_t de
                       char const *weight_name, std::string_view where)
 {
     Inputs in{.xarg = resolve_matrix(X, device_id),
-              .yarg = resolve_vector(y, device_id, "y"),
+              .yarg = resolve_targets(y, device_id),
               .warg = std::nullopt};
     if (!weight.is_none())
     {
         in.warg = resolve_vector(weight, device_id, weight_name);
     }
-    if (in.yarg.size() != in.xarg.n_rows)
+    if (in.yarg.rows() != in.xarg.n_rows)
     {
         throw std::invalid_argument(
             std::format("{}len(y) must equal the row count", where));
     }
-    if (in.warg && in.warg->size() != in.xarg.n_rows)
+    if (in.warg && in.warg->rows() != in.xarg.n_rows)
     {
         throw std::invalid_argument(
             std::format("{}len({}) must equal the row count", where, weight_name));
@@ -371,18 +411,26 @@ ingest_training(MatrixArg const &X, bonsai::floats_view y, bonsai::floats_view w
     return loaded;
 }
 
-bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d const &y)
+bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d const &y,
+                                                 size_t n_targets)
 {
     size_t const n = X.shape(0);
+    if (y.shape(0) != n * n_targets)
+    {
+        throw std::invalid_argument(std::format(
+            "eval_set y has {} values for {} rows of {} target{}; a 2-D y flattens "
+            "row-major",
+            y.shape(0), n, n_targets, n_targets == 1 ? "" : "s"));
+    }
 
     bonsai::cli::FeatureBuffer buf;
     buf.n_rows     = n;
     buf.n_features = X.shape(1);
     buf.borrowed   = std::span{X.data(), n * X.shape(1)};
-    return bonsai::cli::LabeledData{.dataset  = {},
-                                    .features = std::move(buf),
-                                    .labels =
-                                        std::vector<float>(y.data(), y.data() + n)};
+    return bonsai::cli::LabeledData{
+        .dataset  = {},
+        .features = std::move(buf),
+        .labels   = std::vector<float>(y.data(), y.data() + y.shape(0))};
 }
 
 std::string view_shape_phrase(bonsai::RowView const &view)
@@ -717,6 +765,10 @@ class Dataset
     {
         return bins().view_n_rows();
     }
+    size_t n_targets() const
+    {
+        return bins().n_targets();
+    }
     size_t n_features() const
     {
         return n_features_;
@@ -833,27 +885,31 @@ class DevicePlanCache
 {
   public:
     std::shared_ptr<bonsai::CudaPredictPlan const>
-    predict(bonsai::DevicePlanInput const &in, bonsai::BinMappers const &mappers) const
+    predict(bonsai::DevicePlanInput const &in, size_t output,
+            bonsai::BinMappers const &mappers) const
     {
         std::scoped_lock const lock(mutex_);
-        return predict_.get(in.epoch,
-                            [&]
-                            {
-                                return bonsai::cuda_predict_plan(
-                                    in.trees, mappers, in.learning_rate, in.init_score);
-                            });
+        return slot(predict_, output)
+            .get(in.epoch,
+                 [&]
+                 {
+                     return bonsai::cuda_predict_plan(in.trees, mappers,
+                                                      in.learning_rate, in.init_score);
+                 });
     }
 
     std::shared_ptr<bonsai::CudaShapPlan const>
-    shap(bonsai::DevicePlanInput const &in, bonsai::BinMappers const &mappers) const
+    shap(bonsai::DevicePlanInput const &in, size_t output,
+         bonsai::BinMappers const &mappers) const
     {
         std::scoped_lock const lock(mutex_);
-        return shap_.get(in.epoch,
-                         [&]
-                         {
-                             return bonsai::cuda_shap_plan(
-                                 in.trees, mappers, in.learning_rate, in.init_score);
-                         });
+        return slot(shap_, output)
+            .get(in.epoch,
+                 [&]
+                 {
+                     return bonsai::cuda_shap_plan(in.trees, mappers, in.learning_rate,
+                                                   in.init_score);
+                 });
     }
 
   private:
@@ -873,9 +929,19 @@ class DevicePlanCache
         }
     };
 
-    mutable std::mutex                    mutex_;
-    mutable Slot<bonsai::CudaPredictPlan> predict_;
-    mutable Slot<bonsai::CudaShapPlan>    shap_;
+    template <typename Plan>
+    static Slot<Plan> &slot(std::vector<Slot<Plan>> &slots, size_t output)
+    {
+        if (slots.size() <= output)
+        {
+            slots.resize(output + 1);
+        }
+        return slots[output];
+    }
+
+    mutable std::mutex                                 mutex_;
+    mutable std::vector<Slot<bonsai::CudaPredictPlan>> predict_;
+    mutable std::vector<Slot<bonsai::CudaShapPlan>>    shap_;
 };
 
 class Model
@@ -903,12 +969,13 @@ class Model
                                           size_t          num_iteration = 0) const
     {
         check_width(X, "predict");
-        return emit<float>({X.shape(0)},
-                           [&](std::vector<float> &out)
-                           {
-                               booster_->predict_at(as_view(X), out, num_iteration);
-                               apply_link_inverse(out);
-                           });
+        return prediction_columns(X.shape(0),
+                                  [&](std::vector<float> &out)
+                                  {
+                                      booster_->predict_at(as_view(X), out,
+                                                           num_iteration);
+                                      apply_link_inverse(out);
+                                  });
     }
 
     using HostRows = std::optional<std::reference_wrapper<array_2d const>>;
@@ -944,16 +1011,17 @@ class Model
     {
         auto const raw = raw_rows(ds, "predict");
         return raw ? predict(raw->get(), num_iteration)
-                   : emit<float>({ds.n_rows()},
-                                 [&](std::vector<float> &out)
-                                 {
-                                     if (!predict_on_device(ds, out, num_iteration))
-                                     {
-                                         booster_->predict_at_binned(ds.bins(), out,
-                                                                     num_iteration);
-                                     }
-                                     apply_link_inverse(out);
-                                 });
+                   : prediction_columns(
+                         ds.n_rows(),
+                         [&](std::vector<float> &out)
+                         {
+                             if (!predict_on_device(ds, out, num_iteration))
+                             {
+                                 booster_->predict_at_binned(ds.bins(), out,
+                                                             num_iteration);
+                             }
+                             apply_link_inverse(out);
+                         });
     }
 
     nb::ndarray<nb::numpy, double> predict_proba(array_2d const &X) const
@@ -1040,8 +1108,7 @@ class Model
                          ds.n_rows(), ds.n_features(),
                          [&](std::vector<double> &out)
                          {
-                             if (booster_->score_width() > 1 ||
-                                 !contribs_on_device(ds, std::span<double>{out}))
+                             if (!contribs_on_device(ds, std::span<double>{out}))
                              {
                                  booster_->pred_contribs_binned(ds.bins(),
                                                                 std::span<double>{out},
@@ -1101,6 +1168,11 @@ class Model
         return cfg_.dispatch.objective_name == "softmax" ? cfg_.objective.n_classes : 0;
     }
 
+    size_t n_targets() const
+    {
+        return cfg_.objective.n_targets;
+    }
+
     std::vector<std::string> feature_names() const
     {
         auto const names = mappers_.feature_names();
@@ -1145,19 +1217,28 @@ class Model
         return w > 1 ? emit<double>({n, w}, fill) : emit<double>({n}, fill);
     }
 
+    template <typename Fill>
+    nb::ndarray<nb::numpy, float> prediction_columns(size_t n, Fill &&fill) const
+    {
+        size_t const w = booster_->prediction_width();
+        return w > 1 ? emit<float>({n, w}, fill) : emit<float>({n}, fill);
+    }
+
     template <typename StagedFn>
     nb::ndarray<nb::numpy, float> staged_columns(size_t n, StagedFn &&staged) const
     {
-        size_t const k = booster_->n_iters();
-        return emit<float>({k, n},
-                           [&](std::vector<float> &out)
-                           {
-                               staged(out);
-                               for (size_t t = 0; t < k; ++t)
-                               {
-                                   apply_link_inverse(std::span{out}.subspan(t * n, n));
-                               }
-                           });
+        size_t const k      = booster_->n_iters();
+        size_t const w      = booster_->prediction_width();
+        size_t const stride = n * w;
+        auto const   fill   = [&](std::vector<float> &out)
+        {
+            staged(out);
+            for (size_t t = 0; t < k; ++t)
+            {
+                apply_link_inverse(std::span{out}.subspan(t * stride, stride));
+            }
+        };
+        return w > 1 ? emit<float>({k, n, w}, fill) : emit<float>({k, n}, fill);
     }
 
     template <typename Fill>
@@ -1175,27 +1256,47 @@ class Model
         size_t                                     n_rows;
         size_t                                     n_features;
         std::vector<bonsai::row_id_t>              rows;
-        bonsai::DevicePlanInput                    in;
     };
 
     std::optional<DeviceReady> device_ready(Dataset const &ds) const
     {
         auto const &bins  = ds.bins();
         auto const  plane = bins.ingest_plane();
-        if (!plane)
-        {
-            return std::nullopt;
-        }
-        auto in = booster_->device_plan_input();
-        if (in.trees.empty())
+        if (!plane || booster_->device_plan_input(0).trees.empty())
         {
             return std::nullopt;
         }
         auto const &view = bins.row_view();
         return DeviceReady{plane, bins.plane_n_rows(), bins.n_features(),
                            view.is_identity() ? std::vector<bonsai::row_id_t>{}
-                                              : view.materialize(),
-                           std::move(in)};
+                                              : view.materialize()};
+    }
+
+    template <typename Scalar, typename Walk>
+    bool walk_outputs_on_device(DeviceReady const &ready, size_t width, size_t cells,
+                                std::span<Scalar> out, Walk const &walk) const
+    {
+        if (width == 1)
+        {
+            return walk(0, out);
+        }
+        std::vector<Scalar> column(ready.rows.empty() ? ready.n_rows * cells
+                                                      : ready.rows.size() * cells);
+        for (size_t k = 0; k < width; ++k)
+        {
+            if (!walk(k, std::span<Scalar>{column}))
+            {
+                return false;
+            }
+            size_t const positions = column.size() / cells;
+            for (size_t i = 0; i < positions; ++i)
+            {
+                std::ranges::copy(std::span{column}.subspan(i * cells, cells),
+                                  out.begin() + static_cast<std::ptrdiff_t>(
+                                                    ((i * width) + k) * cells));
+            }
+        }
+        return true;
     }
 
     bool predict_on_device(Dataset const &ds, std::vector<float> &out,
@@ -1206,10 +1307,16 @@ class Model
         {
             return false;
         }
-        auto const plan = plan_cache_->predict(ready->in, mappers_);
-        return plan &&
-               bonsai::cuda_predict(*plan, *ready->plane, ready->n_rows,
-                                    ready->n_features, ready->rows, num_iteration, out);
+        return walk_outputs_on_device<float>(
+            *ready, booster_->prediction_width(), 1, std::span<float>{out},
+            [&](size_t k, std::span<float> column)
+            {
+                auto const plan =
+                    plan_cache_->predict(booster_->device_plan_input(k), k, mappers_);
+                return plan && bonsai::cuda_predict(*plan, *ready->plane, ready->n_rows,
+                                                    ready->n_features, ready->rows,
+                                                    num_iteration, column);
+            });
     }
 
     bool contribs_on_device(Dataset const &ds, std::span<double> out) const
@@ -1219,9 +1326,16 @@ class Model
         {
             return false;
         }
-        auto const plan = plan_cache_->shap(ready->in, mappers_);
-        return plan && bonsai::cuda_pred_contribs(*plan, *ready->plane, ready->n_rows,
-                                                  ready->n_features, ready->rows, out);
+        return walk_outputs_on_device<double>(
+            *ready, booster_->score_width(), ready->n_features + 1, out,
+            [&](size_t k, std::span<double> column)
+            {
+                auto const plan =
+                    plan_cache_->shap(booster_->device_plan_input(k), k, mappers_);
+                return plan && bonsai::cuda_pred_contribs(
+                                   *plan, *ready->plane, ready->n_rows,
+                                   ready->n_features, ready->rows, column);
+            });
     }
 
     std::unique_ptr<bonsai::IBooster> booster_;
@@ -1273,7 +1387,8 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
     {
         bonsai::require_n_features(arrays->first.shape(1), mappers.size(),
                                    "the matrix passed as eval_set");
-        owned = make_validation_labeled(arrays->first, arrays->second);
+        owned = make_validation_labeled(arrays->first, arrays->second,
+                                        cfg.objective.n_targets);
         check_eval_labels(owned->labels, cfg);
         return std::cref(*owned);
     }
@@ -1579,10 +1694,27 @@ bonsai::Config reconcile_init(bonsai::Config                                  cf
                                              stated_keys(items));
 }
 
+void reconcile_targets(bonsai::Config &cfg, bonsai::Dataset const &train)
+{
+    size_t const width = train.n_targets();
+    if (cfg.objective.n_targets == 1 && width > 1)
+    {
+        cfg.objective.n_targets = static_cast<uint32_t>(width);
+        return;
+    }
+    if (cfg.objective.n_targets != width)
+    {
+        throw std::invalid_argument(
+            std::format("objective.n_targets is {} and y carries {} target{} per row",
+                        cfg.objective.n_targets, width, width == 1 ? "" : "s"));
+    }
+}
+
 Model run_fit(bonsai::Config cfg, bonsai::cli::LabeledData const &train,
               bonsai::BinMappers mappers, std::optional<EvalSet> const &eval_set,
               std::optional<bonsai::io::LoadedBooster> init)
 {
+    reconcile_targets(cfg, train.dataset);
     std::optional<bonsai::cli::LabeledData> owned;
     bonsai::cli::ValidationRef const        validation =
         resolve_eval_set(eval_set, cfg, mappers, init.has_value(), owned);
@@ -1893,6 +2025,8 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("objective_name", &Model::objective_name,
                      "The objective this model was trained with (e.g. mse, "
                      "logloss, softmax).")
+        .def_prop_ro("n_targets", &Model::n_targets,
+                     "Targets per row of a multi-target regression; 1 otherwise.")
         .def_prop_ro("n_classes", &Model::n_classes,
                      "Class count for softmax models; 0 for every other "
                      "objective (including binary logloss).")
@@ -1936,9 +2070,9 @@ NB_MODULE(_bonsai, m)
             "    Row-major features; any DLPack producer. A device-resident X "
             "(cupy, torch, jax) is binned on the GPU in place, with no host "
             "round trip.\n"
-            "y : float32 array, shape (n_rows,)\n"
-            "    Labels. May be device-resident; downloaded once, because "
-            "bonsai keeps labels on the host.\n"
+            "y : float32 array, shape (n_rows,) or (n_rows, n_targets)\n"
+            "    Labels, one per row or a row of targets per row. May be "
+            "device-resident; downloaded once, labels stay on the host.\n"
             "weight : float32 array, shape (n_rows,), optional\n"
             "    Per-row weights; the same device rules as ``y``.\n"
             "max_bin, n_samples, seed, min_data_in_bin : optional\n"
@@ -2000,6 +2134,8 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("n_rows", &Dataset::n_rows,
                      "Rows a fit visits: the binned matrix's, or the "
                      "selection's on a view.")
+        .def_prop_ro("n_targets", &Dataset::n_targets,
+                     "Targets per row: 1 for a vector ``y``, the columns of a 2-D one.")
         .def_prop_ro("n_features", &Dataset::n_features,
                      "Feature columns in the binned matrix.")
         .def_prop_ro("feature_names", &Dataset::feature_names,
@@ -2178,8 +2314,9 @@ NB_MODULE(_bonsai, m)
           "(cupy, torch, jax): X is then binned on the GPU in place, with no "
           "host round trip. The columns are named by ``feature_names``, or "
           "``f0``..``fN`` when it is unset.\n"
-          "y : float32 array, shape (n_rows,)\n"
-          "    Labels; a device-resident y is downloaded once.\n"
+          "y : float32 array, shape (n_rows,) or (n_rows, n_targets)\n"
+          "    Labels, or one row of regression targets per row; a device-resident "
+          "y is downloaded once.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
           "    Host arrays, or a Dataset binned with this fit's cut points. "
           "Stays host-side either way, because the per-iteration eval "

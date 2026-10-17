@@ -711,7 +711,7 @@ TEST_CASE("device_plan_input: a dense booster lends a view of its own trees",
     MseBooster<DepthwiseGrower<CpuHistogramEngine>> b{tiny_cfg()};
     b.update_one_iter(train);
 
-    auto const in = b.device_plan_input();
+    auto const in = b.device_plan_input(0);
     CHECK(in.keep_alive == nullptr);
     CHECK(in.trees.data() == b.trees().data());
     CHECK(in.trees.size() == b.trees().size());
@@ -728,7 +728,7 @@ TEST_CASE("device_plan_input: an oblivious booster lends its dense equivalent",
     b.update_one_iter(train);
     b.update_one_iter(train);
 
-    auto const in = b.device_plan_input();
+    auto const in = b.device_plan_input(0);
     REQUIRE(in.keep_alive != nullptr);
     REQUIRE(in.trees.size() == b.trees().size());
     CHECK(in.trees.data() == in.keep_alive->data());
@@ -737,7 +737,7 @@ TEST_CASE("device_plan_input: an oblivious booster lends its dense equivalent",
     SECTION("a mutation re-converts under a new epoch")
     {
         b.update_one_iter(train);
-        auto const after = b.device_plan_input();
+        auto const after = b.device_plan_input(0);
         CHECK(after.epoch > in.epoch);
         CHECK(after.trees.size() == b.trees().size());
         CHECK(after.trees.data() != in.trees.data());
@@ -757,7 +757,7 @@ TEST_CASE("device_plan_input: the trees outlive the booster that lent them",
     {
         MseBooster<ObliviousGrower<CpuHistogramEngine>> b{tiny_cfg()};
         b.update_one_iter(train);
-        in       = b.device_plan_input();
+        in       = b.device_plan_input(0);
         expected = test::predict_one(in.trees[0], {0.95F});
     }
     REQUIRE(!in.trees.empty());
@@ -770,5 +770,5 @@ TEST_CASE("device_plan_input: an untrained booster still declines",
     // An empty ensemble densifies to an empty vector, so the caller's
     // trees.empty() decline fires without a special case.
     MseBooster<ObliviousGrower<CpuHistogramEngine>> b{tiny_cfg()};
-    CHECK(b.device_plan_input().trees.empty());
+    CHECK(b.device_plan_input(0).trees.empty());
 }

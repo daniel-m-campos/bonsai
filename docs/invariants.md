@@ -110,6 +110,12 @@ A multiclass booster's init scores are one per output or none: the score broadca
 
 - enforced by: [`MulticlassBooster: init scores of the wrong length are refused`](../tests/unit/test_booster.cpp)
 
+### label-block-rows-by-targets
+
+The label block is n_rows x n_targets row-major: target k of row r sits at r * n_targets + k, and a view gathers whole rows of it, so a rewrite of the view's rows carries every target of every selected row in view order. A vector y is the block at width 1, which is why every single-target reader of labels() is untouched by the width.
+
+- enforced by: [`Dataset: a label block of K targets keeps its width through a view`](../tests/unit/test_dataset.cpp)
+
 ### lane-level-scan-matches-scalar-scan
 
 
@@ -169,6 +175,12 @@ The levelwise (oblivious) grower rejects interaction constraints at construction
 The leaf plane's form: the lone fill blocks a child's rows by the full selection's width, so the one-feature fill takes the same blocks and the same merge order, and the sibling it subtracts from ends up as the full fused fill would leave it for that feature.
 
 - enforced by: [`CpuHistogramEngine: the lone totals fill reproduces the lone fill's sums`](../tests/unit/test_populate.cpp)
+
+### multi-target-fit-matches-single-target-fits
+
+A multi-target regression grows one tree per target per round from that target's column of the label block and score matrix, through the same objective, renewal and score update a single-target fit runs, so with every row selected its prediction for target k equals, bit for bit, the prediction of a single-target fit on column k alone. Any engine or objective change that holds the three model hashes therefore holds the multi-target fit too.
+
+- enforced by: [`MultiOutputBooster: a K-target fit matches K single-target fits bit for bit`](../tests/unit/test_multi_output_booster.cpp)
 
 ### perfect-tree-numbering-one-scheme
 
@@ -283,9 +295,10 @@ The cuda growers are registered in every build; without a device, construction a
 
 ### resident-objective-eligibility
 
-The device-resident objective arms for MSE, LogLoss, Poisson, MAE, Huber and Quantile, weighted or not, with no DART and a sampler that never reads gradient values; everything else takes the host path, as does an oblivious tree under a monotone constraint with a renewal objective (its leaf table is reprojected on the host). `BONSAI_HOST_OBJECTIVE=1` forces the host path.
+The device-resident objective arms for MSE, LogLoss, Poisson, MAE, Huber and Quantile, weighted or not, with no DART and a sampler that never reads gradient values; everything else takes the host path, as does an oblivious tree under a monotone constraint with a renewal objective (its leaf table is reprojected on the host). `BONSAI_HOST_OBJECTIVE=1` forces the host path. A K-target regression fit arms under the same rules, once with the whole label and score blocks, and grows tree k from the device's column k.
 
 - code: `include/bonsai/booster.hpp` : `resident_begin`
+- code: `include/bonsai/multi_output_booster.hpp` : `try_resident_round`
 - code: `src/cuda/detail/device_context.cu` : `resident_begin`
 - elaboration: decision 78.
 

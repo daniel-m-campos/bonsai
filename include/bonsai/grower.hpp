@@ -156,6 +156,7 @@ concept ResidentTreeEngine =
         b.finalize_tree(node_values, values, leaf_ids);
         { b.resident_armed() } -> std::convertible_to<bool>;
         { b.resident_finalize(res_nodes) } -> std::same_as<std::vector<float>>;
+        b.resident_select(size_t{});
         b.resident_end(scores_out);
     };
 
@@ -304,6 +305,14 @@ void engine_resident_end(EngineT &engine, std::span<float> scores)
     }
 }
 
+template <typename EngineT> void engine_resident_select(EngineT &engine, size_t target)
+{
+    if constexpr (ResidentTreeEngine<EngineT>)
+    {
+        engine.resident_select(target);
+    }
+}
+
 // The validation-plane shims, same collapse: a host engine has no eval plane,
 // so eval_begin answers false and the booster keeps the host walk.
 template <typename EngineT>
@@ -361,6 +370,11 @@ template <typename EngineT> class DeviceSeam
         resident_ = false;
     }
 
+    void select(size_t target)
+    {
+        engine_resident_select(engine_, target);
+    }
+
     bool armed() const
     {
         return resident_;
@@ -406,6 +420,10 @@ template <HistogramEngine EngineT> class GrowerHost
     void resident_end(std::span<float> scores)
     {
         seam_.end(scores);
+    }
+    void resident_select(size_t target)
+    {
+        seam_.select(target);
     }
     bool resident() const
     {

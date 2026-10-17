@@ -79,7 +79,7 @@ TEST_CASE("cuda_predict matches the host binned walk", "[cuda][predict]")
         booster.update_one_iter(ds);
     }
 
-    auto const in = booster.device_plan_input();
+    auto const in = booster.device_plan_input(0);
     REQUIRE(in.trees.size() == 8);
     auto const plan =
         cuda_predict_plan(in.trees, mappers, in.learning_rate, in.init_score);
@@ -132,7 +132,7 @@ TEST_CASE("cuda_predict walks a row view of the plane", "[cuda][predict][view]")
     {
         booster.update_one_iter(ds);
     }
-    auto const in = booster.device_plan_input();
+    auto const in = booster.device_plan_input(0);
     auto const plan =
         cuda_predict_plan(in.trees, mappers, in.learning_rate, in.init_score);
     REQUIRE(plan);
@@ -204,7 +204,7 @@ TEST_CASE("cuda_predict matches the host binned walk for a levelwise model",
 
     // The trees the device packs are the plan input's dense equivalents, not
     // the booster's own; the walk they describe must still be the same one.
-    auto const in = booster.device_plan_input();
+    auto const in = booster.device_plan_input(0);
     REQUIRE(in.keep_alive != nullptr);
     REQUIRE(in.trees.size() == 8);
     auto const plan =

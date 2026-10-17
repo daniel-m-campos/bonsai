@@ -146,10 +146,14 @@ class IBooster
                                       size_t n_features) const = 0;
 
     // --- the device predict seam
-    // Everything a device predict plan packs, in one call so the ensemble is
-    // read once. An empty `trees` declines. `trees` is valid for as long as
-    // the returned value is, never longer.
-    virtual DevicePlanInput device_plan_input() const
+    // Everything a device predict plan packs for one output, in one call so
+    // the ensemble is read once: a width-1 model answers output 0 and a
+    // K-target model answers each of its K columns with that column's trees
+    // and base score, so the device walks it as K width-1 plans (pins: "a
+    // K-target model hands the device one plan per target"). An empty
+    // `trees` declines. `trees` is valid for as long as the returned value
+    // is, never longer.
+    virtual DevicePlanInput device_plan_input(size_t /*output*/) const
     {
         return {};
     }
@@ -157,6 +161,13 @@ class IBooster
     // Rows per prediction: 1 for width-1 objectives, n_classes for softmax.
     // On the base interface because both clients size buffers from it.
     virtual size_t score_width() const
+    {
+        return 1;
+    }
+
+    // Values predict() writes per row: 1, or the target count of a
+    // multi-target regression (a multiclass predict() is one class id).
+    virtual size_t prediction_width() const
     {
         return 1;
     }
@@ -562,6 +573,149 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
     detail::EpochCache<std::vector<DenseTree>> dense_;
 };
 
+namespace detail
+{
+// Each leaf's value becomes the objective's optimum over the residuals of
+// the rows it covers, clamped into leaf_bounds[leaf] when the grower left
+// a fence. The rows are the fit's, which for a view is the view's: a row
+// outside it was never carried through this tree, so its leaf id names a
+// leaf it does not belong to. The identity view is every row.
+template <typename Tree, typename Obj>
+void renew_leaves(Obj const &objective, Tree &tree,
+                  std::vector<node_id_t> const  &leaf_ids,
+                  std::vector<LeafBounds> const &leaf_bounds,
+                  train_leaf_values &leaf_values, floats_view labels,
+                  floats_view scores, RowView const &view)
+{
+    RowIndex const                  rows{view};
+    std::vector<std::vector<float>> residuals(tree.leaf_id_end());
+    for (size_t k = 0; k < rows.size(); ++k)
+    {
+        row_id_t const r = rows[k];
+        residuals[leaf_ids[r]].push_back(labels[r] - scores[r]);
+    }
+    std::vector<float> renewed(residuals.size(), 0.0F);
+    for (node_id_t leaf = 0; leaf < residuals.size(); ++leaf)
+    {
+        std::vector<float> &res = residuals[leaf];
+        if (res.empty())
+        {
+            continue;
+        }
+        float v = objective.renew_leaf(std::span<float>{res});
+        if (!leaf_bounds.empty())
+        {
+            v = static_cast<float>(std::clamp(
+                static_cast<double>(v), leaf_bounds[leaf].lo, leaf_bounds[leaf].hi));
+        }
+        tree.set_leaf_value(leaf, v);
+        renewed[leaf] = v;
+    }
+    for (size_t k = 0; k < rows.size(); ++k)
+    {
+        row_id_t const r = rows[k];
+        leaf_values[r]   = renewed[leaf_ids[r]];
+    }
+}
+
+// Weights are row counts rather than hessians: a renewed value is not a
+// Newton step, so the second-order weighting no longer describes it.
+template <typename Tree>
+void reproject_monotone(Tree &tree, std::vector<node_id_t> const &leaf_ids,
+                        train_leaf_values &leaf_values, RowView const &view,
+                        std::vector<int> const &constraints)
+{
+    if (!has_monotone_constraint(constraints))
+    {
+        return;
+    }
+    std::vector<float> table(tree.leaf_table().begin(), tree.leaf_table().end());
+    project_monotone(monotone_levels(tree.splits(), constraints), tree.leaf_covers(),
+                     table);
+    for (size_t li = 0; li < table.size(); ++li)
+    {
+        tree.set_leaf_value(li, table[li]);
+    }
+    RowIndex const rows{view};
+    for (size_t k = 0; k < rows.size(); ++k)
+    {
+        row_id_t const r = rows[k];
+        leaf_values[r]   = table[leaf_ids[r]];
+    }
+}
+
+// Renewal first, then the oblivious reprojection over the renewed table,
+// the order finish_round's contract states.
+template <typename Tree, typename Obj>
+void renew_round(Obj const &objective, Tree &tree,
+                 std::vector<node_id_t> const  &leaf_ids,
+                 std::vector<LeafBounds> const &leaf_bounds,
+                 train_leaf_values &leaf_values, floats_view labels, floats_view scores,
+                 RowView const &view, std::vector<int> const &constraints)
+{
+    renew_leaves(objective, tree, leaf_ids, leaf_bounds, leaf_values, labels, scores,
+                 view);
+    if constexpr (std::same_as<Tree, ObliviousTree>)
+    {
+        reproject_monotone(tree, leaf_ids, leaf_values, view, constraints);
+    }
+}
+} // namespace detail
+
+// The resident objective's state, one home for the single-target and the
+// K-target boosters. sync() disarms when the runtime gate closed or the fit
+// changed (the device scores come home first, so the host path resumes with
+// the state it would have had), begins the grower's resident plane from the
+// host scores when the gate is open and nothing is armed, and answers whether
+// the round may run resident. The fit is a minted token, not an address: a
+// stack Dataset's address repeats every fold iteration deterministically, so
+// an address here would skip re-arming for a DIFFERENT fold at the same
+// depth, leaving the previous fold's labels, scores and rows live (pins: the
+// resident suite's fold and hatch cases).
+struct ResidentState
+{
+    bool  active = false;
+    FitId fit{};
+
+    template <typename Grower, typename Obj>
+    bool sync(Grower &grower, Dataset const &train, bool runtime_open,
+              std::span<float> host_scores, Obj const &objective, float learning_rate)
+    {
+        if (active && (!runtime_open || fit != train.fit_identity()))
+        {
+            grower.resident_end(host_scores);
+            active = false;
+            fit    = FitId{};
+        }
+        if (runtime_open && !active)
+        {
+            active = grower.resident_begin(train, device_objective_of(objective),
+                                           std::span<float const>{host_scores},
+                                           learning_rate);
+            fit    = active ? train.fit_identity() : FitId{};
+        }
+        return active;
+    }
+};
+
+// The per-fit half of resident-objective-eligibility: no DART, the escape
+// hatch unset, no renewal the host must reproject (an oblivious tree under a
+// monotone constraint with a renewal objective, whose leaf table the host
+// reprojects). A view is eligible: the epilogue walks its rows and leaves
+// the rest untouched.
+inline bool resident_round_open(float dart_drop_rate, bool reproject_on_host)
+{
+    bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
+    return dart_drop_rate <= 0.0F && !host_forced && !reproject_on_host;
+}
+
+template <typename Tree>
+bool reproject_monotone_on_host(bool renews_leaves, std::vector<int> const &constraints)
+{
+    return renews_leaves && std::same_as<Tree, ObliviousTree> &&
+           has_monotone_constraint(constraints);
+}
+
 // One boosting round in update_one_iter runs in a fixed order that several
 // features depend on: DART drop/rescale first (it rewrites earlier trees'
 // contributions), then gradients, then sampling (so a gradient-reading
@@ -678,12 +832,9 @@ class Booster final : public Ensemble<Gr, Sa>
         // trees): renewal sees exactly the state the gradients were taken in.
         if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
         {
-            renew_leaves(tree, leaf_ids, leaf_bounds, leaf_values, train.labels(),
-                         train.row_view());
-            if constexpr (std::same_as<tree_type, ObliviousTree>)
-            {
-                reproject_monotone(tree, leaf_ids, leaf_values, train.row_view());
-            }
+            detail::renew_round(objective_, tree, leaf_ids, leaf_bounds, leaf_values,
+                                train.labels(), floats_view{scores_}, train.row_view(),
+                                monotone_constraints_);
         }
         lap(prof.renew_s);
 
@@ -746,22 +897,11 @@ class Booster final : public Ensemble<Gr, Sa>
         if constexpr (has_device_objective<objective_type> &&
                       !sampler_traits<sampler_type>::reads_gradients)
         {
-            bool const runtime_ok = resident_round_available();
-            if (resident_active_ &&
-                (!runtime_ok || resident_fit_ != train.fit_identity()))
-            {
-                grower().resident_end(std::span<float>{scores_});
-                resident_active_ = false;
-                resident_fit_    = FitId{};
-            }
-            if (runtime_ok && !resident_active_)
-            {
-                resident_active_ = grower().resident_begin(
-                    train, device_objective_of(objective_),
-                    std::span<float const>{scores_}, config().learning_rate);
-                resident_fit_ = resident_active_ ? train.fit_identity() : FitId{};
-            }
-            if (resident_active_)
+            bool const open = resident_round_open(
+                config().dart_drop_rate, reproject_monotone_on_host<tree_type>(
+                                             has_renew_leaf, monotone_constraints_));
+            if (resident_.sync(grower(), train, open, std::span<float>{scores_},
+                               objective_, config().learning_rate))
             {
                 resident_round(train);
                 return true;
@@ -772,22 +912,6 @@ class Booster final : public Ensemble<Gr, Sa>
 
     static constexpr bool has_renew_leaf =
         requires(Obj const &o, std::span<float> r) { o.renew_leaf(r); };
-
-    // The per-fit half of resident-objective-eligibility: no DART, the
-    // escape hatch unset, no renewal the host must reproject. A view is
-    // eligible: the epilogue walks its rows and leaves the rest untouched.
-    bool resident_round_available() const
-    {
-        bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
-        return config().dart_drop_rate <= 0.0F && !host_forced &&
-               !(has_renew_leaf && reproject_monotone_on_host());
-    }
-
-    bool reproject_monotone_on_host() const
-    {
-        return std::same_as<tree_type, ObliviousTree> &&
-               has_monotone_constraint(monotone_constraints_);
-    }
 
     // One boosting round with the resident objective armed. The sampler still
     // runs, and grow returns an empty per-row output: the device derived the
@@ -871,72 +995,6 @@ class Booster final : public Ensemble<Gr, Sa>
                                  });
     }
 
-    // Each leaf's value becomes the objective's optimum over the residuals of
-    // the rows it covers, clamped into leaf_bounds[leaf] when the grower left
-    // a fence. The rows are the fit's, which for a view is the view's: a row
-    // outside it was never carried through this tree, so its leaf id names a
-    // leaf it does not belong to. The identity view is every row.
-    void renew_leaves(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
-                      std::vector<LeafBounds> const &leaf_bounds,
-                      train_leaf_values &leaf_values, floats_view labels,
-                      RowView const &view)
-    {
-        RowIndex const                  rows{view};
-        std::vector<std::vector<float>> residuals(tree.leaf_id_end());
-        for (size_t k = 0; k < rows.size(); ++k)
-        {
-            row_id_t const r = rows[k];
-            residuals[leaf_ids[r]].push_back(labels[r] - scores_[r]);
-        }
-        std::vector<float> renewed(residuals.size(), 0.0F);
-        for (node_id_t leaf = 0; leaf < residuals.size(); ++leaf)
-        {
-            std::vector<float> &res = residuals[leaf];
-            if (res.empty())
-            {
-                continue;
-            }
-            float v = objective_.renew_leaf(std::span<float>{res});
-            if (!leaf_bounds.empty())
-            {
-                v = static_cast<float>(std::clamp(static_cast<double>(v),
-                                                  leaf_bounds[leaf].lo,
-                                                  leaf_bounds[leaf].hi));
-            }
-            tree.set_leaf_value(leaf, v);
-            renewed[leaf] = v;
-        }
-        for (size_t k = 0; k < rows.size(); ++k)
-        {
-            row_id_t const r = rows[k];
-            leaf_values[r]   = renewed[leaf_ids[r]];
-        }
-    }
-
-    // Weights are row counts rather than hessians: a renewed value is not a
-    // Newton step, so the second-order weighting no longer describes it.
-    void reproject_monotone(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
-                            train_leaf_values &leaf_values, RowView const &view)
-    {
-        if (!has_monotone_constraint(monotone_constraints_))
-        {
-            return;
-        }
-        std::vector<float> table(tree.leaf_table().begin(), tree.leaf_table().end());
-        project_monotone(monotone_levels(tree.splits(), monotone_constraints_),
-                         tree.leaf_covers(), table);
-        for (size_t li = 0; li < table.size(); ++li)
-        {
-            tree.set_leaf_value(li, table[li]);
-        }
-        RowIndex const rows{view};
-        for (size_t k = 0; k < rows.size(); ++k)
-        {
-            row_id_t const r = rows[k];
-            leaf_values[r]   = table[leaf_ids[r]];
-        }
-    }
-
     // Both tree shapes route through their walk pack (ObliviousWalk or
     // DenseWalk, bit-identical to the per-tree loop; contracts in tree.hpp).
     void predict_at(features_view X, floats_out scores, size_t n_trees) const override
@@ -986,8 +1044,9 @@ class Booster final : public Ensemble<Gr, Sa>
         raw_to_scores(scores, init_score());
     }
 
-    DevicePlanInput device_plan_input() const override
+    DevicePlanInput device_plan_input([[maybe_unused]] size_t output) const override
     {
+        assert(output == 0);
         DevicePlanInput out{};
         out.learning_rate = config().learning_rate;
         out.init_score    = init_score();
@@ -1069,14 +1128,8 @@ class Booster final : public Ensemble<Gr, Sa>
     objective_type   objective_;
     // Stale while the resident objective is armed (the device copy is
     // authoritative); resident_end syncs it before any host-path read.
-    std::vector<float> scores_;
-    bool               resident_active_ = false;
-    // The fit the resident state is armed for. A minted token, not an
-    // address: a stack Dataset's address repeats every fold iteration
-    // deterministically, so an address here would skip re-arming for a
-    // DIFFERENT fold at the same depth, leaving the previous fold's labels,
-    // scores and rows live.
-    FitId                         resident_fit_{};
+    std::vector<float>            scores_;
+    ResidentState                 resident_;
     detail::EpochCache<walk_type> walk_;
 };
 
