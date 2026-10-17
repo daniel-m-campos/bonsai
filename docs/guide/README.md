@@ -32,6 +32,7 @@ the whole implementation.
 | 13 | [Categorical features](13-categorical-features.md) | Ordered target statistics: the encoding that doesn't leak, and why the core stays numeric |
 | 14 | [Feature selection](14-feature-selection.md) | Ten selection methods raced on real data: who wins at which budget, and what it costs |
 | 15 | [Explaining predictions](15-explaining-predictions.md) | From a broken attribution to Shapley to the path trick to global importance, every step a hand-checkable table |
+| 16 | [Multi-target regression](16-multi-target.md) | One tree per target per round, bit-identical to K separate fits, and the K-wide leaf measured and declined |
 
 ## The shape of a chapter
 
@@ -54,9 +55,9 @@ implementation and ends somewhere you can run something.
 Chapter 0 is the on-ramp. Chapters 1 to 4 are the core algorithm and build
 on each other. Chapters 5 to 9 are independent; read each as the matching
 knob becomes relevant. Chapters 10 and 11 go where the engineering is: GPU
-training, then performance. Chapters 12 to 15 put the core to work:
-multiclass, categorical features, feature selection, then explaining
-predictions.
+training, then performance. Chapters 12 to 16 put the core to work:
+multiclass, categorical features, feature selection, explaining
+predictions, then multi-target regression.
 For design *rationale* (why this data layout, why this dispatch mechanism)
 see [the invariants](../invariants.md); for the audit trail
 of every non-trivial choice, [decisions.md](../decisions.md).

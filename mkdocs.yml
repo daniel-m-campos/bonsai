@@ -123,6 +123,7 @@ nav:
           - 13. Categorical features: guide/13-categorical-features.md
           - 14. Feature selection: guide/14-feature-selection.md
           - 15. Explaining predictions: guide/15-explaining-predictions.md
+          - 16. Multi-target regression: guide/16-multi-target.md
       - The engine:
           - learn/engine/README.md
           - E1. The marginal round: learn/engine/1-the-marginal-round.md

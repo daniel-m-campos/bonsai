@@ -36,6 +36,7 @@
   "objective": {
     "huber_delta": 1.0,
     "n_classes": 3,
+    "n_targets": 1,
     "quantile_alpha": 0.5
   },
   "parallel": {

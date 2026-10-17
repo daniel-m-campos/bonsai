@@ -176,6 +176,12 @@ The leaf plane's form: the lone fill blocks a child's rows by the full selection
 
 - enforced by: [`CpuHistogramEngine: the lone totals fill reproduces the lone fill's sums`](../tests/unit/test_populate.cpp)
 
+### multi-target-fit-matches-single-target-fits
+
+A multi-target regression grows one tree per target per round from that target's column of the label block and score matrix, through the same objective, renewal and score update a single-target fit runs, so with every row selected its prediction for target k equals, bit for bit, the prediction of a single-target fit on column k alone. Any engine or objective change that holds the three model hashes therefore holds the multi-target fit too.
+
+- enforced by: [`MultiOutputBooster: a K-target fit matches K single-target fits bit for bit`](../tests/unit/test_multi_output_booster.cpp)
+
 ### perfect-tree-numbering-one-scheme
 
 The flattened node table and ObliviousTree::leaf_for agree on one numbering. The table gives internal node i the children 2i+1 and 2i+2 and appends the leaves after the internals in leaf_table order; leaf_for builds its index by shifting a bit per level, left as 0. Those two must name the same leaf for every root-to-leaf path, or the device epilogue and the host walk read different values out of the same tree. Four sites share the scheme, which is past the count where a normal change reliably updates all of them.

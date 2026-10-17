@@ -76,6 +76,7 @@ Extra parameters read only by the matching objective.
 |---|---|---|---|
 | `huber_delta` | float | `1.0` | huber objective: residual half-width of the L2 zone. Smaller behaves more like L1 (robust to outliers), larger like L2. |
 | `n_classes` | integer | `3` | softmax objective: number of classes, labels 0 to K-1. Must match the data; sets the trees-per-round multiplier. |
+| `n_targets` | integer | `1` | regression objectives: targets per row, the width of a 2-D y. The Python API sets it from the label block; a fit grows one tree per target per round and predicts one column per target. |
 | `quantile_alpha` | float | `0.5` | quantile objective: the target quantile in (0, 1). 0.5 is the median; higher tilts predictions toward that upper quantile. |
 
 ## metrics

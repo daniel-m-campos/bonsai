@@ -5,8 +5,10 @@
 #include "bonsai/config/dispatch_config.hpp"
 #include "bonsai/cuda/grower.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/multi_output_booster.hpp"
 #include "bonsai/multiclass_booster.hpp"
 #include "bonsai/objective.hpp"
+#include "bonsai/objective_traits.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/registry/typelists.hpp"
 #include "bonsai/typelist.hpp"
@@ -35,6 +37,30 @@ template <typename G, typename Sa> struct booster_for<TypeList<SoftmaxObjective,
 } // namespace detail
 
 template <typename Combo> using BoosterFor = typename detail::booster_for<Combo>::type;
+
+namespace detail
+{
+template <typename Combo> struct multi_output_booster_for
+{
+    using type = BoosterFor<Combo>;
+};
+
+template <typename O, typename G, typename Sa>
+    requires(task_of<O>::value == TaskKind::regression)
+struct multi_output_booster_for<TypeList<O, G, Sa>>
+{
+    using type = MultiOutputBooster<O, G, Sa>;
+};
+} // namespace detail
+
+// The booster a combo takes when objective.n_targets > 1: a MultiOutputBooster
+// for a regression objective, and for any other the combo's own booster, which
+// multi_output_capable reads as a refusal.
+template <typename Combo>
+using MultiOutputBoosterFor = typename detail::multi_output_booster_for<Combo>::type;
+template <typename Combo>
+inline constexpr bool multi_output_capable =
+    !std::same_as<MultiOutputBoosterFor<Combo>, BoosterFor<Combo>>;
 
 // The triple the table is searched with: a CUDA leafwise budget that cannot
 // bind makes that grower cuda_depthwise. The host leaf plane keeps its grower

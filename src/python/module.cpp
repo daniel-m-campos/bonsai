@@ -411,18 +411,26 @@ ingest_training(MatrixArg const &X, bonsai::floats_view y, bonsai::floats_view w
     return loaded;
 }
 
-bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d const &y)
+bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d const &y,
+                                                 size_t n_targets)
 {
     size_t const n = X.shape(0);
+    if (y.shape(0) != n * n_targets)
+    {
+        throw std::invalid_argument(std::format(
+            "eval_set y has {} values for {} rows of {} target{}; a 2-D y flattens "
+            "row-major",
+            y.shape(0), n, n_targets, n_targets == 1 ? "" : "s"));
+    }
 
     bonsai::cli::FeatureBuffer buf;
     buf.n_rows     = n;
     buf.n_features = X.shape(1);
     buf.borrowed   = std::span{X.data(), n * X.shape(1)};
-    return bonsai::cli::LabeledData{.dataset  = {},
-                                    .features = std::move(buf),
-                                    .labels =
-                                        std::vector<float>(y.data(), y.data() + n)};
+    return bonsai::cli::LabeledData{
+        .dataset  = {},
+        .features = std::move(buf),
+        .labels   = std::vector<float>(y.data(), y.data() + y.shape(0))};
 }
 
 std::string view_shape_phrase(bonsai::RowView const &view)
@@ -947,12 +955,13 @@ class Model
                                           size_t          num_iteration = 0) const
     {
         check_width(X, "predict");
-        return emit<float>({X.shape(0)},
-                           [&](std::vector<float> &out)
-                           {
-                               booster_->predict_at(as_view(X), out, num_iteration);
-                               apply_link_inverse(out);
-                           });
+        return prediction_columns(X.shape(0),
+                                  [&](std::vector<float> &out)
+                                  {
+                                      booster_->predict_at(as_view(X), out,
+                                                           num_iteration);
+                                      apply_link_inverse(out);
+                                  });
     }
 
     using HostRows = std::optional<std::reference_wrapper<array_2d const>>;
@@ -988,16 +997,17 @@ class Model
     {
         auto const raw = raw_rows(ds, "predict");
         return raw ? predict(raw->get(), num_iteration)
-                   : emit<float>({ds.n_rows()},
-                                 [&](std::vector<float> &out)
-                                 {
-                                     if (!predict_on_device(ds, out, num_iteration))
-                                     {
-                                         booster_->predict_at_binned(ds.bins(), out,
-                                                                     num_iteration);
-                                     }
-                                     apply_link_inverse(out);
-                                 });
+                   : prediction_columns(
+                         ds.n_rows(),
+                         [&](std::vector<float> &out)
+                         {
+                             if (!predict_on_device(ds, out, num_iteration))
+                             {
+                                 booster_->predict_at_binned(ds.bins(), out,
+                                                             num_iteration);
+                             }
+                             apply_link_inverse(out);
+                         });
     }
 
     nb::ndarray<nb::numpy, double> predict_proba(array_2d const &X) const
@@ -1145,6 +1155,11 @@ class Model
         return cfg_.dispatch.objective_name == "softmax" ? cfg_.objective.n_classes : 0;
     }
 
+    size_t n_targets() const
+    {
+        return cfg_.objective.n_targets;
+    }
+
     std::vector<std::string> feature_names() const
     {
         auto const names = mappers_.feature_names();
@@ -1189,19 +1204,28 @@ class Model
         return w > 1 ? emit<double>({n, w}, fill) : emit<double>({n}, fill);
     }
 
+    template <typename Fill>
+    nb::ndarray<nb::numpy, float> prediction_columns(size_t n, Fill &&fill) const
+    {
+        size_t const w = booster_->prediction_width();
+        return w > 1 ? emit<float>({n, w}, fill) : emit<float>({n}, fill);
+    }
+
     template <typename StagedFn>
     nb::ndarray<nb::numpy, float> staged_columns(size_t n, StagedFn &&staged) const
     {
-        size_t const k = booster_->n_iters();
-        return emit<float>({k, n},
-                           [&](std::vector<float> &out)
-                           {
-                               staged(out);
-                               for (size_t t = 0; t < k; ++t)
-                               {
-                                   apply_link_inverse(std::span{out}.subspan(t * n, n));
-                               }
-                           });
+        size_t const k      = booster_->n_iters();
+        size_t const w      = booster_->prediction_width();
+        size_t const stride = n * w;
+        auto const   fill   = [&](std::vector<float> &out)
+        {
+            staged(out);
+            for (size_t t = 0; t < k; ++t)
+            {
+                apply_link_inverse(std::span{out}.subspan(t * stride, stride));
+            }
+        };
+        return w > 1 ? emit<float>({k, n, w}, fill) : emit<float>({k, n}, fill);
     }
 
     template <typename Fill>
@@ -1317,7 +1341,8 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
     {
         bonsai::require_n_features(arrays->first.shape(1), mappers.size(),
                                    "the matrix passed as eval_set");
-        owned = make_validation_labeled(arrays->first, arrays->second);
+        owned = make_validation_labeled(arrays->first, arrays->second,
+                                        cfg.objective.n_targets);
         check_eval_labels(owned->labels, cfg);
         return std::cref(*owned);
     }
@@ -1623,10 +1648,27 @@ bonsai::Config reconcile_init(bonsai::Config                                  cf
                                              stated_keys(items));
 }
 
+void reconcile_targets(bonsai::Config &cfg, bonsai::Dataset const &train)
+{
+    size_t const width = train.n_targets();
+    if (cfg.objective.n_targets == 1 && width > 1)
+    {
+        cfg.objective.n_targets = static_cast<uint32_t>(width);
+        return;
+    }
+    if (cfg.objective.n_targets != width)
+    {
+        throw std::invalid_argument(
+            std::format("objective.n_targets is {} and y carries {} target{} per row",
+                        cfg.objective.n_targets, width, width == 1 ? "" : "s"));
+    }
+}
+
 Model run_fit(bonsai::Config cfg, bonsai::cli::LabeledData const &train,
               bonsai::BinMappers mappers, std::optional<EvalSet> const &eval_set,
               std::optional<bonsai::io::LoadedBooster> init)
 {
+    reconcile_targets(cfg, train.dataset);
     std::optional<bonsai::cli::LabeledData> owned;
     bonsai::cli::ValidationRef const        validation =
         resolve_eval_set(eval_set, cfg, mappers, init.has_value(), owned);
@@ -1937,6 +1979,8 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("objective_name", &Model::objective_name,
                      "The objective this model was trained with (e.g. mse, "
                      "logloss, softmax).")
+        .def_prop_ro("n_targets", &Model::n_targets,
+                     "Targets per row of a multi-target regression; 1 otherwise.")
         .def_prop_ro("n_classes", &Model::n_classes,
                      "Class count for softmax models; 0 for every other "
                      "objective (including binary logloss).")
@@ -2224,8 +2268,9 @@ NB_MODULE(_bonsai, m)
           "(cupy, torch, jax): X is then binned on the GPU in place, with no "
           "host round trip. The columns are named by ``feature_names``, or "
           "``f0``..``fN`` when it is unset.\n"
-          "y : float32 array, shape (n_rows,)\n"
-          "    Labels; a device-resident y is downloaded once.\n"
+          "y : float32 array, shape (n_rows,) or (n_rows, n_targets)\n"
+          "    Labels, or one row of regression targets per row; a device-resident "
+          "y is downloaded once.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
           "    Host arrays, or a Dataset binned with this fit's cut points. "
           "Stays host-side either way, because the per-iteration eval "
