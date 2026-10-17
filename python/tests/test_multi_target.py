@@ -35,11 +35,6 @@ def _regressor(
     )
 
 
-def _r2(y: np.ndarray, p: np.ndarray) -> float:
-    """Plain R2 of one target."""
-    return float(1 - np.sum((y - p) ** 2) / np.sum((y - y.mean()) ** 2))
-
-
 def _data(n=600, p=6, seed=1):
     """(X, Y) float32 arrays with three correlated targets in the first columns."""
     rng = np.random.default_rng(seed)
@@ -156,9 +151,8 @@ def test_dataset_api_refuses_a_width_that_disagrees_with_the_config():
 @requires_cuda
 @pytest.mark.parametrize("grower", ["depthwise", "levelwise", "leafwise"])
 def test_cuda_grower_fits_a_2d_y_and_matches_k_device_fits(grower, monkeypatch):
-    """The K-wide device fit uploads host gradients, so it equals K single
-    device fits through the host-objective hatch bit for bit, and sits within
-    the resident objective's rounding gap of K resident fits."""
+    """A K-wide device fit equals K single device fits bit for bit on both
+    device paths: resident (the default) and through the host-objective hatch."""
     X, Y = _data()
     m = _regressor(grower=grower, device="cuda").fit(X, Y)
     assert m.n_outputs_ == K
@@ -167,11 +161,13 @@ def test_cuda_grower_fits_a_2d_y_and_matches_k_device_fits(grower, monkeypatch):
     assert m.score(X, Y) > 0.9
     for k in range(K):
         resident = _regressor(grower=grower, device="cuda").fit(X, Y[:, k])
-        assert resident.score(X, Y[:, k]) == pytest.approx(_r2(Y[:, k], P[:, k]), abs=1e-3)
+        np.testing.assert_array_equal(P[:, k], resident.predict(X))
     monkeypatch.setenv("BONSAI_HOST_OBJECTIVE", "1")
+    hatched = _regressor(grower=grower, device="cuda").fit(X, Y).predict(X)
+    assert hatched.shape == P.shape
     for k in range(K):
         single = _regressor(grower=grower, device="cuda").fit(X, Y[:, k])
-        np.testing.assert_array_equal(P[:, k], single.predict(X))
+        np.testing.assert_array_equal(hatched[:, k], single.predict(X))
     contribs = m.pred_contribs(X)
     assert contribs.shape == (len(X), K, X.shape[1] + 1)
     np.testing.assert_allclose(contribs.sum(axis=2), P, rtol=1e-4, atol=1e-4)

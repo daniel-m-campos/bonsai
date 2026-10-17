@@ -658,24 +658,24 @@ void renew_round(Obj const &objective, Tree &tree,
 }
 } // namespace detail
 
-// The resident objective's arming state, one home for the single-target and
-// the K-target boosters. sync() disarms when the runtime gate closed or the
-// fit changed (the device scores come home first, so the host path resumes
-// with the state it would have had) and arms through `arm` when the gate is
-// open and nothing is armed; it answers whether the round may run resident.
-// The fit is a minted token, not an address: a stack Dataset's address
-// repeats every fold iteration deterministically, so an address here would
-// skip re-arming for a DIFFERENT fold at the same depth, leaving the previous
-// fold's labels, scores and rows live (pins: the resident suite's fold and
-// hatch cases).
-struct ResidentArm
+// The resident objective's state, one home for the single-target and the
+// K-target boosters. sync() disarms when the runtime gate closed or the fit
+// changed (the device scores come home first, so the host path resumes with
+// the state it would have had), begins the grower's resident plane from the
+// host scores when the gate is open and nothing is armed, and answers whether
+// the round may run resident. The fit is a minted token, not an address: a
+// stack Dataset's address repeats every fold iteration deterministically, so
+// an address here would skip re-arming for a DIFFERENT fold at the same
+// depth, leaving the previous fold's labels, scores and rows live (pins: the
+// resident suite's fold and hatch cases).
+struct ResidentState
 {
     bool  active = false;
     FitId fit{};
 
-    template <typename Grower, typename Arm>
+    template <typename Grower, typename Obj>
     bool sync(Grower &grower, Dataset const &train, bool runtime_open,
-              std::span<float> host_scores, Arm &&arm)
+              std::span<float> host_scores, Obj const &objective, float learning_rate)
     {
         if (active && (!runtime_open || fit != train.fit_identity()))
         {
@@ -685,7 +685,9 @@ struct ResidentArm
         }
         if (runtime_open && !active)
         {
-            active = arm();
+            active = grower.resident_begin(train, device_objective_of(objective),
+                                           std::span<float const>{host_scores},
+                                           learning_rate);
             fit    = active ? train.fit_identity() : FitId{};
         }
         return active;
@@ -693,12 +695,21 @@ struct ResidentArm
 };
 
 // The per-fit half of resident-objective-eligibility: no DART, the escape
-// hatch unset, no renewal the host must reproject. A view is eligible: the
-// epilogue walks its rows and leaves the rest untouched.
+// hatch unset, no renewal the host must reproject (an oblivious tree under a
+// monotone constraint with a renewal objective, whose leaf table the host
+// reprojects). A view is eligible: the epilogue walks its rows and leaves
+// the rest untouched.
 inline bool resident_round_open(float dart_drop_rate, bool reproject_on_host)
 {
     bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
     return dart_drop_rate <= 0.0F && !host_forced && !reproject_on_host;
+}
+
+template <typename Tree>
+bool reproject_monotone_on_host(bool renews_leaves, std::vector<int> const &constraints)
+{
+    return renews_leaves && std::same_as<Tree, ObliviousTree> &&
+           has_monotone_constraint(constraints);
 }
 
 // One boosting round in update_one_iter runs in a fixed order that several
@@ -882,18 +893,11 @@ class Booster final : public Ensemble<Gr, Sa>
         if constexpr (has_device_objective<objective_type> &&
                       !sampler_traits<sampler_type>::reads_gradients)
         {
-            bool const open =
-                resident_round_open(config().dart_drop_rate,
-                                    has_renew_leaf && reproject_monotone_on_host());
-            bool const armed = resident_.sync(
-                grower(), train, open, std::span<float>{scores_},
-                [&]
-                {
-                    return grower().resident_begin(
-                        train, device_objective_of(objective_),
-                        std::span<float const>{scores_}, config().learning_rate);
-                });
-            if (armed)
+            bool const open = resident_round_open(
+                config().dart_drop_rate, reproject_monotone_on_host<tree_type>(
+                                             has_renew_leaf, monotone_constraints_));
+            if (resident_.sync(grower(), train, open, std::span<float>{scores_},
+                               objective_, config().learning_rate))
             {
                 resident_round(train);
                 return true;
@@ -904,12 +908,6 @@ class Booster final : public Ensemble<Gr, Sa>
 
     static constexpr bool has_renew_leaf =
         requires(Obj const &o, std::span<float> r) { o.renew_leaf(r); };
-
-    bool reproject_monotone_on_host() const
-    {
-        return std::same_as<tree_type, ObliviousTree> &&
-               has_monotone_constraint(monotone_constraints_);
-    }
 
     // One boosting round with the resident objective armed. The sampler still
     // runs, and grow returns an empty per-row output: the device derived the
@@ -1126,7 +1124,7 @@ class Booster final : public Ensemble<Gr, Sa>
     // Stale while the resident objective is armed (the device copy is
     // authoritative); resident_end syncs it before any host-path read.
     std::vector<float>            scores_;
-    ResidentArm                   resident_;
+    ResidentState                 resident_;
     detail::EpochCache<walk_type> walk_;
 };
 

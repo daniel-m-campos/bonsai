@@ -202,6 +202,11 @@ bool CudaHistogramEngine::resident_armed() const
     return impl_->ctx.resident_armed();
 }
 
+void CudaHistogramEngine::resident_select(size_t target)
+{
+    impl_->ctx.resident_select(target);
+}
+
 std::vector<float>
 CudaHistogramEngine::resident_finalize(std::span<ResidentNode const> nodes)
 {

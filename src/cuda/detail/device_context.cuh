@@ -248,17 +248,27 @@ struct CudaDeviceContext
 
     struct ResidentPlane
     {
-        DeviceBuffer<float>              labels;
-        DeviceBuffer<float>              scores;
-        DeviceBuffer<float>              weights;
-        LabelsId                         labels_key{};
-        NodeTable                        nodes;
-        DeviceObjective                  objective;
-        bool                             weighted      = false;
-        bool                             armed         = false;
-        float                            learning_rate = 0.0F;
-        size_t                           n_rows        = 0;
-        RowMap                           rows;
+        DeviceBuffer<float> labels;
+        DeviceBuffer<float> scores;
+        DeviceBuffer<float> weights;
+        LabelsId            labels_key{};
+        NodeTable           nodes;
+        DeviceObjective     objective;
+        bool                weighted      = false;
+        bool                armed         = false;
+        float               learning_rate = 0.0F;
+        size_t              n_rows        = 0;
+        size_t              n_targets     = 1;
+        size_t              active        = 0;
+        RowMap              rows;
+        float              *labels_at()
+        {
+            return labels.data() + (active * n_rows);
+        }
+        float *scores_at()
+        {
+            return scores.data() + (active * n_rows);
+        }
         DeviceBuffer<uint32_t>           leaf_ids;
         DeviceBuffer<uint32_t>           hist;
         DeviceBuffer<LeafSelect>         select;
@@ -411,6 +421,10 @@ struct CudaDeviceContext
     bool resident_armed() const
     {
         return resident.armed;
+    }
+    void resident_select(size_t target)
+    {
+        resident.active = target;
     }
     std::vector<float>
          resident_finalize(std::span<CudaHistogramEngine::ResidentNode const> nodes);

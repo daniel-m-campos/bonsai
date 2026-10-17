@@ -770,8 +770,8 @@ void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
         grads.gh.reserve(resident.n_rows);
         grads.absmax.reserve(1);
         grads.quant.reserve(1);
-        gh_from_scores(resident.objective, resident.weighted, resident.scores.data(),
-                       resident.labels.data(),
+        gh_from_scores(resident.objective, resident.weighted, resident.scores_at(),
+                       resident.labels_at(),
                        resident.weighted ? resident.weights.data() : nullptr, n,
                        grads.gh.data());
         launch_gh_quant(grads.gh.data(), n, grads.absmax.data(), grads.quant.data());
@@ -1510,6 +1510,36 @@ void CudaDeviceContext::leaf_stamp(
     }
 }
 
+namespace
+{
+
+std::vector<float> columns_of(std::span<float const> block, size_t n, size_t k)
+{
+    std::vector<float> columns(block.size());
+    for (size_t i = 0; i < n; ++i)
+    {
+        for (size_t t = 0; t < k; ++t)
+        {
+            columns[(t * n) + i] = block[(i * k) + t];
+        }
+    }
+    return columns;
+}
+
+void upload_columns(DeviceBuffer<float> &buffer, std::span<float const> block, size_t n,
+                    size_t k)
+{
+    if (k == 1)
+    {
+        buffer.upload(block.data(), block.size());
+        return;
+    }
+    auto const columns = columns_of(block, n, k);
+    buffer.upload(columns.data(), columns.size());
+}
+
+} // namespace
+
 bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjective objective,
                                        std::span<float const> initial_scores,
                                        float                  learning_rate)
@@ -1520,24 +1550,28 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjective object
     }
     ensure_dataset(ds);
     init_shared_limit();
-    if (ds.n_features() == 0 || initial_scores.size() != ds.plane_n_rows() ||
+    size_t const n = ds.plane_n_rows();
+    size_t const k = ds.n_targets();
+    if (ds.n_features() == 0 || initial_scores.size() != n * k ||
         !hist_budget_ok(widest_bins(ds)))
     {
         return false;
     }
     if (resident.labels_key != ds.labels_identity())
     {
-        resident.labels.upload(ds.labels().data(), ds.labels().size());
+        upload_columns(resident.labels, ds.labels(), n, k);
         if (!ds.weights().empty())
         {
             resident.weights.upload(ds.weights().data(), ds.weights().size());
         }
         resident.labels_key = ds.labels_identity();
     }
-    resident.scores.upload(initial_scores.data(), initial_scores.size());
+    upload_columns(resident.scores, initial_scores, n, k);
     resident.objective     = objective;
     resident.weighted      = !ds.weights().empty();
-    resident.n_rows        = ds.plane_n_rows();
+    resident.n_rows        = n;
+    resident.n_targets     = k;
+    resident.active        = 0;
     resident.learning_rate = learning_rate;
     resident.rows.stage(ds.row_view());
     resident.armed = true;
@@ -1610,7 +1644,7 @@ void CudaDeviceContext::resident_renew(uint32_t n, uint32_t n_nodes)
     for (uint32_t pass = 0; pass < k_select_passes; ++pass)
     {
         renew_count_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
-            resident.leaf_ids.data(), resident.labels.data(), resident.scores.data(), n,
+            resident.leaf_ids.data(), resident.labels_at(), resident.scores_at(), n,
             resident.rows.data(), resident.select.data(), pass, resident.hist.data());
         check(cudaGetLastError(), "resident digit count launch");
         renew_narrow_kernel<<<dim3(n_nodes), dim3(k_select_digits)>>>(
@@ -1628,7 +1662,7 @@ void CudaDeviceContext::resident_renew(uint32_t n, uint32_t n_nodes)
         check(cudaMemset(resident.sums.data(), 0, n_nodes * sizeof(unsigned long long)),
               "resident huber sums zero");
         renew_huber_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
-            resident.leaf_ids.data(), resident.labels.data(), resident.scores.data(), n,
+            resident.leaf_ids.data(), resident.labels_at(), resident.scores_at(), n,
             resident.rows.data(), resident.select.data(), huber->delta, scale,
             resident.sums.data());
         check(cudaGetLastError(), "resident huber sum launch");
@@ -1660,7 +1694,7 @@ std::vector<float> CudaDeviceContext::resident_finalize(
             route_add_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
                 bins, data.n_bins_ptr(), static_cast<uint32_t>(data.key.n_rows),
                 static_cast<uint32_t>(data.key.n_feats), resident.nodes.ref(),
-                resident.learning_rate, resident.scores.data(), n, resident.rows.data(),
+                resident.learning_rate, resident.scores_at(), n, resident.rows.data(),
                 resident.rows.data());
         });
     check(cudaGetLastError(), "resident route+add launch");
@@ -1674,9 +1708,28 @@ void CudaDeviceContext::resident_end(std::span<float> scores_out)
     {
         return;
     }
-    check(cudaMemcpy(scores_out.data(), resident.scores.data(),
-                     scores_out.size() * sizeof(float), cudaMemcpyDeviceToHost),
-          "resident scores fetch");
+    size_t const n = resident.n_rows;
+    size_t const k = resident.n_targets;
+    if (k == 1)
+    {
+        check(cudaMemcpy(scores_out.data(), resident.scores.data(),
+                         scores_out.size() * sizeof(float), cudaMemcpyDeviceToHost),
+              "resident scores fetch");
+    }
+    else
+    {
+        std::vector<float> columns(n * k);
+        check(cudaMemcpy(columns.data(), resident.scores.data(), n * k * sizeof(float),
+                         cudaMemcpyDeviceToHost),
+              "resident score columns fetch");
+        for (size_t i = 0; i < n; ++i)
+        {
+            for (size_t t = 0; t < k; ++t)
+            {
+                scores_out[(i * k) + t] = columns[(t * n) + i];
+            }
+        }
+    }
     resident.armed = false;
 }
 

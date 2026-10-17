@@ -202,6 +202,8 @@ bool CudaHistogramEngine::resident_armed() const
     return false;
 }
 
+void CudaHistogramEngine::resident_select(size_t /*target*/) {}
+
 std::vector<float>
 CudaHistogramEngine::resident_finalize(std::span<ResidentNode const> /*nodes*/)
 {
