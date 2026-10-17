@@ -146,10 +146,14 @@ class IBooster
                                       size_t n_features) const = 0;
 
     // --- the device predict seam
-    // Everything a device predict plan packs, in one call so the ensemble is
-    // read once. An empty `trees` declines. `trees` is valid for as long as
-    // the returned value is, never longer.
-    virtual DevicePlanInput device_plan_input() const
+    // Everything a device predict plan packs for one output, in one call so
+    // the ensemble is read once: a width-1 model answers output 0 and a
+    // K-target model answers each of its K columns with that column's trees
+    // and base score, so the device walks it as K width-1 plans (pins: "a
+    // K-target model hands the device one plan per target"). An empty
+    // `trees` declines. `trees` is valid for as long as the returned value
+    // is, never longer.
+    virtual DevicePlanInput device_plan_input(size_t /*output*/) const
     {
         return {};
     }
@@ -1040,8 +1044,9 @@ class Booster final : public Ensemble<Gr, Sa>
         raw_to_scores(scores, init_score());
     }
 
-    DevicePlanInput device_plan_input() const override
+    DevicePlanInput device_plan_input([[maybe_unused]] size_t output) const override
     {
+        assert(output == 0);
         DevicePlanInput out{};
         out.learning_rate = config().learning_rate;
         out.init_score    = init_score();

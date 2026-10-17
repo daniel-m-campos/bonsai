@@ -6,6 +6,7 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/io/model.hpp"
 #include "bonsai/registry/make_booster.hpp"
+#include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include "test_grower_helpers.hpp"
 
@@ -195,6 +196,37 @@ TEST_CASE("MultiOutputBooster: a K-target resident fit matches K resident fits",
     auto const objective = GENERATE(as<std::string_view>{}, "mse", "huber", "quantile");
     CAPTURE(grower, objective);
     require_matches_single_fits(grower, objective, false);
+}
+
+TEST_CASE("MultiOutputBooster: a K-target model hands the device one plan per target",
+          "[booster][multi_target][predict]")
+{
+    Table const      t       = make_table();
+    BinMappers const mappers = mappers_for(t);
+    Dataset const    wide    = Dataset::bin(t.view(), t.block, mappers, {});
+    auto const grower = GENERATE(as<std::string_view>{}, "depthwise", "levelwise");
+    CAPTURE(grower);
+    auto const multi = fit(config_for("mse", grower, "all_rows", k_targets), wide);
+    std::vector<float> const want = predictions(*multi, t, k_targets);
+
+    for (size_t k = 0; k < k_targets; ++k)
+    {
+        DevicePlanInput const in = multi->device_plan_input(k);
+        REQUIRE(in.trees.size() == k_rounds);
+        REQUIRE(in.epoch == multi->device_plan_input(0).epoch);
+        std::vector<float> raw(k_rows, 0.0F);
+        for (DenseTree const &tree : in.trees)
+        {
+            tree.predict(t.view(), raw);
+        }
+        for (size_t i = 0; i < k_rows; ++i)
+        {
+            float const got = in.init_score + (in.learning_rate * raw[i]);
+            REQUIRE(got == want[(i * k_targets) + k]);
+        }
+    }
+    CHECK(multi->device_plan_input(0).trees.data() !=
+          multi->device_plan_input(1).trees.data());
 }
 
 TEST_CASE("MultiOutputBooster: eval is the objective's loss pooled over the block",

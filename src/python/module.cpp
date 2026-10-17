@@ -885,27 +885,31 @@ class DevicePlanCache
 {
   public:
     std::shared_ptr<bonsai::CudaPredictPlan const>
-    predict(bonsai::DevicePlanInput const &in, bonsai::BinMappers const &mappers) const
+    predict(bonsai::DevicePlanInput const &in, size_t output,
+            bonsai::BinMappers const &mappers) const
     {
         std::scoped_lock const lock(mutex_);
-        return predict_.get(in.epoch,
-                            [&]
-                            {
-                                return bonsai::cuda_predict_plan(
-                                    in.trees, mappers, in.learning_rate, in.init_score);
-                            });
+        return slot(predict_, output)
+            .get(in.epoch,
+                 [&]
+                 {
+                     return bonsai::cuda_predict_plan(in.trees, mappers,
+                                                      in.learning_rate, in.init_score);
+                 });
     }
 
     std::shared_ptr<bonsai::CudaShapPlan const>
-    shap(bonsai::DevicePlanInput const &in, bonsai::BinMappers const &mappers) const
+    shap(bonsai::DevicePlanInput const &in, size_t output,
+         bonsai::BinMappers const &mappers) const
     {
         std::scoped_lock const lock(mutex_);
-        return shap_.get(in.epoch,
-                         [&]
-                         {
-                             return bonsai::cuda_shap_plan(
-                                 in.trees, mappers, in.learning_rate, in.init_score);
-                         });
+        return slot(shap_, output)
+            .get(in.epoch,
+                 [&]
+                 {
+                     return bonsai::cuda_shap_plan(in.trees, mappers, in.learning_rate,
+                                                   in.init_score);
+                 });
     }
 
   private:
@@ -925,9 +929,19 @@ class DevicePlanCache
         }
     };
 
-    mutable std::mutex                    mutex_;
-    mutable Slot<bonsai::CudaPredictPlan> predict_;
-    mutable Slot<bonsai::CudaShapPlan>    shap_;
+    template <typename Plan>
+    static Slot<Plan> &slot(std::vector<Slot<Plan>> &slots, size_t output)
+    {
+        if (slots.size() <= output)
+        {
+            slots.resize(output + 1);
+        }
+        return slots[output];
+    }
+
+    mutable std::mutex                                 mutex_;
+    mutable std::vector<Slot<bonsai::CudaPredictPlan>> predict_;
+    mutable std::vector<Slot<bonsai::CudaShapPlan>>    shap_;
 };
 
 class Model
@@ -1094,8 +1108,7 @@ class Model
                          ds.n_rows(), ds.n_features(),
                          [&](std::vector<double> &out)
                          {
-                             if (booster_->score_width() > 1 ||
-                                 !contribs_on_device(ds, std::span<double>{out}))
+                             if (!contribs_on_device(ds, std::span<double>{out}))
                              {
                                  booster_->pred_contribs_binned(ds.bins(),
                                                                 std::span<double>{out},
@@ -1243,27 +1256,47 @@ class Model
         size_t                                     n_rows;
         size_t                                     n_features;
         std::vector<bonsai::row_id_t>              rows;
-        bonsai::DevicePlanInput                    in;
     };
 
     std::optional<DeviceReady> device_ready(Dataset const &ds) const
     {
         auto const &bins  = ds.bins();
         auto const  plane = bins.ingest_plane();
-        if (!plane)
-        {
-            return std::nullopt;
-        }
-        auto in = booster_->device_plan_input();
-        if (in.trees.empty())
+        if (!plane || booster_->device_plan_input(0).trees.empty())
         {
             return std::nullopt;
         }
         auto const &view = bins.row_view();
         return DeviceReady{plane, bins.plane_n_rows(), bins.n_features(),
                            view.is_identity() ? std::vector<bonsai::row_id_t>{}
-                                              : view.materialize(),
-                           std::move(in)};
+                                              : view.materialize()};
+    }
+
+    template <typename Scalar, typename Walk>
+    bool walk_outputs_on_device(DeviceReady const &ready, size_t width, size_t cells,
+                                std::span<Scalar> out, Walk const &walk) const
+    {
+        if (width == 1)
+        {
+            return walk(0, out);
+        }
+        std::vector<Scalar> column(ready.rows.empty() ? ready.n_rows * cells
+                                                      : ready.rows.size() * cells);
+        for (size_t k = 0; k < width; ++k)
+        {
+            if (!walk(k, std::span<Scalar>{column}))
+            {
+                return false;
+            }
+            size_t const positions = column.size() / cells;
+            for (size_t i = 0; i < positions; ++i)
+            {
+                std::ranges::copy(std::span{column}.subspan(i * cells, cells),
+                                  out.begin() + static_cast<std::ptrdiff_t>(
+                                                    ((i * width) + k) * cells));
+            }
+        }
+        return true;
     }
 
     bool predict_on_device(Dataset const &ds, std::vector<float> &out,
@@ -1274,10 +1307,16 @@ class Model
         {
             return false;
         }
-        auto const plan = plan_cache_->predict(ready->in, mappers_);
-        return plan &&
-               bonsai::cuda_predict(*plan, *ready->plane, ready->n_rows,
-                                    ready->n_features, ready->rows, num_iteration, out);
+        return walk_outputs_on_device<float>(
+            *ready, booster_->prediction_width(), 1, std::span<float>{out},
+            [&](size_t k, std::span<float> column)
+            {
+                auto const plan =
+                    plan_cache_->predict(booster_->device_plan_input(k), k, mappers_);
+                return plan && bonsai::cuda_predict(*plan, *ready->plane, ready->n_rows,
+                                                    ready->n_features, ready->rows,
+                                                    num_iteration, column);
+            });
     }
 
     bool contribs_on_device(Dataset const &ds, std::span<double> out) const
@@ -1287,9 +1326,16 @@ class Model
         {
             return false;
         }
-        auto const plan = plan_cache_->shap(ready->in, mappers_);
-        return plan && bonsai::cuda_pred_contribs(*plan, *ready->plane, ready->n_rows,
-                                                  ready->n_features, ready->rows, out);
+        return walk_outputs_on_device<double>(
+            *ready, booster_->score_width(), ready->n_features + 1, out,
+            [&](size_t k, std::span<double> column)
+            {
+                auto const plan =
+                    plan_cache_->shap(booster_->device_plan_input(k), k, mappers_);
+                return plan && bonsai::cuda_pred_contribs(
+                                   *plan, *ready->plane, ready->n_rows,
+                                   ready->n_features, ready->rows, column);
+            });
     }
 
     std::unique_ptr<bonsai::IBooster> booster_;
