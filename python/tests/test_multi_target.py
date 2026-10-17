@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import pickle
+import re
+import subprocess
+import sys
 import tempfile
 
 import bonsai
@@ -189,3 +193,57 @@ def test_cuda_dataset_api_predicts_a_k_wide_model_on_the_host():
     assert P.shape == (len(X), K)
     np.testing.assert_array_equal(P, np.asarray(model.predict(X)))
     assert np.asarray(model.pred_contribs(ds)).shape == (len(X), K, X.shape[1] + 1)
+
+
+_DEVICE_K_WIDE_WORKER = """
+import sys
+import numpy as np
+import bonsai
+sys.path.insert(0, sys.argv[1])
+from test_multi_target import _data, K
+
+X, Y = _data(n=4000)
+train = bonsai.Dataset(X, Y, device="cuda")
+pairs = {
+    "dispatch.grower_name": sys.argv[2],
+    "booster.n_iters": 12,
+    "booster.learning_rate": 0.3,
+    "tree.max_depth": 3,
+}
+model = bonsai.train(pairs, train)
+P = np.asarray(model.predict(train))
+assert P.shape == (len(X), K), P.shape
+np.testing.assert_allclose(P, np.asarray(model.predict(X)), rtol=1e-5, atol=1e-5)
+C = np.asarray(model.pred_contribs(train))
+assert C.shape == (len(X), K, X.shape[1] + 1), C.shape
+np.testing.assert_allclose(C, np.asarray(model.pred_contribs(X)), rtol=1e-4, atol=1e-4)
+staged = np.asarray(model.predict(train, num_iteration=5))
+host5 = np.asarray(model.predict(X, num_iteration=5))
+np.testing.assert_allclose(staged, host5, rtol=1e-5, atol=1e-5)
+print("DONE", flush=True)
+"""
+
+
+@requires_cuda
+@pytest.mark.parametrize("grower", ["cuda_depthwise", "cuda_levelwise"])
+def test_a_k_wide_model_predicts_and_explains_on_the_device(grower):
+    """A device-resident Dataset has no host matrix to fall back to: the
+    K-wide model walks it as K width-1 plans, one per target, matching the
+    host walk, and the profile lines report K device predicts and K device
+    SHAP walks over the plane."""
+    env = {
+        **os.environ,
+        "BONSAI_CUDA_PROFILE": "1",
+        "PYTHONPATH": os.pathsep.join(sys.path),
+    }
+    here = os.path.dirname(os.path.abspath(__file__))
+    proc = subprocess.run(
+        [sys.executable, "-c", _DEVICE_K_WIDE_WORKER, here, grower],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert "DONE" in proc.stdout, proc.stderr[-2000:]
+    assert len(re.findall(r"cuda-predict: ", proc.stderr)) == 2 * K, proc.stderr[-2000:]
+    assert len(re.findall(r"cuda-shap: ", proc.stderr)) == K, proc.stderr[-2000:]

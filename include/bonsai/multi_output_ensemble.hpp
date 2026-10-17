@@ -6,8 +6,10 @@
 #include "bonsai/grower.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/sampler.hpp"
+#include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <mdspan>
 #include <span>
@@ -177,8 +179,39 @@ template <TreeGrower Gr, Sampler Sa> class MultiOutputEnsemble : public Ensemble
         return scores_;
     }
 
+    // Output k's trees as one dense, round-ordered vector, every output
+    // rebuilt once per epoch and held together so a reader keeps a
+    // superseded set alive while it walks it.
+    std::shared_ptr<std::vector<std::vector<DenseTree>> const> dense_columns() const
+    {
+        return columns_.get(
+            this->epoch(),
+            [&]
+            {
+                std::vector<std::vector<DenseTree>> columns(n_outputs());
+                for (size_t t = 0; t < trees().size(); ++t)
+                {
+                    columns[t % n_outputs()].push_back(dense_of(trees()[t]));
+                }
+                return columns;
+            });
+    }
+
   private:
-    std::vector<float> scores_;
+    static DenseTree dense_of(tree_type const &tree)
+    {
+        if constexpr (std::same_as<tree_type, ObliviousTree>)
+        {
+            return dense_equivalent(tree);
+        }
+        else
+        {
+            return tree;
+        }
+    }
+
+    std::vector<float>                                      scores_;
+    detail::EpochCache<std::vector<std::vector<DenseTree>>> columns_;
 };
 
 } // namespace bonsai

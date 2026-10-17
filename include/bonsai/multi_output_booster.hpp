@@ -33,8 +33,9 @@ namespace bonsai
 // for bit"). Under resident-objective-eligibility the round arms the device
 // plane once with the whole block and grows tree k from the device's column
 // k, so it matches K resident single-target fits bit for bit too (pins: "a
-// K-target resident fit matches K resident fits"). No DART or device
-// prediction, as for multiclass.
+// K-target resident fit matches K resident fits"). The device predicts and
+// explains it as K width-1 plans, one per column (device_plan_input). No
+// DART, as for multiclass.
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
 class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
 {
@@ -106,6 +107,19 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
     size_t prediction_width() const override
     {
         return n_outputs();
+    }
+
+    DevicePlanInput device_plan_input(size_t output) const override
+    {
+        DevicePlanInput out{};
+        out.learning_rate = this->config().learning_rate;
+        out.init_score    = this->init_score_at(output);
+        out.epoch         = this->epoch();
+        auto const held   = this->dense_columns();
+        out.keep_alive =
+            std::shared_ptr<std::vector<DenseTree> const>(held, &(*held)[output]);
+        out.trees = *out.keep_alive;
+        return out;
     }
 
     void predict_at(features_view X, floats_out y_hat, size_t n_rounds) const override
