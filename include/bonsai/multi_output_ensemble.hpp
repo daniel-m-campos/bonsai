@@ -4,6 +4,7 @@
 #include "bonsai/config/config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
@@ -45,6 +46,26 @@ template <TreeGrower Gr, Sampler Sa> class MultiOutputEnsemble : public Ensemble
         for (size_t i = 0; i < out.size(); ++i)
         {
             out[i] = this->init_score_at(i % n_outputs());
+        }
+    }
+
+    // Staged prediction is predict_at after each round, stacked round-major
+    // at the derived class's own width.
+    void predict_staged(features_view X, floats_out out) const override
+    {
+        size_t const stride = X.extent(0) * this->prediction_width();
+        for (size_t r = 0; r < n_iters(); ++r)
+        {
+            this->predict_at(X, out.subspan(r * stride, stride), r + 1);
+        }
+    }
+
+    void predict_staged_binned(Dataset const &bins, floats_out out) const override
+    {
+        size_t const stride = bins.view_n_rows() * this->prediction_width();
+        for (size_t r = 0; r < n_iters(); ++r)
+        {
+            this->predict_at_binned(bins, out.subspan(r * stride, stride), r + 1);
         }
     }
 
@@ -141,6 +162,14 @@ template <TreeGrower Gr, Sampler Sa> class MultiOutputEnsemble : public Ensemble
             bins.view_n_rows(), n_rounds,
             [&](tree_type const &tree, std::vector<float> &raw)
             { detail::accumulate_view_contribution(tree, bins, raw); });
+    }
+
+    void advance_output(size_t k, size_t n, std::vector<float> const &leaf_values)
+    {
+        size_t const n_k = n_outputs();
+        parallel::for_each_index(
+            n, [&](size_t i)
+            { scores_[(i * n_k) + k] += config().learning_rate * leaf_values[i]; });
     }
 
     std::vector<float> &scores()

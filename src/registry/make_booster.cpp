@@ -11,6 +11,7 @@
 
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
+#include "bonsai/config/errors.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/detail/perf.hpp"
 #include "bonsai/grower.hpp"
@@ -35,6 +36,17 @@ struct Entry
 template <typename Combo>
 std::unique_ptr<ITrainableBooster> factory_for(Config const &cfg)
 {
+    if (cfg.objective.n_targets > 1)
+    {
+        if constexpr (multi_output_capable<Combo>)
+        {
+            return std::make_unique<MultiOutputBoosterFor<Combo>>(cfg);
+        }
+        else
+        {
+            throw ConfigError("objective.n_targets applies to regression objectives");
+        }
+    }
     return std::make_unique<BoosterFor<Combo>>(cfg);
 }
 

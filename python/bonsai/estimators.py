@@ -26,7 +26,7 @@ import numpy.typing as npt
 from typing_extensions import Self
 
 from bonsai._bonsai import Dataset, Model, load, train
-from bonsai._coerce import _as_f32
+from bonsai._coerce import _as_f32, _as_targets
 from bonsai._params_ops import ParamsOps
 
 __all__ = ["BonsaiClassifier", "BonsaiRegressor"]
@@ -197,7 +197,10 @@ class _BonsaiEstimator:
         X
             Feature matrix.
         y
-            Regression targets; for ``BonsaiClassifier`` class labels, any
+            Regression targets, shape ``(n_rows,)`` or ``(n_rows, n_targets)``
+            for a multi-target fit (one tree per target per round, and
+            ``predict`` returns one column per target); for
+            ``BonsaiClassifier`` class labels, any
             hashable/orderable values (ints, strings, ...), encoded to
             ``0..K-1`` internally and decoded back to the original
             ``classes_`` values by ``predict``.
@@ -279,7 +282,8 @@ class _BonsaiEstimator:
         Returns
         -------
         numpy.ndarray
-            Predictions, one per row of ``X``; ``BonsaiClassifier`` returns
+            Predictions, one per row of ``X``, or ``(n_rows, n_targets)`` for
+            a multi-target regressor; ``BonsaiClassifier`` returns
             the original class labels (from ``classes_``), not the encoded
             ``0..K-1`` ids the native booster works in.
         """
@@ -297,7 +301,8 @@ class _BonsaiEstimator:
         Returns
         -------
         numpy.ndarray
-            Shape ``(n_iters, n_rows)``: predictions after each boosting
+            Shape ``(n_iters, n_rows)``, or ``(n_iters, n_rows, n_targets)`` for
+            a multi-target regressor: predictions after each boosting
             iteration.
         """
         return np.asarray(self._fitted().staged_predict(self._predict_input(X)))
@@ -822,6 +827,7 @@ class BonsaiRegressor(_BonsaiEstimator):
     """
 
     _estimator_type = "regressor"
+    n_outputs_: int
     objective: str
     quantile_alpha: float | None
 
@@ -871,43 +877,61 @@ class BonsaiRegressor(_BonsaiEstimator):
         float
             The R² score.
         """
-        y_true = _as_f32(y, 1, "y").astype(np.float64)
+        y_true = _as_targets(y, "y").astype(np.float64)
         y_pred = np.asarray(self.predict(X), dtype=np.float64)
         w = (
             None
             if sample_weight is None
             else _as_f32(sample_weight, 1, "sample_weight").astype(np.float64)
         )
-
-        if w is None:
-            avg_true = y_true.mean()
-            ss_res = np.sum((y_true - y_pred) ** 2)
-            ss_tot = np.sum((y_true - avg_true) ** 2)
-        else:
-            avg_true = np.average(y_true, weights=w)
-            ss_res = np.sum(w * (y_true - y_pred) ** 2)
-            ss_tot = np.sum(w * (y_true - avg_true) ** 2)
-
-        if ss_tot == 0:
-            return 1.0 if ss_res == 0 else 0.0
-        return float(1.0 - ss_res / ss_tot)
+        if y_true.ndim == 1:
+            return _r2(y_true, y_pred, w)
+        per_target = [_r2(y_true[:, k], y_pred[:, k], w) for k in range(y_true.shape[1])]
+        return float(np.mean(per_target))
 
     _WARM_START_KNOBS = (
         *_BonsaiEstimator._WARM_START_KNOBS,
         ("dispatch.objective_name", ("objective", "quantile_alpha")),
     )
 
+    @classmethod
+    def from_file(cls, path: str) -> BonsaiRegressor:
+        """Load a saved regressor; ``n_outputs_`` is read off the model."""
+        out = super().from_file(path)
+        out.n_outputs_ = int(out._fitted().n_targets)
+        return out
+
     def _objective_pairs(self) -> dict[str, object]:
         pairs: dict[str, object] = {"dispatch.objective_name": self.objective}
         if self.quantile_alpha is not None:
             pairs["objective.quantile_alpha"] = self.quantile_alpha
+        if getattr(self, "n_outputs_", 1) > 1:
+            pairs["objective.n_targets"] = self.n_outputs_
         return pairs
 
     def _encode_targets(self, y: npt.ArrayLike) -> np.ndarray:
-        return _as_f32(y, 1, "y")
+        arr = _as_targets(y, "y")
+        self.n_outputs_ = int(arr.shape[1]) if arr.ndim == 2 else 1
+        return arr
 
     def _encode_eval_targets(self, y: npt.ArrayLike) -> np.ndarray:
-        return _as_f32(y, 1, "y")
+        return _as_targets(y, "y").reshape(-1)
+
+
+def _r2(y_true: np.ndarray, y_pred: np.ndarray, w: np.ndarray | None) -> float:
+    """R2 of one target, weighted when ``w`` is given; 1.0 for a perfect
+    fit of a constant target and 0.0 for any other constant target."""
+    if w is None:
+        avg_true = y_true.mean()
+        ss_res = np.sum((y_true - y_pred) ** 2)
+        ss_tot = np.sum((y_true - avg_true) ** 2)
+    else:
+        avg_true = np.average(y_true, weights=w)
+        ss_res = np.sum(w * (y_true - y_pred) ** 2)
+        ss_tot = np.sum(w * (y_true - avg_true) ** 2)
+    if ss_tot == 0:
+        return 1.0 if ss_res == 0 else 0.0
+    return float(1.0 - ss_res / ss_tot)
 
 
 # Classifier =======================================================================================

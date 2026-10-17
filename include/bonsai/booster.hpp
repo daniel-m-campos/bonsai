@@ -160,6 +160,13 @@ class IBooster
     {
         return 1;
     }
+
+    // Values predict() writes per row: 1, or the target count of a
+    // multi-target regression (a multiclass predict() is one class id).
+    virtual size_t prediction_width() const
+    {
+        return 1;
+    }
 };
 
 // What training adds to a model: the boosting step plus the early-stopping
@@ -562,6 +569,95 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
     detail::EpochCache<std::vector<DenseTree>> dense_;
 };
 
+namespace detail
+{
+// Each leaf's value becomes the objective's optimum over the residuals of
+// the rows it covers, clamped into leaf_bounds[leaf] when the grower left
+// a fence. The rows are the fit's, which for a view is the view's: a row
+// outside it was never carried through this tree, so its leaf id names a
+// leaf it does not belong to. The identity view is every row.
+template <typename Tree, typename Obj>
+void renew_leaves(Obj const &objective, Tree &tree,
+                  std::vector<node_id_t> const  &leaf_ids,
+                  std::vector<LeafBounds> const &leaf_bounds,
+                  train_leaf_values &leaf_values, floats_view labels,
+                  floats_view scores, RowView const &view)
+{
+    RowIndex const                  rows{view};
+    std::vector<std::vector<float>> residuals(tree.leaf_id_end());
+    for (size_t k = 0; k < rows.size(); ++k)
+    {
+        row_id_t const r = rows[k];
+        residuals[leaf_ids[r]].push_back(labels[r] - scores[r]);
+    }
+    std::vector<float> renewed(residuals.size(), 0.0F);
+    for (node_id_t leaf = 0; leaf < residuals.size(); ++leaf)
+    {
+        std::vector<float> &res = residuals[leaf];
+        if (res.empty())
+        {
+            continue;
+        }
+        float v = objective.renew_leaf(std::span<float>{res});
+        if (!leaf_bounds.empty())
+        {
+            v = static_cast<float>(std::clamp(
+                static_cast<double>(v), leaf_bounds[leaf].lo, leaf_bounds[leaf].hi));
+        }
+        tree.set_leaf_value(leaf, v);
+        renewed[leaf] = v;
+    }
+    for (size_t k = 0; k < rows.size(); ++k)
+    {
+        row_id_t const r = rows[k];
+        leaf_values[r]   = renewed[leaf_ids[r]];
+    }
+}
+
+// Weights are row counts rather than hessians: a renewed value is not a
+// Newton step, so the second-order weighting no longer describes it.
+template <typename Tree>
+void reproject_monotone(Tree &tree, std::vector<node_id_t> const &leaf_ids,
+                        train_leaf_values &leaf_values, RowView const &view,
+                        std::vector<int> const &constraints)
+{
+    if (!has_monotone_constraint(constraints))
+    {
+        return;
+    }
+    std::vector<float> table(tree.leaf_table().begin(), tree.leaf_table().end());
+    project_monotone(monotone_levels(tree.splits(), constraints), tree.leaf_covers(),
+                     table);
+    for (size_t li = 0; li < table.size(); ++li)
+    {
+        tree.set_leaf_value(li, table[li]);
+    }
+    RowIndex const rows{view};
+    for (size_t k = 0; k < rows.size(); ++k)
+    {
+        row_id_t const r = rows[k];
+        leaf_values[r]   = table[leaf_ids[r]];
+    }
+}
+
+// Renewal first, then the oblivious reprojection over the renewed table,
+// the order finish_round's contract states.
+template <typename Tree, typename Obj>
+void renew_round(Obj const &objective, Tree &tree,
+                 std::vector<node_id_t> const  &leaf_ids,
+                 std::vector<LeafBounds> const &leaf_bounds,
+                 train_leaf_values &leaf_values, floats_view labels, floats_view scores,
+                 RowView const &view, std::vector<int> const &constraints)
+{
+    renew_leaves(objective, tree, leaf_ids, leaf_bounds, leaf_values, labels, scores,
+                 view);
+    if constexpr (std::same_as<Tree, ObliviousTree>)
+    {
+        reproject_monotone(tree, leaf_ids, leaf_values, view, constraints);
+    }
+}
+} // namespace detail
+
 // One boosting round in update_one_iter runs in a fixed order that several
 // features depend on: DART drop/rescale first (it rewrites earlier trees'
 // contributions), then gradients, then sampling (so a gradient-reading
@@ -678,12 +774,9 @@ class Booster final : public Ensemble<Gr, Sa>
         // trees): renewal sees exactly the state the gradients were taken in.
         if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
         {
-            renew_leaves(tree, leaf_ids, leaf_bounds, leaf_values, train.labels(),
-                         train.row_view());
-            if constexpr (std::same_as<tree_type, ObliviousTree>)
-            {
-                reproject_monotone(tree, leaf_ids, leaf_values, train.row_view());
-            }
+            detail::renew_round(objective_, tree, leaf_ids, leaf_bounds, leaf_values,
+                                train.labels(), floats_view{scores_}, train.row_view(),
+                                monotone_constraints_);
         }
         lap(prof.renew_s);
 
@@ -869,72 +962,6 @@ class Booster final : public Ensemble<Gr, Sa>
                                                    ((old_scale * dropped_sum[i]) +
                                                     (new_scale * leaf_values[i]));
                                  });
-    }
-
-    // Each leaf's value becomes the objective's optimum over the residuals of
-    // the rows it covers, clamped into leaf_bounds[leaf] when the grower left
-    // a fence. The rows are the fit's, which for a view is the view's: a row
-    // outside it was never carried through this tree, so its leaf id names a
-    // leaf it does not belong to. The identity view is every row.
-    void renew_leaves(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
-                      std::vector<LeafBounds> const &leaf_bounds,
-                      train_leaf_values &leaf_values, floats_view labels,
-                      RowView const &view)
-    {
-        RowIndex const                  rows{view};
-        std::vector<std::vector<float>> residuals(tree.leaf_id_end());
-        for (size_t k = 0; k < rows.size(); ++k)
-        {
-            row_id_t const r = rows[k];
-            residuals[leaf_ids[r]].push_back(labels[r] - scores_[r]);
-        }
-        std::vector<float> renewed(residuals.size(), 0.0F);
-        for (node_id_t leaf = 0; leaf < residuals.size(); ++leaf)
-        {
-            std::vector<float> &res = residuals[leaf];
-            if (res.empty())
-            {
-                continue;
-            }
-            float v = objective_.renew_leaf(std::span<float>{res});
-            if (!leaf_bounds.empty())
-            {
-                v = static_cast<float>(std::clamp(static_cast<double>(v),
-                                                  leaf_bounds[leaf].lo,
-                                                  leaf_bounds[leaf].hi));
-            }
-            tree.set_leaf_value(leaf, v);
-            renewed[leaf] = v;
-        }
-        for (size_t k = 0; k < rows.size(); ++k)
-        {
-            row_id_t const r = rows[k];
-            leaf_values[r]   = renewed[leaf_ids[r]];
-        }
-    }
-
-    // Weights are row counts rather than hessians: a renewed value is not a
-    // Newton step, so the second-order weighting no longer describes it.
-    void reproject_monotone(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
-                            train_leaf_values &leaf_values, RowView const &view)
-    {
-        if (!has_monotone_constraint(monotone_constraints_))
-        {
-            return;
-        }
-        std::vector<float> table(tree.leaf_table().begin(), tree.leaf_table().end());
-        project_monotone(monotone_levels(tree.splits(), monotone_constraints_),
-                         tree.leaf_covers(), table);
-        for (size_t li = 0; li < table.size(); ++li)
-        {
-            tree.set_leaf_value(li, table[li]);
-        }
-        RowIndex const rows{view};
-        for (size_t k = 0; k < rows.size(); ++k)
-        {
-            row_id_t const r = rows[k];
-            leaf_values[r]   = table[leaf_ids[r]];
-        }
     }
 
     // Both tree shapes route through their walk pack (ObliviousWalk or

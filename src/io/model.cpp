@@ -78,6 +78,11 @@ constexpr std::size_t section_index =
 template <typename Sub>
 concept ConfigSubStruct = section_index<Sub> < k_num_sections;
 
+constexpr bool written_only_when_set(std::string_view leaf)
+{
+    return leaf == "n_targets";
+}
+
 template <typename Sub> void section_to_json(json &j, Sub const &s)
 {
     std::apply(
@@ -85,10 +90,16 @@ template <typename Sub> void section_to_json(json &j, Sub const &s)
         {
             auto emit = [&](auto const &fld)
             {
-                if (!persist_skip(fld.leaf))
+                if (persist_skip(fld.leaf))
                 {
-                    j[std::string{fld.leaf}] = s.*(fld.member);
+                    return;
                 }
+                if (written_only_when_set(fld.leaf) &&
+                    s.*(fld.member) == Sub{}.*(fld.member))
+                {
+                    return;
+                }
+                j[std::string{fld.leaf}] = s.*(fld.member);
             };
             (emit(f), ...);
         },
@@ -107,10 +118,19 @@ template <typename Sub> void section_from_json(json const &j, Sub &s)
         {
             auto load = [&](auto const &fld)
             {
-                if (!persist_skip(fld.leaf))
+                if (persist_skip(fld.leaf))
                 {
-                    j.at(std::string{fld.leaf}).get_to(s.*(fld.member));
+                    return;
                 }
+                if (written_only_when_set(fld.leaf))
+                {
+                    if (auto const it = j.find(std::string{fld.leaf}); it != j.end())
+                    {
+                        it->get_to(s.*(fld.member));
+                    }
+                    return;
+                }
+                j.at(std::string{fld.leaf}).get_to(s.*(fld.member));
             };
             (load(f), ...);
         },
@@ -387,19 +407,39 @@ bool try_load_into(IBooster &booster, json const &j, size_t n_features)
     return true;
 }
 
+template <typename Combo, typename Attempt> bool try_each_booster(Attempt &&attempt)
+{
+    if constexpr (multi_output_capable<Combo>)
+    {
+        if (attempt.template operator()<MultiOutputBoosterFor<Combo>>())
+        {
+            return true;
+        }
+    }
+    return attempt.template operator()<BoosterFor<Combo>>();
+}
+
 bool save_dispatch(IBooster const &booster, Config const &cfg, json &out)
 {
-    return with_combo_matching(
-        cfg,
-        [&]<typename Combo>() { return try_save_as<BoosterFor<Combo>>(booster, out); });
+    return with_combo_matching(cfg,
+                               [&]<typename Combo>()
+                               {
+                                   return try_each_booster<Combo>(
+                                       [&]<typename B>()
+                                       { return try_save_as<B>(booster, out); });
+                               });
 }
 
 bool load_dispatch(IBooster &booster, Config const &cfg, json const &j,
                    size_t n_features)
 {
     return with_combo_matching(
-        cfg, [&]<typename Combo>()
-        { return try_load_into<BoosterFor<Combo>>(booster, j, n_features); });
+        cfg,
+        [&]<typename Combo>()
+        {
+            return try_each_booster<Combo>(
+                [&]<typename B>() { return try_load_into<B>(booster, j, n_features); });
+        });
 }
 
 std::vector<uint8_t> read_file(std::string const &path)
