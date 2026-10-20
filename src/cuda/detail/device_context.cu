@@ -20,6 +20,7 @@
 #include <driver_types.h>
 #include <format>
 #include <limits>
+#include <mdspan>
 #include <memory>
 #include <numeric>
 #include <span>
@@ -1516,11 +1517,13 @@ namespace
 std::vector<float> columns_of(std::span<float const> block, size_t n, size_t k)
 {
     std::vector<float> columns(block.size());
+    auto const         rows = std::mdspan(block.data(), n, k);
+    auto const         cols = std::mdspan(columns.data(), k, n);
     for (size_t i = 0; i < n; ++i)
     {
         for (size_t t = 0; t < k; ++t)
         {
-            columns[(t * n) + i] = block[(i * k) + t];
+            cols[t, i] = rows[i, t];
         }
     }
     return columns;
@@ -1722,11 +1725,13 @@ void CudaDeviceContext::resident_end(std::span<float> scores_out)
         check(cudaMemcpy(columns.data(), resident.scores.data(), n * k * sizeof(float),
                          cudaMemcpyDeviceToHost),
               "resident score columns fetch");
+        auto const cols = std::mdspan(columns.data(), k, n);
+        auto const rows = std::mdspan(scores_out.data(), n, k);
         for (size_t i = 0; i < n; ++i)
         {
             for (size_t t = 0; t < k; ++t)
             {
-                scores_out[(i * k) + t] = columns[(t * n) + i];
+                rows[i, t] = cols[t, i];
             }
         }
     }

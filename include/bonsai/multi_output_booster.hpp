@@ -18,6 +18,7 @@
 #include <cassert>
 #include <concepts>
 #include <cstddef>
+#include <mdspan>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -193,13 +194,13 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
 
     void split_targets(Dataset const &train, size_t n)
     {
-        floats_view const block = train.labels();
+        auto const block = std::mdspan(train.labels().data(), n, n_outputs());
         targets_.assign(n_outputs(), std::vector<float>(n));
         for (size_t k = 0; k < n_outputs(); ++k)
         {
             for (size_t i = 0; i < n; ++i)
             {
-                targets_[k][i] = block[(i * n_outputs()) + k];
+                targets_[k][i] = block[i, k];
             }
         }
     }
@@ -220,9 +221,10 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
 
     void take_column(size_t k, size_t n)
     {
+        auto const scores = this->score_block();
         for (size_t i = 0; i < n; ++i)
         {
-            column_[i] = this->scores()[(i * n_outputs()) + k];
+            column_[i] = scores[i, k];
         }
     }
 
