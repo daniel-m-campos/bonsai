@@ -247,3 +247,55 @@ def test_a_k_wide_model_predicts_and_explains_on_the_device(grower):
     assert "DONE" in proc.stdout, proc.stderr[-2000:]
     assert len(re.findall(r"cuda-predict: ", proc.stderr)) == 2 * K, proc.stderr[-2000:]
     assert len(re.findall(r"cuda-shap: ", proc.stderr)) == K, proc.stderr[-2000:]
+
+
+_DEVICE_K_WIDE_EVAL_WORKER = """
+import sys
+import numpy as np
+import bonsai
+sys.path.insert(0, sys.argv[1])
+from test_multi_target import _data, K
+
+X, Y = _data(n=4000)
+Xv, Yv = _data(n=1000, seed=7)
+m = bonsai.BonsaiRegressor(
+    n_iters=40,
+    learning_rate=0.3,
+    max_depth=3,
+    grower=sys.argv[2],
+    device="cuda",
+    n_threads=2,
+    early_stopping_rounds=3,
+).fit(X, Y, eval_set=(Xv, Yv))
+(metrics,) = m.evals_result().values()
+(losses,) = metrics.values()
+assert m.n_outputs_ == K
+staged = np.asarray(m.staged_predict(Xv))
+pooled = ((staged - Yv[None]) ** 2).mean(axis=(1, 2))
+assert len(losses) >= len(pooled), (len(losses), len(pooled))
+np.testing.assert_allclose(np.asarray(losses[: len(pooled)]), pooled, rtol=1e-4, atol=1e-6)
+print("DONE", m.n_iters_, flush=True)
+"""
+
+
+@requires_cuda
+@pytest.mark.parametrize("grower", ["cuda_depthwise", "cuda_levelwise", "cuda_leafwise"])
+def test_a_k_wide_eval_set_is_scored_on_the_device(grower):
+    """Early stopping on a CUDA grower scores a K-wide eval set on the device:
+    the plane arms once, and the loss series is the pooled squared error the
+    host computes from the staged predictions."""
+    env = {
+        **os.environ,
+        "BONSAI_CUDA_PROFILE": "1",
+        "PYTHONPATH": os.pathsep.join(sys.path),
+    }
+    here = os.path.dirname(os.path.abspath(__file__))
+    proc = subprocess.run(
+        [sys.executable, "-c", _DEVICE_K_WIDE_EVAL_WORKER, here, grower],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert "DONE" in proc.stdout, proc.stderr[-2000:]
+    assert len(re.findall(r"cuda eval plane armed", proc.stderr)) == 1, proc.stderr[-2000:]

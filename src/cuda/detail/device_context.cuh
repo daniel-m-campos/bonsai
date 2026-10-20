@@ -290,6 +290,16 @@ struct CudaDeviceContext
         bool                               armed      = false;
         size_t                             plane_rows = 0;
         size_t                             n_feats    = 0;
+        size_t                             n_targets  = 1;
+        size_t                             active     = 0;
+        float                             *scores_at()
+        {
+            return scores.data() + (active * rows.n);
+        }
+        float *labels_at()
+        {
+            return labels.data() + (active * rows.n);
+        }
     };
 
     DeviceData      data;
@@ -433,6 +443,7 @@ struct CudaDeviceContext
 
     bool eval_begin(Dataset const &valid, DeviceObjective objective,
                     std::span<float const> initial_scores);
+    void eval_select(size_t target);
     std::optional<float>
     eval_accumulate(std::span<CudaHistogramEngine::ResidentNode const> nodes, float lr,
                     std::span<float> scores_out);

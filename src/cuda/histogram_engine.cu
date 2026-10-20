@@ -224,6 +224,11 @@ bool CudaHistogramEngine::eval_begin(Dataset const &valid, DeviceObjective objec
     return impl_->ctx.eval_begin(valid, objective, initial_scores);
 }
 
+void CudaHistogramEngine::eval_select(size_t target)
+{
+    impl_->ctx.eval_select(target);
+}
+
 std::optional<float>
 CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> nodes, float lr,
                                      std::span<float> scores_out)

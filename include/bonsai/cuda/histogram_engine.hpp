@@ -277,9 +277,14 @@ class CudaHistogramEngine
     // loss and the view-length seed scores, once per fit; false when the
     // mirror is not u8 (and any prior arming is dropped). eval_accumulate
     // walks the finished tree there by view position; with a device loss it
-    // returns the round's loss (at most 8 KiB moved), else scores_out.
+    // returns the round's loss (at most 8 KiB moved), else scores_out. A
+    // K-target validation set hands its n x K seed block and is held as K
+    // columns; it arms only with a device loss, eval_select names the column
+    // the next walk adds into and scores, and the loss comes back per column
+    // (pins: "a K-target validation round runs on the device").
     bool                 eval_begin(Dataset const &valid, DeviceObjective objective,
                                     std::span<float const> initial_scores);
+    void                 eval_select(size_t target);
     std::optional<float> eval_accumulate(std::span<ResidentNode const> nodes, float lr,
                                          std::span<float> scores_out);
 

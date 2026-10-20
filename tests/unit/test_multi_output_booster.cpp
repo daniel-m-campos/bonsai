@@ -6,6 +6,7 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/io/model.hpp"
 #include "bonsai/registry/make_booster.hpp"
+#include "bonsai/row_view.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include "test_grower_helpers.hpp"
@@ -19,6 +20,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <numeric>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -227,6 +230,54 @@ TEST_CASE("MultiOutputBooster: a K-target model hands the device one plan per ta
     }
     CHECK(multi->device_plan_input(0).trees.data() !=
           multi->device_plan_input(1).trees.data());
+}
+
+// The validation plane for a K-target model: the eval set's seed block is
+// held as K columns, the round adds tree k into column k, and the loss comes
+// back pooled over the targets, the number the host walk and the pooled host
+// loss give within the device loss pass's rounding.
+TEST_CASE("MultiOutputBooster: a K-target validation round runs on the device",
+          "[cuda][booster][multi_target][eval]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto const grower    = GENERATE(as<std::string_view>{}, "cuda_depthwise",
+                                    "cuda_levelwise", "cuda_leafwise");
+    auto const objective = GENERATE(as<std::string_view>{}, "mse", "huber", "quantile");
+    CAPTURE(grower, objective);
+    Table const      t       = make_table();
+    BinMappers const mappers = mappers_for(t);
+    Dataset const    wide    = Dataset::bin(t.view(), t.block, mappers, {});
+    auto const multi = fit(config_for(objective, grower, "all_rows", k_targets), wide);
+
+    constexpr size_t      first = k_rows / 2;
+    constexpr size_t      n     = k_rows - first;
+    std::vector<row_id_t> ids(n);
+    std::iota(ids.begin(), ids.end(), static_cast<row_id_t>(first));
+    Dataset const       valid = wide.with_rows(RowView::encode(ids, k_rows));
+    features_view const Xv{t.X.data() + (first * k_features), n, k_features};
+    floats_view const   labels{t.block.data() + (first * k_targets), n * k_targets};
+
+    std::vector<float> seed(n * k_targets);
+    multi->seed_validation_scores(Xv, seed, k_rounds - 1);
+    std::vector<float> host = seed;
+    multi->accumulate_last_round(Xv, host);
+    float const host_loss = multi->validation_loss(host, labels);
+
+    std::vector<float>   device = seed;
+    std::optional<float> loss;
+    REQUIRE(multi->begin_resident_validation(valid, seed));
+    REQUIRE(multi->accumulate_last_round_resident(valid, device, loss));
+    REQUIRE(loss.has_value());
+    CHECK(*loss == Catch::Approx(host_loss).epsilon(1e-4));
+
+    SECTION("a seed of the wrong width declines")
+    {
+        std::vector<float> const narrow(n, 0.0F);
+        REQUIRE(!multi->begin_resident_validation(valid, narrow));
+    }
 }
 
 TEST_CASE("MultiOutputBooster: eval is the objective's loss pooled over the block",
