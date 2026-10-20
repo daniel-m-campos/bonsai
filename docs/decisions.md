@@ -2448,3 +2448,20 @@ Standings: gpu-tall, cpu-tall
 **Reopener.** The Xeon cliff is in the standings now and is the next perf target: the parked campaign's step 0 (the populate ledger, a thread-scaling run on a cpuset pod for bonsai and XGBoost, then `OMP_PLACES=cores OMP_PROC_BIND=close` and single-socket pinning as the first A/B). A refresh that draws an EPYC host again reads the cells on 2.8.0's part. The GPU axes are pinned to the part (decision 127) where the host plane is read on whatever CPU the GPU pod carries: a rule for the host plane, pin or record, is owed. The A/B rows still carry no host field.
 
 Standings: gpu-tall, cpu-tall
+## 163. The K-target validation round runs on the device (adopted)
+
+**Decision.** The engine's validation plane holds a K-target eval set the way the resident plane holds a K-target training set: `eval_begin` takes the n x K seed block and keeps it as K view-length columns beside K label columns, `eval_select` names the column the next walk adds into and scores, and `eval_accumulate` returns that column's loss from the objective's device form. `MultiOutputBooster` arms the plane once per fit and, each round, selects column k, walks tree k there and reads its loss, then hands early stopping the mean over the K columns, which is the pooled loss `validation_loss` computes on the host (the mean of K per-target means over the same n rows). The plane arms a K-wide set only when the objective has a device loss, since every regression objective the K-target route serves has one and a plane without it would have to download n x K scores per round for the host to pool; a K-wide set under any other objective keeps the host walk, as before. Width 1 is unchanged: one column, the bytes it uploaded before.
+
+**Why.** Decision 161 left the K-wide validation walk on the host, the one per-round host cost a K-target fit on a CUDA grower still paid once its round went resident. Same pod (an RTX PRO 6000 Blackwell Server Edition, nvcc 12.8), 1M x 64 training rows, a 1M x 64 eval set, K = 4, 50 rounds at depth 6, twelve host threads, best of three, the host walk measured twice around the device walk:
+
+| grower | fit alone | fit + eval set, host walk | fit + eval set, device | single-target fit + eval set |
+|---|--:|--:|--:|--:|
+| cuda_depthwise | 0.34 to 0.37 s | 1.89 s | 0.76 s | 0.44 to 0.47 s |
+| cuda_levelwise | 0.42 to 0.43 s | 1.74 to 1.78 s | 0.83 s | 0.46 to 0.49 s |
+| cuda_leafwise | 0.66 to 0.72 s | 2.30 s | 1.06 s | 0.55 s |
+
+The eval set cost 1.3 to 1.6 s per fit on the host walk, four tree walks over a million rows per round plus the host loss pass, and 0.35 to 0.42 s on the device, so a K-target fit with an eval set went from 4x a single-target fit with the same eval set to 1.6 to 1.9x, the K trees it grows. The loss series differ in the third or fourth significant digit at this size (0.002684 against 0.002696 at round 50 on cuda_depthwise), the device summing in double partials where the host's `eval` sums in single precision; the pins hold both within 1e-4 relative at a thousand rows, the same bound the single-target eval plane carries. Every suite passed on the pod with the new case over the three CUDA growers and mse, huber, quantile, and the three device hashes held.
+
+**Rejected.** K separate eval planes, one arming per target: K uploads of the same bins, where the columns share one plane and one row map. Downloading the K score columns each round and pooling on the host: n x K floats per round moved so the host can compute what the device loss pass already has, and the host sum is the less accurate of the two.
+
+**Reopener.** One walk over the K trees of a round writing K columns, the same lever decision 161 names for predict, if the per-round K launches show in a profile at larger K. A K-wide eval set under an objective without a device loss takes the host walk today; a device form for such an objective reopens it for free.

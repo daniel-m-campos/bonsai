@@ -19,6 +19,7 @@
 #include <concepts>
 #include <cstddef>
 #include <mdspan>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -145,6 +146,36 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
                           floats_view            labels) const override
     {
         return objective_.eval(floats_view{scores.data(), scores.size()}, labels);
+    }
+
+    bool begin_resident_validation(Dataset const         &bins,
+                                   std::span<float const> seed) override
+    {
+        return this->grower().eval_begin(bins, device_objective_of(objective_), seed);
+    }
+
+    bool accumulate_last_round_resident(Dataset const &bins, floats_out scores,
+                                        std::optional<float> &loss) override
+    {
+        assert(scores.size() == bins.view_n_rows() * n_outputs());
+        auto const   by_round = this->round_trees();
+        size_t const last     = by_round.extent(0) - 1;
+        double       pooled   = 0.0;
+        for (size_t k = 0; k < n_outputs(); ++k)
+        {
+            this->grower().eval_select(k);
+            std::optional<float> column;
+            if (!this->grower().eval_accumulate(
+                    by_round[last, k], bins, this->config().learning_rate,
+                    {scores.data(), scores.size()}, column) ||
+                !column.has_value())
+            {
+                return false;
+            }
+            pooled += *column;
+        }
+        loss = static_cast<float>(pooled / static_cast<double>(n_outputs()));
+        return true;
     }
 
   private:

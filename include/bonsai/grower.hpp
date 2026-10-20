@@ -329,6 +329,14 @@ bool engine_eval_begin(EngineT &engine, Dataset const &valid, DeviceObjective ob
     }
 }
 
+template <typename EngineT> void engine_eval_select(EngineT &engine, size_t target)
+{
+    if constexpr (requires { engine.eval_select(target); })
+    {
+        engine.eval_select(target);
+    }
+}
+
 // The grower's device state, one home for all three growers: the engine and
 // the two arming flags the resident-objective and validation seams set. The
 // flags answer "did the device accept this fit", so grow() can skip the
@@ -387,6 +395,11 @@ template <typename EngineT> class DeviceSeam
         return eval_;
     }
 
+    void eval_select(size_t target)
+    {
+        engine_eval_select(engine_, target);
+    }
+
     bool eval_armed() const
     {
         return eval_;
@@ -433,6 +446,10 @@ template <HistogramEngine EngineT> class GrowerHost
                     std::span<float const> scores)
     {
         return seam_.eval_begin(valid, objective, scores);
+    }
+    void eval_select(size_t target)
+    {
+        seam_.eval_select(target);
     }
     template <typename Tree>
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,

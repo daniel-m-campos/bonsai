@@ -1746,21 +1746,24 @@ using EvalPlane = CudaDeviceContext::EvalPlane;
 void stage_eval_labels(EvalPlane &veval, Dataset const &valid,
                        DeviceObjective objective)
 {
-    veval.objective =
-        valid.labels().size() == valid.plane_n_rows() ? objective : DeviceObjective{};
+    size_t const k  = valid.n_targets();
+    veval.objective = valid.labels().size() == valid.plane_n_rows() * k
+                          ? objective
+                          : DeviceObjective{};
     if (!has_device_form(veval.objective))
     {
         return;
     }
-    auto const &view = valid.row_view();
+    auto const  &view = valid.row_view();
+    size_t const n    = valid.view_n_rows();
     if (view.is_identity())
     {
-        veval.labels.upload(valid.labels().data(), valid.labels().size());
+        upload_columns(veval.labels, valid.labels(), n, k);
     }
     else
     {
-        auto const gathered = view.gather(valid.labels());
-        veval.labels.upload(gathered.data(), gathered.size());
+        auto const gathered = view.gather(valid.labels(), k);
+        upload_columns(veval.labels, gathered, n, k);
     }
     veval.loss_partial.reserve(1024);
 }
@@ -1820,12 +1823,17 @@ bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjective objecti
 {
     veval.armed = false;
     veval.adopted.reset();
+    size_t const k = valid.n_targets();
     if (!valid.bins_are_u8() || valid.n_features() == 0 ||
-        initial_scores.size() != valid.view_n_rows())
+        initial_scores.size() != valid.view_n_rows() * k)
     {
         return false;
     }
     stage_eval_labels(veval, valid, objective);
+    if (k > 1 && !has_device_form(veval.objective))
+    {
+        return false;
+    }
     if (!adopt_eval_plane(veval, valid))
     {
         retile_eval_plane(veval, valid);
@@ -1837,9 +1845,11 @@ bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjective objecti
         nb[f] = static_cast<uint32_t>(valid.n_bins(f));
     }
     veval.n_bins.upload(nb.data(), nb.size());
-    veval.scores.upload(initial_scores.data(), initial_scores.size());
-    veval.n_feats = n_feats;
-    veval.armed   = true;
+    upload_columns(veval.scores, initial_scores, valid.view_n_rows(), k);
+    veval.n_feats   = n_feats;
+    veval.n_targets = k;
+    veval.active    = 0;
+    veval.armed     = true;
     if (prof_counters.enabled)
     {
         std::fprintf(stderr,
@@ -1847,6 +1857,11 @@ bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjective objecti
                      veval.rows.n, veval.plane_rows, veval.adopted ? 1 : 0, n_feats);
     }
     return true;
+}
+
+void CudaDeviceContext::eval_select(size_t target)
+{
+    veval.active = target < veval.n_targets ? target : 0;
 }
 
 std::optional<float> CudaDeviceContext::eval_accumulate(
@@ -1859,14 +1874,14 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
     auto const n = static_cast<uint32_t>(veval.rows.n);
     route_add_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
         veval.bin_source, veval.n_bins.data(), static_cast<uint32_t>(veval.plane_rows),
-        static_cast<uint32_t>(veval.n_feats), veval.nodes.ref(), lr,
-        veval.scores.data(), n, veval.rows.data(), nullptr);
+        static_cast<uint32_t>(veval.n_feats), veval.nodes.ref(), lr, veval.scores_at(),
+        n, veval.rows.data(), nullptr);
     check(cudaGetLastError(), "eval route+add launch");
     if (has_device_form(veval.objective))
     {
         uint32_t const blocks =
-            eval_loss_pass1(veval.objective, veval.scores.data(), veval.labels.data(),
-                            n, veval.loss_partial.device());
+            eval_loss_pass1(veval.objective, veval.scores_at(), veval.labels_at(), n,
+                            veval.loss_partial.device());
         veval.loss_partial.fetch(blocks);
         double const total = std::accumulate(veval.loss_partial.host.begin(),
                                              veval.loss_partial.host.end(), 0.0);

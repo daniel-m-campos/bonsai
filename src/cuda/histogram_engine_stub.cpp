@@ -219,6 +219,8 @@ bool CudaHistogramEngine::eval_begin(Dataset const & /*valid*/,
     return false;
 }
 
+void CudaHistogramEngine::eval_select(size_t /*target*/) {}
+
 std::optional<float>
 CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> /*nodes*/,
                                      float /*lr*/, std::span<float> /*scores_out*/)
