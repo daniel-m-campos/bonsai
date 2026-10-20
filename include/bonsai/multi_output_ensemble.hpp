@@ -45,10 +45,7 @@ template <TreeGrower Gr, Sampler Sa> class MultiOutputEnsemble : public Ensemble
             std::ranges::copy(scores, out.begin());
             return;
         }
-        for (size_t i = 0; i < out.size(); ++i)
-        {
-            out[i] = this->init_score_at(i % n_outputs());
-        }
+        fill_init_scores(out);
     }
 
     // Staged prediction is predict_at after each round, stacked round-major
@@ -98,29 +95,50 @@ template <TreeGrower Gr, Sampler Sa> class MultiOutputEnsemble : public Ensemble
 
     void broadcast_init_scores(size_t n)
     {
-        size_t const n_k = n_outputs();
-        scores_.assign(n * n_k, 0.0F);
-        for (size_t i = 0; i < n; ++i)
+        scores_.assign(n * n_outputs(), 0.0F);
+        fill_init_scores(scores_);
+    }
+
+    void fill_init_scores(std::span<float> block) const
+    {
+        auto const rows =
+            std::mdspan(block.data(), block.size() / n_outputs(), n_outputs());
+        for (size_t i = 0; i < rows.extent(0); ++i)
         {
-            std::ranges::copy(init_scores(),
-                              std::span{scores_}.subspan(i * n_k, n_k).begin());
+            for (size_t k = 0; k < rows.extent(1); ++k)
+            {
+                rows[i, k] = init_score_at(k);
+            }
         }
+    }
+
+    auto score_block()
+    {
+        return std::mdspan(scores_.data(), scores_.size() / n_outputs(), n_outputs());
+    }
+
+    auto round_trees() const
+    {
+        return std::mdspan(trees().data(), n_iters(), n_outputs());
     }
 
     // Warm start: replay every loaded tree's train contribution into the
     // scores; a no-op for a fresh booster.
     void replay_warm_start(Dataset const &train, size_t n)
     {
-        size_t const n_k = n_outputs();
-        for (size_t t = 0; t < trees().size(); ++t)
+        auto const         by_round = round_trees();
+        auto const         scores   = score_block();
+        std::vector<float> raw(n);
+        for (size_t r = 0; r < by_round.extent(0); ++r)
         {
-            std::vector<float> raw(n, 0.0F);
-            detail::accumulate_train_contribution(trees()[t], train, raw);
-            size_t const k      = t % n_k;
-            auto const   scores = std::mdspan(scores_.data(), n, n_k);
-            for (size_t i = 0; i < n; ++i)
+            for (size_t k = 0; k < by_round.extent(1); ++k)
             {
-                scores[i, k] += config().learning_rate * raw[i];
+                std::ranges::fill(raw, 0.0F);
+                detail::accumulate_train_contribution(by_round[r, k], train, raw);
+                for (size_t i = 0; i < n; ++i)
+                {
+                    scores[i, k] += config().learning_rate * raw[i];
+                }
             }
         }
     }
@@ -133,19 +151,19 @@ template <TreeGrower Gr, Sampler Sa> class MultiOutputEnsemble : public Ensemble
     {
         size_t const rounds = n_rounds == 0 ? n_iters() : std::min(n_rounds, n_iters());
         std::vector<float> scores(n * n_outputs(), 0.0F);
+        auto const         block    = std::mdspan(scores.data(), n, n_outputs());
+        auto const         by_round = round_trees();
         std::vector<float> raw(n);
         for (size_t k = 0; k < n_outputs(); ++k)
         {
             std::ranges::fill(raw, 0.0F);
-            auto const round_trees = std::mdspan(trees().data(), rounds, n_outputs());
             for (size_t r = 0; r < rounds; ++r)
             {
-                accumulate(round_trees[r, k], raw);
+                accumulate(by_round[r, k], raw);
             }
             for (size_t i = 0; i < n; ++i)
             {
-                scores[(i * n_outputs()) + k] =
-                    init_score_at(k) + (config().learning_rate * raw[i]);
+                block[i, k] = init_score_at(k) + (config().learning_rate * raw[i]);
             }
         }
         return scores;
@@ -168,10 +186,10 @@ template <TreeGrower Gr, Sampler Sa> class MultiOutputEnsemble : public Ensemble
 
     void advance_output(size_t k, size_t n, std::vector<float> const &leaf_values)
     {
-        size_t const n_k = n_outputs();
+        auto const scores = score_block();
         parallel::for_each_index(
-            n, [&](size_t i)
-            { scores_[(i * n_k) + k] += config().learning_rate * leaf_values[i]; });
+            n,
+            [&](size_t i) { scores[i, k] += config().learning_rate * leaf_values[i]; });
     }
 
     std::vector<float> &scores()
@@ -184,17 +202,21 @@ template <TreeGrower Gr, Sampler Sa> class MultiOutputEnsemble : public Ensemble
     // superseded set alive while it walks it.
     std::shared_ptr<std::vector<std::vector<DenseTree>> const> dense_columns() const
     {
-        return columns_.get(
-            this->epoch(),
-            [&]
-            {
-                std::vector<std::vector<DenseTree>> columns(n_outputs());
-                for (size_t t = 0; t < trees().size(); ++t)
-                {
-                    columns[t % n_outputs()].push_back(dense_of(trees()[t]));
-                }
-                return columns;
-            });
+        return columns_.get(this->epoch(),
+                            [&]
+                            {
+                                auto const by_round = round_trees();
+                                std::vector<std::vector<DenseTree>> columns(
+                                    n_outputs());
+                                for (size_t r = 0; r < by_round.extent(0); ++r)
+                                {
+                                    for (size_t k = 0; k < by_round.extent(1); ++k)
+                                    {
+                                        columns[k].push_back(dense_of(by_round[r, k]));
+                                    }
+                                }
+                                return columns;
+                            });
     }
 
   private:

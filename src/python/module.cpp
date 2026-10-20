@@ -16,6 +16,7 @@
 #include <functional>
 #include <initializer_list>
 #include <map>
+#include <mdspan>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1280,20 +1281,22 @@ class Model
         {
             return walk(0, out);
         }
-        std::vector<Scalar> column(ready.rows.empty() ? ready.n_rows * cells
-                                                      : ready.rows.size() * cells);
+        size_t const positions = ready.rows.empty() ? ready.n_rows : ready.rows.size();
+        std::vector<Scalar> column(positions * cells);
+        auto const          block = std::mdspan(out.data(), positions, width, cells);
+        auto const          col   = std::mdspan(column.data(), positions, cells);
         for (size_t k = 0; k < width; ++k)
         {
             if (!walk(k, std::span<Scalar>{column}))
             {
                 return false;
             }
-            size_t const positions = column.size() / cells;
             for (size_t i = 0; i < positions; ++i)
             {
-                std::ranges::copy(std::span{column}.subspan(i * cells, cells),
-                                  out.begin() + static_cast<std::ptrdiff_t>(
-                                                    ((i * width) + k) * cells));
+                for (size_t c = 0; c < cells; ++c)
+                {
+                    block[i, k, c] = col[i, c];
+                }
             }
         }
         return true;
