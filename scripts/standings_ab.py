@@ -25,12 +25,20 @@ ingest/train split: they must agree, because a two-step Dataset that lost its
 device hint would bin on the host and post a plausible ingest number for a
 pipeline no cuda grower runs. One process per arm, so peak RSS is that arm's
 own.
+
+Every row names the CPU it was fitted on: a cell whose arms were measured on
+two hosts compares pods, not builds, and check_standings.py refuses it. The
+read is local rather than bonsai.bench.runlog's because the old and anchor
+arms import the wheel's own bench, which may predate that helper.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import pathlib
+import platform
+import subprocess
 import sys
 
 # The standings-rows anchor knobs. Restated rather than loaded from the spec
@@ -103,10 +111,24 @@ def main() -> int:
                 "r2_test": out.get("r2_test"),
                 "version": getattr(bonsai, "__version__", "source"),
                 "module": bonsai.__file__,
+                "host": {"cpu_model": cpu_model()},
             }
         )
     )
     return 0
+
+
+def cpu_model() -> str:
+    """The CPU's marketing name, as /proc/cpuinfo or sysctl spells it."""
+    if platform.system() == "Darwin":
+        out = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True
+        )
+        return out.stdout.strip()
+    for line in pathlib.Path("/proc/cpuinfo").read_text().splitlines():
+        if line.startswith("model name"):
+            return line.split(":", 1)[1].strip()
+    return ""
 
 
 if __name__ == "__main__":

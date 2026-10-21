@@ -401,3 +401,52 @@ def test_a_reference_gpu_build_is_read_but_not_gated(monkeypatch, tmp_path):
         "bonsai_cuda_leafwise",
         "bonsai_cuda_levelwise",
     )
+
+
+def _hosted(arm: str, fit_s: float, cpu: str) -> dict:
+    return _arm(arm, fit_s, host={"cpu_model": cpu})
+
+
+def test_a_cell_measured_across_hosts_fails_the_gate(monkeypatch, tmp_path):
+    reg = _ab_registry(
+        monkeypatch,
+        tmp_path,
+        [
+            _hosted("anchor", 10.0, "AMD EPYC 9554 64-Core Processor"),
+            _hosted("old", 10.0, "AMD EPYC 9554 64-Core Processor"),
+            _hosted("new", 10.0, "Intel(R) Xeon(R) 6952P"),
+        ],
+        decisions="## 1. Nothing\n",
+    )
+    errors = check_standings.check_ab(reg)
+    assert errors == [
+        "gpu-tall: the release A/B ab-gpu-2026-09.jsonl compares arms across hosts "
+        "(4000000x512 cuda_depthwise: AMD EPYC 9554 64-Core Processor and "
+        "Intel(R) Xeon(R) 6952P); every arm of a cell is measured on one pod, "
+        "so the cell is re-measured"
+    ]
+
+
+def test_cells_on_their_own_hosts_pass_and_the_arm_line_names_both(monkeypatch, tmp_path):
+    tall = [
+        _hosted(arm, 10.0, "AMD EPYC 9554 64-Core Processor") for arm in ("anchor", "old", "new")
+    ]
+    wide = [
+        dict(_hosted(arm, 50.0, "AMD EPYC 9754 128-Core Processor"), cols=2048)
+        for arm in ("anchor", "old", "new")
+    ]
+    reg = _ab_registry(monkeypatch, tmp_path, tall + wide, decisions="## 1. Nothing\n")
+    assert check_standings.check_ab(reg) == []
+    rows = [dict(r, version=r["arm"]) for r in tall + wide]
+    assert check_standings.ab_arm_line(rows) == (
+        "anchor anchor, old old, new new on AMD EPYC 9554 64-Core Processor "
+        "and AMD EPYC 9754 128-Core Processor"
+    )
+
+
+def test_rows_without_a_host_are_read_as_before(monkeypatch, tmp_path):
+    rows = [_arm("anchor", 10.0, version="1.15.0"), _arm("new", 10.0, version="2.9.0")]
+    reg = _ab_registry(monkeypatch, tmp_path, rows, decisions="## 1. Nothing\n")
+    assert check_standings.check_ab(reg) == []
+    assert check_standings.ab_arm_line(rows) == "anchor 1.15.0, new 2.9.0"
+
