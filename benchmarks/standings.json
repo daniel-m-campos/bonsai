@@ -140,10 +140,10 @@
   },
   "code": {
     "file": "code-metrics-2026-10.jsonl",
-    "sha": "37395c63d3986283496ae7882814b06836ea007f",
+    "sha": "084d8c36c655ab017e877a65ef1219b291a73e7c",
     "host": null,
     "date": null,
-    "refreshed_for": "2.8.0",
+    "refreshed_for": "2.9.0",
     "as_of_decision": 92,
     "sha_partial": true
   },
