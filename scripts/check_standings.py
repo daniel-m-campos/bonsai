@@ -10,6 +10,8 @@ Two hard-fail chokepoints plus the refresh planner, stdlib only:
         registered as_of_decision, forcing refresh-or-demote before the claim
         ships, and while a registered release A/B holds a moved cell that
         no tagged entry cites or a cell whose arms ran on different hosts.
+        Every measured sha must sit on origin/main; a clone that cannot
+        tell (no remote, shallow) says so and passes.
 
     python3 scripts/check_standings.py --release <version>
         Release-time gate (runs in the wheels publish job). Fails unless every
@@ -77,6 +79,7 @@ import importlib.metadata as metadata
 import json
 import pathlib
 import re
+import subprocess
 import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -85,6 +88,9 @@ RESULTS = REPO / "benchmarks" / "results"
 DECISIONS = REPO / "docs" / "decisions.md"
 REF_VERSIONS = REPO / "benchmarks" / "reference_versions.json"
 MODEL_HASH_SCRIPT = REPO / "scripts" / "model_hash.py"
+# The branch every measured sha must sit on: a row measured on a commit
+# that never reached main cannot be re-run from the record.
+MAIN_REF = "origin/main"
 
 ENTRY_RE = re.compile(r"^## (\d+)\. ", re.M)
 TAG_RE = re.compile(r"^Standings: (.+)$", re.M)
@@ -226,6 +232,41 @@ def check_ab(reg: dict) -> list[str]:
             f"a decision entry tagged `Standings: {axis}` must cite {name} "
             "and say why the move ships, or the axis is re-measured"
         )
+    return errors
+
+
+def sha_reachable(sha: str) -> bool | None:
+    """Whether ``sha`` is on MAIN_REF; None when this clone cannot tell."""
+    try:
+        out = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", sha, MAIN_REF],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if out.returncode in (0, 1):
+        return out.returncode == 0
+    return None
+
+
+def check_shas(reg: dict) -> list[str]:
+    """Every measured sha sits on main, or the row cannot be re-run from the record."""
+    errors = []
+    for axis, e in reg.items():
+        sha = e.get("sha")
+        if not sha:
+            continue
+        reachable = sha_reachable(sha)
+        if reachable is None:
+            print(f"{axis}: sha reachability not checked ({MAIN_REF} or {sha[:8]} unknown here)")
+        elif not reachable:
+            errors.append(
+                f"{axis}: measured at {sha[:8]}, which is not on {MAIN_REF}; "
+                "a row measured off main is re-measured, not restamped"
+            )
     return errors
 
 
@@ -630,11 +671,11 @@ def _major(version: str) -> int:
 def main() -> int:
     reg = load_registry()
     if "--decisions" in sys.argv:
-        errors = check_decisions(reg) + check_ab(reg) + check_drift(reg)
+        errors = check_decisions(reg) + check_ab(reg) + check_shas(reg) + check_drift(reg)
         label = "decision gate"
     elif "--release" in sys.argv:
         version = sys.argv[sys.argv.index("--release") + 1]
-        errors = check_release(reg, version) + check_drift(reg)
+        errors = check_release(reg, version) + check_shas(reg) + check_drift(reg)
         label = f"release gate ({version})"
     elif "--stale" in sys.argv:
         # One name per line and nothing else: the refresh driver reads this.
