@@ -34,13 +34,10 @@ bool fills_by_column(Dataset const &ds, SplitInput const &node)
     return !ds.bins_are_u8() || node.rows.size() * k_col_fill_den >= ds.plane_n_rows();
 }
 
-void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
-                    split_input_refs nodes, std::span<feature_id_t const> selected,
-                    fd::SelectionPlan const &sp, sibling_refs siblings = {})
+void carve_nodes(Dataset const &ds, split_input_refs nodes,
+                 std::span<feature_id_t const> selected, fd::SelectionPlan const &sp)
 {
-    assert(siblings.empty() || siblings.size() == nodes.size());
-    grower_detail::GrowProfiler::Lap lap;
-    bool const                       alone = nodes.size() == 1;
+    bool const alone = nodes.size() == 1;
     parallel::for_each_index(
         nodes.size(),
         [&](size_t i)
@@ -59,11 +56,12 @@ void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
                 node.hists.carve_storage(sp.layout, ds.n_features());
             }
         });
-    lap(grower_detail::GrowProfiler::instance().carve_s);
-    if (selected.empty())
-    {
-        return;
-    }
+}
+
+void fill_routed(Dataset const &ds, floats_view grad, floats_view hess,
+                 split_input_refs nodes, std::span<feature_id_t const> selected,
+                 fd::SelectionPlan const &sp, sibling_refs siblings)
+{
     static thread_local std::vector<std::reference_wrapper<SplitInput>> sparse_nodes;
     static thread_local std::vector<std::reference_wrapper<NodeHistograms>> sparse_sibs;
     sparse_nodes.clear();
@@ -97,6 +95,21 @@ void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
     {
         fd::fill_sparse(ds, grad, hess, sparse_nodes, selected, sp, sparse_sibs);
     }
+}
+
+void carve_and_fill(Dataset const &ds, floats_view grad, floats_view hess,
+                    split_input_refs nodes, std::span<feature_id_t const> selected,
+                    fd::SelectionPlan const &sp, sibling_refs siblings = {})
+{
+    assert(siblings.empty() || siblings.size() == nodes.size());
+    grower_detail::GrowProfiler::Lap lap;
+    carve_nodes(ds, nodes, selected, sp);
+    lap(grower_detail::GrowProfiler::instance().carve_s);
+    if (selected.empty())
+    {
+        return;
+    }
+    fill_routed(ds, grad, hess, nodes, selected, sp, siblings);
     lap(grower_detail::GrowProfiler::instance().fill_s);
     assert(std::ranges::all_of(nodes,
                                [&](SplitInput const &node)
