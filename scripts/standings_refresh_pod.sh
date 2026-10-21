@@ -103,12 +103,14 @@ mkdir -p "$DATA_CACHE"
 BENCH=(env PYTHONPATH="$BUILD" BONSAI_BENCH_DATA_CACHE="$DATA_CACHE" \
     BONSAI_BENCH_GIT_SHA="$GIT_SHA" \
     /opt/venv/bin/python -m bonsai.bench)
-# OMP_WAIT_POLICY=passive only on the CPU plane: a spin-wait barrier spends
-# on waiting whatever the cap withholds, and the device planes are measured
-# without it, so the flag never silently crosses into a gpu axis.
-CPU_BENCH=(env OMP_WAIT_POLICY=passive PYTHONPATH="$BUILD" \
-    BONSAI_BENCH_DATA_CACHE="$DATA_CACHE" BONSAI_BENCH_GIT_SHA="$GIT_SHA" \
-    /opt/venv/bin/python -m bonsai.bench)
+# The CPU arms run under the runtime's default wait policy, the one a user's
+# process gets. OMP_WAIT_POLICY=passive used to be exported here so a spinning
+# barrier could not spend what a bandwidth cap withholds, but the quota gate
+# below already keeps a spare core and the throttle bracket reads the rest,
+# and on a Xeon 6760P host the passive setting alone read bonsai's cpu-tall
+# depthwise train at 23.6 s against 16.4 s under the default, flat from 12 to
+# 24 threads where the default scales to 9.8 s (XGBoost 14.5 against 13.4).
+CPU_BENCH=("${BENCH[@]}")
 SPECS=/root/bonsai/python/bonsai/bench/specs
 # A bandwidth host must leave one core of its quota unclaimed, because a fit
 # at threads == quota sits on the ceiling and the timing describes the
@@ -149,7 +151,7 @@ ab_cpu_reps() {  # <axis>
         *) echo 6 ;;
     esac
 }
-if [ "$PLANE" = cpu ]; then AB_ENV=(env OMP_WAIT_POLICY=passive); else AB_ENV=(env); fi
+AB_ENV=(env)
 
 wheel_python() {  # <version>; the interpreter of a venv holding that wheel
     venv="/root/venv-$1"
