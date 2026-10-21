@@ -886,3 +886,12 @@ def test_worker_rates_and_rounding_are_exact(monkeypatch):
         ("contribs_rows_per_s", 800),
         ("libs", {"bonsai": "0"}),
     ]
+
+
+def test_standings_ab_names_the_cpu_it_fits_on():
+    import sys
+
+    sys.path.insert(0, "scripts")
+    import standings_ab
+
+    assert isinstance(standings_ab.cpu_model(), str)

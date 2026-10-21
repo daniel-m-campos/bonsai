@@ -9,7 +9,7 @@ Two hard-fail chokepoints plus the refresh planner, stdlib only:
         line; the gate fails while any tagged entry is newer than the axis's
         registered as_of_decision, forcing refresh-or-demote before the claim
         ships, and while a registered release A/B holds a moved cell that
-        no tagged entry cites.
+        no tagged entry cites or a cell whose arms ran on different hosts.
 
     python3 scripts/check_standings.py --release <version>
         Release-time gate (runs in the wheels publish job). Fails unless every
@@ -115,6 +115,8 @@ AB_TABLE_HEADER = (
     "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|",
 )
 AB_NA = "n/a"
+AB_HOST = "host"
+AB_CPU_MODEL = "cpu_model"
 
 # Metric units (r2 or AUC): the host-vs-device prediction tolerance, added
 # to a task's host seed spread so a single-seed task still has an allowance.
@@ -207,7 +209,16 @@ def check_ab(reg: dict) -> list[str]:
         name = e.get("ab")
         if not name or not (RESULTS / name).exists():
             continue
-        moves = ab_moves(ab_rows(RESULTS / name))
+        rows = ab_rows(RESULTS / name)
+        mixed = ab_mixed_hosts(rows)
+        if mixed:
+            errors.append(
+                f"{axis}: the release A/B {name} compares arms across hosts "
+                f"({'; '.join(mixed)}); every arm of a cell is measured on one pod, "
+                "so the cell is re-measured"
+            )
+            continue
+        moves = ab_moves(rows)
         if not moves or name in cited.get(axis, ""):
             continue
         errors.append(
@@ -366,10 +377,28 @@ def ab_versions(rows: list[dict]) -> dict[str, str]:
     return {r["arm"]: r["version"] for r in rows if "version" in r}
 
 
+def ab_hosts(rows: list[dict]) -> list[str]:
+    """The CPU models the rows were measured on; empty for rows that carry none."""
+    return sorted({r[AB_HOST][AB_CPU_MODEL] for r in rows if r.get(AB_HOST, {}).get(AB_CPU_MODEL)})
+
+
 def ab_arm_line(rows: list[dict]) -> str:
-    """`anchor 1.15.0, old 2.0.0, new 2.1.0+source`, the arms that ran."""
+    """`anchor 1.15.0, old 2.0.0, new 2.1.0+source on AMD EPYC 9554`, the arms that ran."""
     versions = ab_versions(rows)
-    return ", ".join(f"{arm} {versions[arm]}" for arm in AB_ARMS if arm in versions)
+    arms = ", ".join(f"{arm} {versions[arm]}" for arm in AB_ARMS if arm in versions)
+    hosts = ab_hosts(rows)
+    return f"{arms} on {' and '.join(hosts)}" if hosts else arms
+
+
+def ab_mixed_hosts(rows: list[dict]) -> list[str]:
+    """One line per cell whose arms were measured on more than one host."""
+    mixed = []
+    for rw, c, g in ab_cells(rows):
+        cell_rows = [r for r in rows if (r["rows"], r["cols"], r["grower"]) == (rw, c, g)]
+        hosts = ab_hosts(cell_rows)
+        if len(hosts) > 1:
+            mixed.append(f"{rw}x{c} {g}: {' and '.join(hosts)}")
+    return mixed
 
 
 def pct_delta(base: float, new: float) -> float:
