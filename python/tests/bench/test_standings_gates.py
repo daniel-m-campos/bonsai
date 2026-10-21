@@ -450,3 +450,60 @@ def test_rows_without_a_host_are_read_as_before(monkeypatch, tmp_path):
     assert check_standings.check_ab(reg) == []
     assert check_standings.ab_arm_line(rows) == "anchor 1.15.0, new 2.9.0"
 
+
+def _sha_registry() -> dict:
+    return {
+        "gpu-tall": {"sha": "a" * 40, "plane": "gpu"},
+        "cpu-tall": {"sha": None, "plane": "cpu"},
+    }
+
+
+def test_a_measured_sha_off_main_fails_the_gate(monkeypatch):
+    monkeypatch.setattr(check_standings, "sha_reachable", lambda sha: False)
+    assert check_standings.check_shas(_sha_registry()) == [
+        "gpu-tall: measured at aaaaaaaa, which is not on origin/main; "
+        "a row measured off main is re-measured, not restamped"
+    ]
+
+
+def test_a_sha_on_main_passes_and_a_missing_sha_is_another_gates_business(monkeypatch):
+    monkeypatch.setattr(check_standings, "sha_reachable", lambda sha: True)
+    assert check_standings.check_shas(_sha_registry()) == []
+
+
+def test_a_clone_that_cannot_tell_notes_it_and_does_not_fail(monkeypatch, capsys):
+    monkeypatch.setattr(check_standings, "sha_reachable", lambda sha: None)
+    assert check_standings.check_shas(_sha_registry()) == []
+    assert "gpu-tall: sha reachability not checked" in capsys.readouterr().out
+
+
+def test_sha_reachable_reads_git(monkeypatch, tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", "-b", "main", tmp_path], check=True)
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+    subprocess.run(
+        ["git", "-C", tmp_path, "commit", "-q", "--allow-empty", "-m", "root"], check=True, env=env
+    )
+    root = subprocess.run(
+        ["git", "-C", tmp_path, "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    subprocess.run(["git", "-C", tmp_path, "checkout", "-q", "-b", "side"], check=True)
+    subprocess.run(
+        ["git", "-C", tmp_path, "commit", "-q", "--allow-empty", "-m", "side"], check=True, env=env
+    )
+    side = subprocess.run(
+        ["git", "-C", tmp_path, "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    monkeypatch.setattr(check_standings, "REPO", tmp_path)
+    monkeypatch.setattr(check_standings, "MAIN_REF", "main")
+    assert check_standings.sha_reachable(root) is True
+    assert check_standings.sha_reachable(side) is False
+    assert check_standings.sha_reachable("b" * 40) is None
+    monkeypatch.setattr(check_standings, "MAIN_REF", "origin/main")
+    assert check_standings.sha_reachable(root) is None
