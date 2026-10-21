@@ -572,6 +572,46 @@ TEST_CASE("CpuHistogramEngine: the totals fill reproduces the full fill's sums",
     parallel::set_n_threads(0);
 }
 
+TEST_CASE("CpuHistogramEngine: populate_many routes a dense node by column and a "
+          "sparse node by rows in one call",
+          "[populate][fit]")
+{
+    auto fx           = make_fixture(40960, 5);
+    fx.selected       = {0, 2, 4};
+    auto const dense  = test::iota_rows(fx.ds.plane_n_rows());
+    auto const sparse = every_kth(fx, 1, 5);
+    REQUIRE(sparse.size() * 4 < fx.ds.plane_n_rows());
+
+    SplitInput const dense_ref  = populate_node(fx, dense);
+    SplitInput const sparse_ref = populate_node(fx, sparse);
+    for (int const threads : {1, 4})
+    {
+        parallel::set_n_threads(threads);
+        SplitInput dense_node;
+        dense_node.rows           = dense;
+        dense_node.shape.identity = true;
+        SplitInput sparse_node;
+        sparse_node.rows           = sparse;
+        sparse_node.shape.identity = false;
+        CpuHistogramEngine engine;
+        engine.begin_tree(fx.ds, fx.grad, fx.hess);
+        std::array both = {std::ref(dense_node), std::ref(sparse_node)};
+        engine.populate_many(fx.ds, fx.grad, fx.hess, both, fx.selected);
+
+        for (feature_id_t const f : fx.selected)
+        {
+            INFO(threads << " threads, feature " << f);
+            check_cells_close(dense_node.hists[f].all_cells(),
+                              dense_ref.hists[f].all_cells());
+            check_cells_close(sparse_node.hists[f].all_cells(),
+                              sparse_ref.hists[f].all_cells());
+        }
+        CHECK(dense_node.hists[1].size() == 0);
+        CHECK(sparse_node.hists[3].size() == 0);
+    }
+    parallel::set_n_threads(0);
+}
+
 // INVARIANT: lone-totals-fill-matches-lone-fill
 // The leaf plane's form: the lone fill blocks a child's rows by the full
 // selection's width, so the one-feature fill takes the same blocks and the
