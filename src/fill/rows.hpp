@@ -86,17 +86,23 @@ inline void fill_rows(SplitInput const &node, size_t first, size_t last,
         {
             for (size_t k = a; k < b; ++k)
             {
+                // perf: The prefetches carry the keep hint (prefetcht0), not
+                // the non-temporal one: on a Xeon 6952P a non-temporal line
+                // lands in L1 only, the histogram's L2 hits evict it before its
+                // row comes up, and the demand load then misses L2 as well;
+                // 128-column fill 11.1 to 6.7 s at 12 threads same pod, 4.70 to
+                // 4.71 s on an EPYC 9555.
                 if constexpr (decltype(prefetch)::value)
                 {
                     size_t const rp = rows[k + k_ahead];
-                    __builtin_prefetch(rm_ptr + (rp * width), 0, 0);
-                    __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 0);
+                    __builtin_prefetch(rm_ptr + (rp * width), 0, 3);
+                    __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 3);
                     if constexpr (!NodeOrder)
                     {
-                        __builtin_prefetch(&grad[rp], 0, 0);
+                        __builtin_prefetch(&grad[rp], 0, 3);
                         if constexpr (!decltype(unit_hess)::value)
                         {
-                            __builtin_prefetch(&hess[rp], 0, 0);
+                            __builtin_prefetch(&hess[rp], 0, 3);
                         }
                     }
                 }
