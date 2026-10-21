@@ -2448,6 +2448,8 @@ Standings: gpu-tall, cpu-tall
 **Reopener.** The Xeon cliff is in the standings now and is the next perf target: the parked campaign's step 0 (the populate ledger, a thread-scaling run on a cpuset pod for bonsai and XGBoost, then `OMP_PLACES=cores OMP_PROC_BIND=close` and single-socket pinning as the first A/B). A refresh that draws an EPYC host again reads the cells on 2.8.0's part. The GPU axes are pinned to the part (decision 127) where the host plane is read on whatever CPU the GPU pod carries: a rule for the host plane, pin or record, is owed. The A/B rows still carry no host field.
 
 Standings: gpu-tall, cpu-tall
+*Status 2026-10-21: the cliff's bonsai-specific share was the refresh's own `OMP_WAIT_POLICY=passive` meeting this host's slow futex wake, not the engine (decision 164); under the default policy the same host reads bonsai depthwise 16.4 s against XGBoost's 13.4 at 12 threads. These rows stand as measured, with `omp_wait_policy` readable on each; the next refresh reads the cpu plane under the default policy.*
+
 ## 163. The K-target validation round runs on the device (adopted)
 
 **Decision.** The engine's validation plane holds a K-target eval set the way the resident plane holds a K-target training set: `eval_begin` takes the n x K seed block and keeps it as K view-length columns beside K label columns, `eval_select` names the column the next walk adds into and scores, and `eval_accumulate` returns that column's loss from the objective's device form. `MultiOutputBooster` arms the plane once per fit and, each round, selects column k, walks tree k there and reads its loss, then hands early stopping the mean over the K columns, which is the pooled loss `validation_loss` computes on the host (the mean of K per-target means over the same n rows). The plane arms a K-wide set only when the objective has a device loss, since every regression objective the K-target route serves has one and a plane without it would have to download n x K scores per round for the host to pool; a K-wide set under any other objective keeps the host walk, as before. Width 1 is unchanged: one column, the bytes it uploaded before.
@@ -2465,3 +2467,33 @@ The eval set cost 1.3 to 1.6 s per fit on the host walk, four tree walks over a 
 **Rejected.** K separate eval planes, one arming per target: K uploads of the same bins, where the columns share one plane and one row map. Downloading the K score columns each round and pooling on the host: n x K floats per round moved so the host can compute what the device loss pass already has, and the host sum is the less accurate of the two.
 
 **Reopener.** One walk over the K trees of a round writing K columns, the same lever decision 161 names for predict, if the per-round K launches show in a profile at larger K. A K-wide eval set under an objective without a device loss takes the host walk today; a device form for such an objective reopens it for free.
+
+## 164. The Xeon cliff is the refresh's own wait policy: the cpu plane is measured under the default OpenMP wait (adopted)
+
+**Decision.** The standings pod script no longer exports `OMP_WAIT_POLICY=passive` for the CPU arms or the CPU A/B. The cpu plane is measured under the runtime's default wait policy, the one every user of the wheel gets, on a host whose quota the gate has already shown clears the thread count by a spare core, with the throttle bracket unchanged. The passive setting was the reading's own artifact: on the Xeon host of the 2.9.0 refresh it was 44% of bonsai's cpu-tall depthwise fit at 12 threads and the whole of the thread plateau decision 162 named as the next perf target.
+
+**Measured.** Two RTX PRO 6000 Blackwell Server Edition pods, both with a 27.2-core quota (throttled in at most two enforcement periods per fit), main 16a6bc76, the cpu-tall depthwise cell (2M x 128, depth 8, 100 iters) through the bench worker with the grow and fit ledgers on, arms interleaved, min over two reps, train seconds. The raw rows (per-phase ledgers, rusage counters, throttle counts) are not kept in the tree; the tables and the ratios below are the record.
+
+| Xeon 6760P (EU-NL-1, the 2.9.0 refresh's host) | 6 threads | 12 threads | 24 threads |
+|---|---|---|---|
+| bonsai depthwise, `passive` (the refresh's setting) | 35.00 | 23.57 | 23.21 |
+| bonsai depthwise, default policy | | 16.43 | 9.80 |
+| bonsai depthwise, `active` | | 15.48 | 9.32 |
+| xgb_hist, `passive` | | 14.49 | 12.30 |
+| xgb_hist, default policy | | 13.40 | 7.45 |
+| xgb_hist, `active` | | 13.84 | 7.44 |
+
+| EPYC 9555 (EU-RO-1, the control) | 6 threads | 12 threads | 24 threads |
+|---|---|---|---|
+| bonsai depthwise, `passive` | 10.99 | 6.42 | 4.16 |
+| bonsai depthwise, `active` | | 6.24 | 3.94 |
+| xgb_hist, `passive` | | 6.31 | 3.85 |
+
+The ledger names the mechanism. On the Xeon under `passive`, populate reads 16.18 s at 12 threads and 12.57 at 24 while partition rises from 4.69 to 6.86, the process spends 8.0 and 8.7 cpu-seconds per wall second (threads asleep most of the time), and the fit makes 210k and 440k voluntary context switches; under `active` the same phases read 12.39 to 6.87 and 1.94 to 1.62, 13.6 and 26.6 cpu-seconds per wall second, and 5.6k and 6.1k switches. The EPYC makes the same 210k and 431k sleeps and pays 0.18 and 0.22 s for them (3 to 5%). So a barrier sleep costs about 38 microseconds to wake on this Xeon against about one on the EPYC, and bonsai's grow loop, which opens many short parallel regions per level (decision 44 counted the barriers), pays region count times wake latency, a product more threads cannot shrink: the plateau. XGBoost opens fewer regions per round, pays 8% for the same setting at 12 threads, and still scales. `OMP_PLACES`, `OMP_PROC_BIND` and single-socket `taskset` were tried first on a Xeon 6952P and moved nothing on either library.
+
+**What remains is the host.** Under the default policy bonsai on the Xeon reads 16.4 s against XGBoost's 13.4 at 12 threads (1.23x) and 9.8 against 7.5 at 24, where the EPYC reads the two tied (6.42 against 6.31). bonsai's fill runs 12.7 s on the Xeon against 4.5 on the EPYC (2.8x) where XGBoost's whole train runs 2.1x, so the Xeon costs the fill kernel more than it costs XGBoost's histogram, a smaller and separate question from the plateau.
+
+**Rejected.** `OMP_WAIT_POLICY=active`: 6% under the default on the Xeon and 3% on the EPYC, but it is not what a user runs, and on a bandwidth-metered host it spins whatever the quota withholds; the gate's spare core and throttle bracket fence the default already. Keeping `passive` and pinning the host CPU family instead: the row would still describe the measurement's own setting rather than the wheel a user installs. Setting the policy inside bonsai: decision 44's reasons stand, the runtime is initialised before the module can speak. Re-measuring 2.9.0's cpu rows now: a release's rows are re-measured at the next release under the new rule, and each row carries `omp_wait_policy`, so the setting is readable where the number is.
+
+**Reopener.** The region count is bonsai's own: 17k barrier sleeps per thread per fit at 12 threads, 175 per iteration, and fewer, longer regions in partition and populate would make the engine insensitive to wake latency under any policy. Priced at the measured gap under the default policy, 6% on the Xeon and 3% on the EPYC, it sits below a pod unless a passive-policy deployment surfaces. The fill's host sensitivity (2.8x against XGBoost's 2.1x from EPYC to Xeon) is the next host-plane probe: an AVX-512 build of the lane finder and the fill, same pod, both hosts. The rule for the host plane, pin or record, is still owed (decision 162).
+
