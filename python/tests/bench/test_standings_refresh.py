@@ -751,15 +751,15 @@ def test_create_pod_walks_the_cpu_flavors_in_order(monkeypatch):
     def api(url, key, payload=None, method="POST"):
         assert payload is not None
         tried.append((payload["cpu"]["id"], payload["cpu"]["vcpuCount"], payload["disk"]))
-        if payload["cpu"]["id"] != "cpu3c":
+        if payload["cpu"]["id"] != "cpu3g":
             raise OSError("500: no instances with the requested specifications")
-        return {"id": "pod-cpu3c"}
+        return {"id": "pod-cpu3g"}
 
     monkeypatch.setattr(standings_refresh, "_api", api)
     monkeypatch.setattr(standings_refresh, "_pod_named", lambda key, name: "")
     pod = standings_refresh._create_pod("k", "pub", plane="cpu", vcpu=16, gpus=())
-    assert pod == "pod-cpu3c"
-    assert tried == [("cpu5g", 16, 30), ("cpu5c", 16, 30), ("cpu3g", 16, 20), ("cpu3c", 16, 20)]
+    assert pod == "pod-cpu3g"
+    assert tried == [("cpu5g", 16, 30), ("cpu5c", 16, 30), ("cpu3c", 16, 20), ("cpu3g", 16, 20)]
 
 
 def test_create_pod_gives_up_on_the_cpu_ladder_at_the_deadline(monkeypatch):
@@ -778,7 +778,7 @@ def test_create_pod_gives_up_on_the_cpu_ladder_at_the_deadline(monkeypatch):
 def test_dry_run_prints_the_cpu_ladder(capsys):
     standings_refresh._dry_run_datacenters(None, [("cpu", [])], ())
     out = capsys.readouterr().out
-    assert "cpu: the flavors, in order, each unpinned: cpu5g, cpu5c, cpu3g, cpu3c" in out
+    assert "cpu: the flavors, in order, each unpinned: cpu5g, cpu5c, cpu3c, cpu3g" in out
 
 
 def test_the_pod_env_carries_the_cpu_ab_cells():

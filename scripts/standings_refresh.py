@@ -123,7 +123,7 @@ STOCK_ORDER = ("HIGH", "MEDIUM", "LOW")
 # at 4GB of RAM per vCPU, which covers both cpu cells with room to spare; the
 # later rungs are the compute-optimised CPU5 and the CPU3 pair, where three
 # release refreshes landed by hand once cpu5g was out of stock everywhere.
-CPU_FLAVORS = ("cpu5g", "cpu5c", "cpu3g", "cpu3c")
+CPU_FLAVORS = ("cpu5g", "cpu5c", "cpu3c", "cpu3g")
 CPU_VCPU = 16
 # CPU pods cap the container disk far below a GPU pod's 80GB: the API refuses
 # anything over 20GB on the CPU3 flavors and 30GB on the CPU5 ones.
