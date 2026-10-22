@@ -4,6 +4,10 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-10-22
+
+The Xeon host gets its fill back. 2.9.0's refresh landed on an Intel Xeon 6760P and read bonsai's host growers at twice their EPYC time while XGBoost and CatBoost ran flat; this release names both halves of that reading and removes them. The row fill's prefetches carried the non-temporal hint, which a Xeon keeps in L1 only, so the histogram's own traffic evicted every row line before its load came up: with the keep hint the cpu-tall depthwise train on a Xeon 6952P reads 9.9 s against 14.5 same-pod (fill -40%), an EPYC 9555 is flat, and every model is the same bytes (decision 165). The standings pod script forced the passive OpenMP wait policy on every CPU arm, which on a Xeon 6760P read bonsai's cpu-tall depthwise train at 23.6 s against 16.4 under the default and held it flat from 12 to 24 threads where the default scales; the arms now run as a user runs them (decision 164). A K-target eval set is scored on the device, so early stopping on a CUDA grower no longer walks it on the host each round (decision 163). Every host model hash holds, so a model trained on 2.9.0 retrains to the same bytes.
+
 ### Changed
 
 - **The host row fill prefetches with the keep hint.** The non-temporal hint lands in L1 only on a Xeon and the histogram's traffic evicts the line before its row comes up; same-pod on a Xeon 6952P the cpu-tall depthwise train drops from 14.5 to 9.9 s at 12 threads (fill -40%), flat on an EPYC 9555, models bit-identical. Decision 165.
