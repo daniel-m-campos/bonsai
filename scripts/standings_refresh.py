@@ -199,6 +199,8 @@ POLL_MAX_MISSES = 20
 # six regions before a draw succeeded about forty minutes in.
 CREATE_DEADLINE_S = 45 * 60
 CREATE_BACKOFF_S = 90
+DELETE_DEADLINE_S = 10 * 60
+DELETE_BACKOFF_S = 60
 
 SSH_OPTS = [
     "-o",
@@ -1148,12 +1150,28 @@ def _poll_pod_run(ssh: list[str], out_dir: pathlib.Path, ip: str, port: int, axe
 
 
 def _delete_pod(key: str, pod_id: str):
-    """Teardown; failures print but never mask the run's own status."""
-    try:
-        _api(f"{REST}/pods/{pod_id}", key, method="DELETE")
-        print(f"pod {pod_id} deleted")
-    except OSError as e:
-        print(f"WARNING: delete failed for {pod_id}: {e}", file=sys.stderr)
+    """Teardown, retried through an API outage.
+
+    A delete that fails is a pod billing with nobody watching it, and the
+    outage that fails it is the same one that just ended the session, so
+    the call is retried for ``DELETE_DEADLINE_S`` before it gives up. A
+    failure past that prints but never masks the run's own status.
+    """
+    deadline = time.time() + DELETE_DEADLINE_S
+    while True:
+        try:
+            _api(f"{REST}/pods/{pod_id}", key, method="DELETE")
+            print(f"pod {pod_id} deleted")
+            return
+        except OSError as e:
+            if time.time() >= deadline:
+                print(f"WARNING: delete failed for {pod_id}: {e}", file=sys.stderr)
+                return
+            print(
+                f"  delete of {pod_id} failed, retrying in {DELETE_BACKOFF_S}s: {e}",
+                file=sys.stderr,
+            )
+            time.sleep(DELETE_BACKOFF_S)
 
 
 def _sweep(key: str):
@@ -1171,10 +1189,19 @@ def _sweep(key: str):
 
 
 def _wait_until(fn, *, timeout_s: int, what: str):
-    """Poll fn every 10s until truthy; SystemExit on timeout."""
+    """Poll fn every 10s until truthy; SystemExit on timeout.
+
+    A poll that raises ``OSError`` (the API answering 5xx, a dropped
+    connection) is a reading that failed, not a verdict on the pod, so it
+    is printed and the poll continues until the deadline.
+    """
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        got = fn()
+        try:
+            got = fn()
+        except OSError as e:
+            print(f"  {what}: poll failed, retrying: {e}", file=sys.stderr)
+            got = None
         if got:
             return got
         time.sleep(10)

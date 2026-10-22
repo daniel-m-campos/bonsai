@@ -788,3 +788,66 @@ def test_the_pod_env_carries_the_cpu_ab_cells():
     assert env.startswith("env AXES='' GIT_SHA='abc123' PREV_VERSION='2.7.0' ")
     assert f"ANCHOR_VERSION='{standings_refresh.ANCHOR_VERSION}' PLANE='cpu' " in env
     assert env.endswith("AB_CPU_AXES='cpu-tall cpu-wide'")
+
+
+def test_wait_until_polls_past_a_failed_reading(monkeypatch, capsys):
+    """One 5xx from the API is a reading that failed, not a verdict on the pod."""
+    answers = iter([OSError("HTTP Error 500: Internal Server Error"), None, ("1.2.3.4", 22)])
+
+    def poll():
+        got = next(answers)
+        if isinstance(got, Exception):
+            raise got
+        return got
+
+    monkeypatch.setattr(standings_refresh.time, "sleep", lambda s: None)
+    assert standings_refresh._wait_until(poll, timeout_s=900, what="pod port mapping") == (
+        "1.2.3.4",
+        22,
+    )
+    assert "pod port mapping: poll failed, retrying: HTTP Error 500" in capsys.readouterr().err
+
+
+def test_wait_until_times_out_through_failed_readings(monkeypatch):
+    def poll():
+        raise OSError("HTTP Error 503: Service Unavailable")
+
+    clock = iter([0.0, 0.0, 10.0, 10.0**9])
+    monkeypatch.setattr(standings_refresh.time, "sleep", lambda s: None)
+    monkeypatch.setattr(standings_refresh.time, "time", lambda: next(clock))
+    with pytest.raises(SystemExit, match="timed out waiting for sshd"):
+        standings_refresh._wait_until(poll, timeout_s=900, what="sshd")
+
+
+def test_delete_pod_retries_through_an_api_outage(monkeypatch, capsys):
+    """A delete that fails is a pod billing unwatched, so it is retried."""
+    answers = iter([OSError("HTTP Error 503"), OSError("HTTP Error 503"), {}])
+    slept = []
+
+    def api(url, key, payload=None, method="POST"):
+        assert method == "DELETE" and url.endswith("/pods/p1")
+        got = next(answers)
+        if isinstance(got, Exception):
+            raise got
+        return got
+
+    monkeypatch.setattr(standings_refresh, "_api", api)
+    monkeypatch.setattr(standings_refresh.time, "sleep", slept.append)
+    standings_refresh._delete_pod("k", "p1")
+    captured = capsys.readouterr()
+    assert slept == [standings_refresh.DELETE_BACKOFF_S] * 2
+    assert "pod p1 deleted" in captured.out
+    assert captured.err.count("delete of p1 failed, retrying") == 2
+
+
+def test_delete_pod_gives_up_at_the_deadline(monkeypatch, capsys):
+    def api(url, key, payload=None, method="POST"):
+        raise OSError("HTTP Error 503")
+
+    clock = iter([0.0, 0.0, 10.0**9])
+    monkeypatch.setattr(standings_refresh, "_api", api)
+    monkeypatch.setattr(standings_refresh.time, "sleep", lambda s: None)
+    monkeypatch.setattr(standings_refresh.time, "time", lambda: next(clock))
+    standings_refresh._delete_pod("k", "p1")
+    err = capsys.readouterr().err
+    assert "WARNING: delete failed for p1: HTTP Error 503" in err
