@@ -52,7 +52,7 @@ inline void fill_column(Dataset const &ds, feature_id_t fid, Histogram &h,
                           size_t const kp = n > k_col_ahead ? n - k_col_ahead : 0;
                           for (size_t k = 0; k < kp; ++k)
                           {
-                              __builtin_prefetch(&bins[rows[k + k_col_ahead]], 0, 0);
+                              __builtin_prefetch(&bins[rows[k + k_col_ahead]], 0, 3);
                               h.add(bins[rows[k]], og[k], hess_of(k));
                           }
                           for (size_t k = kp; k < n; ++k)
