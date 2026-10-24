@@ -980,37 +980,11 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int, gpus: tuple[str
     has spare, read off the container rather than assumed. A CPU pod is
     bought by vCPU, so its ceiling is a line on the invoice; that is the
     cpu A/B's host, and the cpu axes' under ``--cpu-plane-host cpupod``.
-
-    The GPU create walks the cards in ``gpus`` in order, one create per
-    stocked datacenter then unpinned, so a later card is tried only once
-    the one before it is exhausted everywhere. The CPU create walks
-    ``CPU_FLAVORS`` in order, each unpinned: a cpu flavor is not a device
-    with a per-region stock reading, and an unpinned create is refused only
-    once every region is.
+    The bodies come from ``_create_bodies`` in the order they are tried;
+    this walks them until one answers, for ``CREATE_DEADLINE_S``.
     """
     name = f"bonsai-standings-{plane}-{time.strftime('%Y%m%d-%H%M')}"
-    body: dict[str, Any] = {
-        "name": name,
-        "image": IMAGE,
-        "cloud": "SECURE",
-        "ports": ["22/tcp"],
-        "env": {"PUBLIC_KEY": pubkey},
-    }
-    bodies: list[dict[str, Any]] = []
-    if plane == PLANE_CPU:
-        for flavor in CPU_FLAVORS:
-            bodies.append(
-                body | {"cpu": {"id": flavor, "vcpuCount": vcpu}, "disk": cpu_disk_gb(flavor)}
-            )
-    else:
-        # One datacenter per attempt: a multi-entry dataCenterIds list can
-        # 400 on the create schema. Per card, the unpinned body stays last
-        # so an empty or failed stock reading is never worse than not
-        # pinning.
-        for gpu in gpus:
-            card = body | {"gpu": {"id": gpu, "count": 1}, "disk": GPU_DISK_GB}
-            bodies += [card | {"dataCenterIds": [dc]} for dc in stocked_datacenters(gpu, key)]
-            bodies.append(card)
+    bodies = _create_bodies(key, name, pubkey, plane=plane, vcpu=vcpu, gpus=gpus)
     deadline = time.time() + CREATE_DEADLINE_S
     attempt = 0
     while True:
@@ -1045,6 +1019,41 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int, gpus: tuple[str
             f"  every candidate refused; retrying in {CREATE_BACKOFF_S}s (stock churns)", flush=True
         )
         time.sleep(CREATE_BACKOFF_S)
+
+
+def _create_bodies(
+    key: str, name: str, pubkey: str, *, plane: str, vcpu: int, gpus: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """The create bodies for one plane, in the order they are tried.
+
+    The GPU walk takes the cards in ``gpus`` in order, one body per
+    stocked datacenter then unpinned, so a later card is tried only once
+    the one before it is exhausted everywhere. A multi-entry dataCenterIds
+    list can 400 on the create schema, so each body pins one datacenter,
+    and the unpinned body stays last per card so an empty or failed stock
+    reading is never worse than not pinning. The CPU walk takes
+    ``CPU_FLAVORS`` in order, each unpinned: a cpu flavor is not a device
+    with a per-region stock reading, and an unpinned create is refused
+    only once every region is.
+    """
+    base: dict[str, Any] = {
+        "name": name,
+        "image": IMAGE,
+        "cloud": "SECURE",
+        "ports": ["22/tcp"],
+        "env": {"PUBLIC_KEY": pubkey},
+    }
+    if plane == PLANE_CPU:
+        return [
+            base | {"cpu": {"id": flavor, "vcpuCount": vcpu}, "disk": cpu_disk_gb(flavor)}
+            for flavor in CPU_FLAVORS
+        ]
+    bodies: list[dict[str, Any]] = []
+    for gpu in gpus:
+        card = base | {"gpu": {"id": gpu, "count": 1}, "disk": GPU_DISK_GB}
+        bodies += [card | {"dataCenterIds": [dc]} for dc in stocked_datacenters(gpu, key)]
+        bodies.append(card)
+    return bodies
 
 
 def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
