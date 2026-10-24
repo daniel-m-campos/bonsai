@@ -2524,6 +2524,8 @@ The mechanism was read from hardware counters on a bare-metal Xeon 6521P (Granit
 
 **Reopener.** The 256-column arm says a width-aware prefetch (every line of a row wider than 128 bytes, which the u16 path and any cell past 128 u8 columns need) is worth 17 to 23% of the fill on both hosts once its distance is held at 16; it is the next host-plane lever. The column fill's gathered arm and the mapper fit carry the same non-temporal hint (`src/fill/columns.hpp`, `src/bin_mappers.cpp`), unmeasured on a Xeon. At 32 columns the Xeon still spends 15% of its cycles behind L2 misses, which the counters can chase the same way. The cpu-tall standings cell on a Xeon host now reads bonsai ahead of XGBoost at 12 threads; the next refresh records it.
 
+*Status 2026-10-23: the width-aware prefetch shipped with an eight-line cap and a 64-byte aligned mirror, and the column fill took the keep hint (decision 167); the bin mapper's prefetch already carried the keep hint, so that reopener was moot.*
+
 ## 166. The 2.10.0 refresh reads the keep hint on an EPYC 7702P too, 2 to 10% under 2.9.0 same-pod, holds the GPU cells, and draws an EPYC 9554 host where every cpu cell is bonsai's again (adopted)
 
 **Decision.** The 2.10.0 standings supersede 2.9.0's on every axis: ten measured in one session on an RTX PRO 6000 Blackwell Server Edition pod at main fad709e5, the code axis locally at the same sha, the GPU A/B and parity on the standings pod, and the CPU A/B on a 16-vCPU cpuset pod from the driver's create ladder. The release's code changes are the row fill's keep hint (decision 165) and the default OpenMP wait policy on the cpu arms (decision 164), both aimed at the Xeon reading decision 162 recorded, plus the device-scored K-target eval set (decision 163), which no standings cell exercises. Every host model hash holds.
@@ -2539,3 +2541,26 @@ The mechanism was read from hardware counters on a bare-metal Xeon 6521P (Granit
 **Reopener.** A Xeon flavor in the CPU create ladder would let a release A/B read the Xeon directly; until one exists the same-pod tables in decisions 164 and 165 are the record, and a refresh that draws a Xeon standings host reads the cpu cells under the default policy and the keep hint for the first time. The host plane's draw remains the pod's luck, and the entry for each release says which part it was.
 
 Standings: gpu-tall, cpu-tall
+
+## 167. The row fill prefetches every line of its row up to eight, the column fill keeps its gathered lines, and the row mirror starts on a cache line (adopted)
+
+**Decision.** Three changes to the host fill, every model the same bytes (the three host hashes hold on every build on both pods). The row fill prefetches every 64-byte line of the row ahead up to `k_prefetch_bytes` (eight lines, 512 bytes) and the row's last byte, at the same 16-row distance, where it prefetched the first two lines and nothing past them. The column fill's gathered-bin prefetch carries the keep hint, the hint decision 165 gave the row fill, instead of the non-temporal one. The row mirror's allocator returns 64-byte aligned storage, so a row of 128 bytes is two lines and a row of 256 bytes four, where glibc's large allocation started 16 bytes past a page and every row straddled one line more than its width needs. The bin mapper's prefetch, which decision 165 listed as a non-temporal reopener, already carried the default keep hint and is untouched.
+
+**Measured, the shipped build against main.** Same pod, 12 threads, depthwise at depth 8 and 100 rounds, min over interleaved reps (three at 128 and 256 columns and at the wide cell's cap sweep, two at 1023 bins), fill then fit seconds, XGBoost hist on the same pod for scale:
+
+| host | cell | main fill / fit | shipped fill / fit | fill | fit | XGBoost fit |
+|---|---|--:|--:|--:|--:|--:|
+| EPYC 9555 | 2M x 128 | 4.46 / 7.31 | 2.91 / 5.78 | -34.8% | -20.9% | 8.03 |
+| EPYC 9555 | 2M x 256 | 8.26 / 12.12 | 6.11 / 10.06 | -26.0% | -17.0% | 16.31 |
+| EPYC 9555 | 16k x 16384 | 12.17 / 23.97 | 11.20 / 23.02 | -8.0% | -3.9% | |
+| EPYC 9555 | 2M x 128, 1023 bins | 10.87 / 14.39 | 10.75 / 14.29 | -1.1% | -0.7% | |
+| Xeon 6952P | 2M x 128 | 6.34 / 10.65 | 5.83 / 10.23 | -8.0% | -3.9% | 14.04 |
+| Xeon 6952P | 2M x 256 | 13.75 / 19.23 | 12.48 / 18.04 | -9.2% | -6.2% | 30.03 |
+| Xeon 6952P | 16k x 16384 | 24.68 / 44.90 | 23.70 / 44.21 | -4.0% | -1.5% | |
+| Xeon 6952P | 2M x 128, 1023 bins | 25.82 / 30.98 | 16.94 / 22.00 | -34.4% | -29.0% | |
+
+**Measured, the parts.** Each lever alone against main, fill: the every-line row prefetch read -21.0% at 2M x 128 and -9.4% at 2M x 256 on the EPYC and -1.4% and -2.8% on the Xeon; the column keep hint read -34.4% at 1023 bins and -2.9% at the wide cell on the Xeon and -1.0% and flat on the EPYC. The two hosts split the levers: a Zen 5 L1 does not fetch the row's third, unaligned line on its own and the Xeon's next-line prefetcher does, while the Xeon keeps a non-temporal line out of L2 and evicts it from L1 before the 32 gathered rows a u16 line serves come up (decision 165's mechanism), which the EPYC does not. The aligned mirror on top of both hints took the EPYC's 2M x 128 fill from -28.7% to -34.8% and 2M x 256 from -18.9% to -26.0%, the Xeon's 2M x 128 from -7.1% to -8.0%. A 32-row distance over 16 read within 0.5% everywhere. The cap sweep at the wide cell, where a tile row is 2048 bytes and 32 lines, fill against main: 4 lines -0.2% (EPYC) and -1.9% (Xeon), 8 lines -8.0% and -4.0%, 16 lines -6.7% and +1.9%, 32 lines -6.6% and +5.6%; uncapped, 16 rows ahead put 32 KB in flight per thread against a 48 KB L1 on the Xeon.
+
+**Rejected.** A 32-row distance: flat on both hosts at every cell, so the 16-row distance decision 165 held stands. No cap on the lines per row: +5.6% at the Xeon's wide cell. A cap of four lines: covers the 128- and 256-column rows but gives up the wide cell's -8.0% on the EPYC. Aligning the mirror by over-allocating and offsetting the span: the allocator is the one home the mirror's storage has, and `bins()` keeps its meaning. Renting a Zen 2 host to add a third part: the two hosts the standings draw are the ones that decide.
+
+**Reopener.** The row fill on the Xeon still reads twice the EPYC's time at 2M x 128 (5.83 against 2.91 s) with every row line in L2 before its load: the residual is the serialized L2-miss structure decision 165's counters read, and the next lever there is the histogram side, not the row side. The mirror's alignment also reaches the predict and tree-routing loops that index it, unmeasured. The column fill's wide cell gained 8% on the EPYC and 4% on the Xeon from a row-route change, so the column route itself has not been priced since decision 151.
