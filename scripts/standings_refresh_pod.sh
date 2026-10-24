@@ -171,6 +171,7 @@ ab_arms() {  # <out> <grower> <rows> <cols> <threads>
             old) py=$(wheel_python "$PREV_VERSION"); path= ;;
             new) py=/opt/venv/bin/python; path=$BUILD ;;
         esac
+        echo "AB $2 ${3}x$4 $arm $(date -u +%H:%M:%S)"
         "${AB_ENV[@]}" PYTHONPATH="$path" "$py" scripts/standings_ab.py \
             --rows "$3" --cols "$4" --grower "$2" --arm "$arm" \
             --threads "$5" >> "$1"
@@ -443,6 +444,7 @@ run_cpu_axis() {
 if [ -n "$AXES" ]; then
     IFS=',' read -ra AXIS_LIST <<< "$AXES"
     for axis in "${AXIS_LIST[@]}"; do
+        echo "AXIS $axis $(date -u +%H:%M:%S)"
         run_axis "$axis"
     done
 fi
