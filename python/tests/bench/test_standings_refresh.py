@@ -762,6 +762,55 @@ def test_create_pod_walks_the_cpu_flavors_in_order(monkeypatch):
     assert tried == [("cpu5g", 16, 30), ("cpu5c", 16, 30), ("cpu3c", 16, 20), ("cpu3g", 16, 20)]
 
 
+def test_create_pod_walks_each_card_stocked_then_unpinned(monkeypatch):
+    """A later card is tried only once the one before it is refused in every
+    stocked datacenter and unpinned; every GPU body carries the GPU disk."""
+    tried = []
+
+    def api(url, key, payload=None, method="POST"):
+        assert payload is not None
+        assert "cpu" not in payload and payload["disk"] == standings_refresh.GPU_DISK_GB
+        tried.append((payload["gpu"]["id"], tuple(payload.get("dataCenterIds", ["unpinned"]))))
+        if payload["gpu"]["id"] == "card-b" and "dataCenterIds" not in payload:
+            return {"id": "pod-b"}
+        raise OSError("500: no instances with the requested specifications")
+
+    stock = {"card-a": ["EU-1", "US-2"], "card-b": ["CA-3"]}
+    monkeypatch.setattr(standings_refresh, "_api", api)
+    monkeypatch.setattr(standings_refresh, "_pod_named", lambda key, name: "")
+    monkeypatch.setattr(standings_refresh, "stocked_datacenters", lambda gpu, key: stock[gpu])
+    monkeypatch.setattr(standings_refresh.time, "sleep", lambda s: None)
+    pod = standings_refresh._create_pod("k", "pub", plane="gpu", vcpu=16, gpus=("card-a", "card-b"))
+    assert pod == "pod-b"
+    assert tried == [
+        ("card-a", ("EU-1",)),
+        ("card-a", ("US-2",)),
+        ("card-a", ("unpinned",)),
+        ("card-b", ("CA-3",)),
+        ("card-b", ("unpinned",)),
+    ]
+
+
+def test_create_pod_adopts_the_pod_a_failed_create_placed(monkeypatch):
+    """A create that raises may still have placed a pod carrying this
+    session's name; adopting it is what keeps a 500 from billing twice."""
+    asked = []
+
+    def api(url, key, payload=None, method="POST"):
+        raise OSError("500: Internal Server Error")
+
+    def pod_named(key, name):
+        asked.append(name)
+        return "pod-placed"
+
+    monkeypatch.setattr(standings_refresh, "_api", api)
+    monkeypatch.setattr(standings_refresh, "_pod_named", pod_named)
+    monkeypatch.setattr(standings_refresh, "stocked_datacenters", lambda gpu, key: [])
+    pod = standings_refresh._create_pod("k", "pub", plane="gpu", vcpu=16, gpus=("card-a",))
+    assert pod == "pod-placed"
+    assert len(asked) == 1 and asked[0].startswith("bonsai-standings-gpu-")
+
+
 def test_create_pod_gives_up_on_the_cpu_ladder_at_the_deadline(monkeypatch):
     def refuse(url, key, payload=None, method="POST"):
         raise OSError("500: no instances")
