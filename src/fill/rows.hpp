@@ -61,18 +61,40 @@ inline void fill_by_mode(CellMode mode, CellIndex const ci, RunRowsFn &&run_rows
     }
 }
 
+// perf: The prefetches carry the keep hint (prefetcht0), not the non-temporal
+// one: on a Xeon 6952P a non-temporal line lands in L1 only, the histogram's L2
+// hits evict it before its row comes up, and the demand load then misses L2 as
+// well; 128-column fill 11.1 to 6.7 s at 12 threads same pod, 4.70 to 4.71 s on
+// an EPYC 9555. They cover every line of the row up to k_prefetch_bytes and the
+// row's last byte, where the first two lines left a 256-column row three lines
+// short (fill 8.26 to 6.70 s on the EPYC); past the cap a 2048-byte tile row
+// put 32 KB in flight per thread and read +5.6% on the Xeon, where 8 lines read
+// -4.0% (EPYC -8.0%).
+inline void prefetch_row_lines(uint8_t const *row, size_t width)
+{
+    constexpr size_t k_prefetch_bytes = 8 * 64;
+    size_t const     span             = std::min(width, k_prefetch_bytes);
+    for (size_t off = 0; off < span; off += 64)
+    {
+        __builtin_prefetch(row + off, 0, 3);
+    }
+    if (width <= span)
+    {
+        __builtin_prefetch(row + width - 1, 0, 3);
+    }
+}
+
 template <bool NodeOrder = false>
 inline void fill_rows(SplitInput const &node, size_t first, size_t last,
                       floats_view grad, floats_view hess, FillTarget const &target)
 {
-    uint8_t const *const             rm_ptr           = target.rm.data();
-    std::span<HistCell *const> const bases            = target.bases;
-    size_t const                     width            = target.slice.rm_width;
-    size_t const                     n_sel_b          = target.slice.n_selected();
-    std::span<row_id_t const> const  rows             = node.rows;
-    constexpr size_t                 k_ahead          = 16;
-    constexpr size_t                 k_prefetch_bytes = 8 * 64;
-    size_t const                     n_rows           = node.rows.size();
+    uint8_t const *const             rm_ptr  = target.rm.data();
+    std::span<HistCell *const> const bases   = target.bases;
+    size_t const                     width   = target.slice.rm_width;
+    size_t const                     n_sel_b = target.slice.n_selected();
+    std::span<row_id_t const> const  rows    = node.rows;
+    constexpr size_t                 k_ahead = 16;
+    size_t const                     n_rows  = node.rows.size();
     size_t const                     kp =
         n_rows > k_ahead ? std::clamp(n_rows - k_ahead, first, last) : first;
     CellIndex const ci{
@@ -87,30 +109,10 @@ inline void fill_rows(SplitInput const &node, size_t first, size_t last,
         {
             for (size_t k = a; k < b; ++k)
             {
-                // perf: The prefetches carry the keep hint (prefetcht0), not
-                // the non-temporal one: on a Xeon 6952P a non-temporal line
-                // lands in L1 only, the histogram's L2 hits evict it before its
-                // row comes up, and the demand load then misses L2 as well;
-                // 128-column fill 11.1 to 6.7 s at 12 threads same pod, 4.70 to
-                // 4.71 s on an EPYC 9555. They cover every line of the row up
-                // to k_prefetch_bytes and the row's last byte, where the first
-                // two lines left a 256-column row three lines short (fill 8.26
-                // to 6.70 s on the EPYC); past the cap a 2048-byte tile row put
-                // 32 KB in flight per thread and read +5.6% on the Xeon, where
-                // 8 lines read -4.0% (EPYC -8.0%).
                 if constexpr (decltype(prefetch)::value)
                 {
-                    size_t const         rp    = rows[k + k_ahead];
-                    uint8_t const *const ahead = rm_ptr + (rp * width);
-                    size_t const         span  = std::min(width, k_prefetch_bytes);
-                    for (size_t off = 0; off < span; off += 64)
-                    {
-                        __builtin_prefetch(ahead + off, 0, 3);
-                    }
-                    if (width <= span)
-                    {
-                        __builtin_prefetch(ahead + width - 1, 0, 3);
-                    }
+                    size_t const rp = rows[k + k_ahead];
+                    prefetch_row_lines(rm_ptr + (rp * width), width);
                     if constexpr (!NodeOrder)
                     {
                         __builtin_prefetch(&grad[rp], 0, 3);
