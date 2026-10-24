@@ -94,9 +94,13 @@ inline void fill_rows(SplitInput const &node, size_t first, size_t last,
                 // 4.71 s on an EPYC 9555.
                 if constexpr (decltype(prefetch)::value)
                 {
-                    size_t const rp = rows[k + k_ahead];
-                    __builtin_prefetch(rm_ptr + (rp * width), 0, 3);
-                    __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 3);
+                    size_t const         rp    = rows[k + k_ahead];
+                    uint8_t const *const ahead = rm_ptr + (rp * width);
+                    for (size_t off = 0; off < width; off += 64)
+                    {
+                        __builtin_prefetch(ahead + off, 0, 3);
+                    }
+                    __builtin_prefetch(ahead + width - 1, 0, 3);
                     if constexpr (!NodeOrder)
                     {
                         __builtin_prefetch(&grad[rp], 0, 3);
