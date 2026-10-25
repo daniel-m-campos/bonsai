@@ -38,6 +38,24 @@ def test_fit_predict_rmse():
     assert rmse < 0.50, rmse  # CLI depthwise lands ~0.474
 
 
+def test_random_seed_varies_feature_fraction_draws():
+    """Two fits that differ only in ``random_seed`` draw different feature
+    subsets under the default ``all_rows`` sampler, and one seed refits the
+    same model; the seed the estimator exposes reaches every draw."""
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(2000, 20)).astype(np.float32)
+    y = (X[:, :5].sum(axis=1) > 0).astype(np.int64)
+
+    def fit(seed):
+        est = bonsai.BonsaiClassifier(
+            n_iters=30, n_threads=1, random_seed=seed, params={"tree.feature_fraction": 0.5}
+        )
+        return est.fit(X, y).predict_proba(X)[:, 1]
+
+    assert not np.array_equal(fit(1), fit(2))
+    np.testing.assert_array_equal(fit(1), fit(1))
+
+
 def test_sample_weight_ones_is_identity():
     """Uniform weights of 1.0 multiply every gradient/hessian by 1 — the model
     must be identical to fitting with no weights at all."""

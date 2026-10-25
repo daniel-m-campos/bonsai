@@ -375,6 +375,7 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
           grower_(config.tree_config), sampler_(config),
           rng_(config.booster_config.random_seed)
     {
+        grower_.seed_feature_sample(config.booster_config.random_seed);
     }
 
     BoosterConfig const &config() const

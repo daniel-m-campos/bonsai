@@ -808,7 +808,8 @@ class BonsaiRegressor(_BonsaiEstimator):
     n_threads
         Worker thread count; 0 uses every available core.
     random_seed
-        Seed for the booster's random state.
+        Seed for every draw the fit makes: row sampling, DART drops and,
+        with ``tree.feature_seed``, the feature_fraction draws.
     max_bin
         Histogram bin cap; None leaves the native default.
     subsample
@@ -974,7 +975,8 @@ class BonsaiClassifier(_BonsaiEstimator):
     n_threads
         Worker thread count; 0 uses every available core.
     random_seed
-        Seed for the booster's random state.
+        Seed for every draw the fit makes: row sampling, DART drops and,
+        with ``tree.feature_seed``, the feature_fraction draws.
     max_bin
         Histogram bin cap; None leaves the native default.
     subsample

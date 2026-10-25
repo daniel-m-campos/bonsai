@@ -27,7 +27,7 @@ The boosting loop: how many trees, how strongly each contributes, when to stop.
 | `learning_rate` | float | `0.05` | Shrinks each tree's contribution. Lower values need more rounds but generalize better, the classic accuracy-versus-iterations trade. |
 | `log_intervals` | integer | `0` | Progress-logging frequency during fit. 0 is silent; higher prints more metric ticks. No effect on the trained model. |
 | `n_iters` | integer | `100` | Number of boosting rounds. More rounds lower training loss but risk overfitting; pair with a smaller learning_rate. |
-| `random_seed` | integer | `42` | Seeds the stochastic boosting choices, such as DART drops. Fixing it makes a run reproducible bit for bit. |
+| `random_seed` | integer | `42` | Seeds every draw the fit makes: row sampling, DART drops and, together with tree.feature_seed, the feature_fraction draws. Fixing it makes a run reproducible bit for bit. |
 
 ## tree
 
@@ -36,7 +36,7 @@ Per-tree shape and regularization, the primary overfitting controls.
 | parameter | type | default | effect |
 |---|---|---|---|
 | `feature_fraction` | float | `1.0` | Fraction of features sampled per tree. Below 1 decorrelates trees and speeds training, often improving generalization. |
-| `feature_seed` | integer | `2` | Seeds the per-tree feature_fraction draws. Fixing it keeps feature subsampling reproducible across runs. |
+| `feature_seed` | integer | `2` | Seeds the per-tree feature_fraction draws together with booster.random_seed, so two fits that share random_seed and differ here draw different features. Fixing both keeps feature subsampling reproducible across runs. |
 | `interaction_constraints` | list | `[]` | Feature groups allowed to interact on one tree path. Restricts which features co-split, encoding domain structure and limiting interactions. |
 | `lambda_l1` | float | `0.0` | L1 penalty on leaf weights. Above 0 pushes small leaf outputs to exactly zero, a sparser, more regularized fit. |
 | `lambda_l2` | float | `1.0` | L2 penalty on leaf weights. Higher values shrink leaf outputs toward zero, smoothing predictions and reducing variance. |
