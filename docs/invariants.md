@@ -188,6 +188,12 @@ The flattened node table and ObliviousTree::leaf_for agree on one numbering. The
 
 - enforced by: [`ObliviousTree: the flattened table numbers leaves as leaf_for does`](../tests/unit/test_oblivious_tree.cpp)
 
+### random-seed-varies-feature-draws
+
+The booster seeds the grower's feature_fraction draws from random_seed and feature_seed together, so two fits that differ only in random_seed draw different columns under the default all_rows sampler, and a fit with both fixed is reproducible. Before this pin random_seed reached the row sampler only, and a seed set of five fits under all_rows was five copies.
+
+- enforced by: [`Booster: random_seed varies the feature_fraction draws under all_rows`](../tests/unit/test_booster.cpp)
+
 ### renewal-keeps-monotone
 
 A depthwise or leafwise fit under a monotone constraint stays ordered by that feature after leaf renewal. Renewal replaces each leaf's Newton step with a residual statistic (median, Huber mean, quantile) that can reverse the order the growth-time fence enforced, so the renewed value is clamped back into the fence the grower left for that leaf.

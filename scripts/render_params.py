@@ -76,7 +76,7 @@ EFFECTS = {
     # booster
     "booster.n_iters": "Number of boosting rounds. More rounds lower training loss but risk overfitting; pair with a smaller learning_rate.",
     "booster.learning_rate": "Shrinks each tree's contribution. Lower values need more rounds but generalize better, the classic accuracy-versus-iterations trade.",
-    "booster.random_seed": "Seeds the stochastic boosting choices, such as DART drops. Fixing it makes a run reproducible bit for bit.",
+    "booster.random_seed": "Seeds every draw the fit makes: row sampling, DART drops and, together with tree.feature_seed, the feature_fraction draws. Fixing it makes a run reproducible bit for bit.",
     "booster.log_intervals": "Progress-logging frequency during fit. 0 is silent; higher prints more metric ticks. No effect on the trained model.",
     "booster.early_stopping_rounds": "Stop when the first validation objective stalls this many rounds, keeping the best iteration. 0 disables it; needs a valid set.",
     "booster.dart_drop_rate": "DART: probability of dropping each existing tree per round. Above 0 enables DART regularization; incompatible with early stopping.",
@@ -89,7 +89,7 @@ EFFECTS = {
     "tree.min_data_in_leaf": "Rows a node needs to split at all, twice this value. It gates the node, not the child: min_child_hess is the per-child floor.",
     "tree.max_leaves": "Leaf cap for leafwise growth. 0 is unbounded (depth-capped). A budget of 0 or of 2^max_depth and above cannot bind, so that tree is grown by the depthwise plane. Fewer leaves regularize; more leaves fit finer structure.",
     "tree.feature_fraction": "Fraction of features sampled per tree. Below 1 decorrelates trees and speeds training, often improving generalization.",
-    "tree.feature_seed": "Seeds the per-tree feature_fraction draws. Fixing it keeps feature subsampling reproducible across runs.",
+    "tree.feature_seed": "Seeds the per-tree feature_fraction draws together with booster.random_seed, so two fits that share random_seed and differ here draw different features. Fixing both keeps feature subsampling reproducible across runs.",
     "tree.monotone_constraints": "Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free. Forces predictions to respect known monotonic relationships. Honoured by every grower.",
     "tree.interaction_constraints": "Feature groups allowed to interact on one tree path. Restricts which features co-split, encoding domain structure and limiting interactions.",
     # sampler

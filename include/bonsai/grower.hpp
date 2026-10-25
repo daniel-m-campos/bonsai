@@ -454,6 +454,11 @@ template <HistogramEngine EngineT> class GrowerHost
     template <typename Tree>
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
                          std::span<float> scores_out, std::optional<float> &loss);
+    void seed_feature_sample(uint32_t random_seed)
+    {
+        std::seed_seq seq{random_seed, config_.feature_seed};
+        feature_rng_.seed(seq);
+    }
 
   protected:
     explicit GrowerHost(TreeConfig const &cfg)

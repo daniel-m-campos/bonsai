@@ -379,6 +379,54 @@ TEST_CASE("Booster: DART is deterministic per seed", "[booster][dart][determinis
     CHECK(run() == run());
 }
 
+// INVARIANT: random-seed-varies-feature-draws
+// The booster seeds the grower's feature_fraction draws from random_seed and
+// feature_seed together, so two fits that differ only in random_seed draw
+// different columns under the default all_rows sampler, and a fit with both
+// fixed is reproducible. Before this pin random_seed reached the row sampler
+// only, and a seed set of five fits under all_rows was five copies.
+TEST_CASE("Booster: random_seed varies the feature_fraction draws under all_rows",
+          "[booster][colsample][determinism]")
+{
+    detail::ColumnBatch const batch{
+        .features      = {{0.0F, 0.1F, 0.2F, 0.3F, 0.7F, 0.8F, 0.9F, 1.0F},
+                          {0.0F, 1.0F, 0.0F, 1.0F, 0.0F, 1.0F, 0.0F, 1.0F},
+                          {1.0F, 0.0F, 1.0F, 0.0F, 1.0F, 0.0F, 1.0F, 0.0F},
+                          {0.5F, 0.2F, 0.9F, 0.1F, 0.6F, 0.3F, 0.8F, 0.4F}},
+        .labels        = {-1.0F, -1.0F, -1.0F, -1.0F, +1.0F, +1.0F, +1.0F, +1.0F},
+        .weights       = {},
+        .feature_names = {"a", "b", "c", "d"},
+    };
+    Dataset const train = make_dataset(batch);
+    auto const    raw   = to_raw(batch);
+
+    Config cfg                       = tiny_cfg();
+    cfg.booster_config.learning_rate = 0.3F;
+    cfg.tree_config.feature_fraction = 0.25F;
+    cfg.tree_config.feature_seed     = 7;
+
+    auto run = [&](uint32_t random_seed)
+    {
+        cfg.booster_config.random_seed = random_seed;
+        MseBooster<DepthwiseGrower<>> b{cfg};
+        for (int i = 0; i < 8; ++i)
+        {
+            b.update_one_iter(train);
+        }
+        std::vector<float> y(raw.n_rows);
+        b.predict(raw.view(), y);
+        return y;
+    };
+    SECTION("two random seeds draw different columns")
+    {
+        CHECK(run(1) != run(2));
+    }
+    SECTION("one random seed refits the same model")
+    {
+        CHECK(run(1) == run(1));
+    }
+}
+
 TEST_CASE("Booster: feature_importance accumulates gain and split counts",
           "[booster][importance]")
 {
