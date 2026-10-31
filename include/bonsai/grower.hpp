@@ -43,10 +43,10 @@ using train_leaf_values = std::vector<float>;
 // So the slots a view omits are read. They are zero, and stay zero: the first
 // grow of a fit resizes from empty and value-initializes all of them, and no
 // writer ever names them afterwards, so `+= lr * 0` leaves the score at its
-// init value. That is the contract, not an accident of recycling, and
-// "A resident view leaves the scores of rows outside it alone" in
-// test_cuda_resident pins it. Anything that writes an out-of-view slot breaks
-// it. One home for both buffers, so this is stated once for all growers.
+// init value. That is the contract; writing an out-of-view slot breaks it. The
+// device pin is the resident view case in test_cuda_resident, the host pin is
+// row-list-follows-the-fit, whose second fit matches a fresh one only because
+// the omitted slots stayed at init. One home for both buffers, stated once.
 struct RecycledOutputs
 {
     train_leaf_values      values;
