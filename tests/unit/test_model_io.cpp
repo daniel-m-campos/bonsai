@@ -269,6 +269,36 @@ TEST_CASE("ModelIo: full Config round-trips via save/load", "[model_io][config]"
     REQUIRE(loaded.cfg == cfg);
 }
 
+// INVARIANT: device-id-not-persisted
+// A saved model names no device: parallel.device_id is a property of the
+// machine that trained it, and a model loaded elsewhere places itself under
+// the loader's config. The writer skips the leaf and the loader ignores it,
+// so a file carries no "device_id" key and a load reads the default.
+TEST_CASE("ModelIo: a saved model carries no device id", "[model_io][config]")
+{
+    auto const       batch   = tiny_batch();
+    BinMappers const mappers = BinMappers::fit(batch, {});
+    Dataset const    train   = Dataset::bin(batch, mappers, {});
+
+    Config cfg     = tiny_cfg();
+    auto   booster = make_booster(cfg);
+    booster->update_one_iter(train);
+    cfg.parallel.device_id = 3;
+
+    TempPath const tmp;
+    io::save_booster(*booster, tmp.str(), mappers, cfg);
+
+    auto const        bytes = read_file_bytes(tmp.str());
+    std::string const text(bytes.begin(), bytes.end());
+    CHECK(text.find("device_id") == std::string::npos);
+    CHECK(text.find("n_threads") != std::string::npos);
+
+    auto const loaded = io::load_booster(tmp.str());
+    CHECK(loaded.cfg.parallel.device_id == ParallelConfig{}.device_id);
+    cfg.parallel.device_id = ParallelConfig{}.device_id;
+    CHECK(loaded.cfg == cfg);
+}
+
 TEST_CASE("ModelIo: committed v7 fixtures re-save byte-identically",
           "[model_io][fixture]")
 {

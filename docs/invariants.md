@@ -62,6 +62,12 @@ Whether a grower runs on a device is answered by its engine type through the reg
 
 - enforced by: [`make_booster: grower_runs_on_device answers from the engine type`](../tests/unit/test_make_booster.cpp)
 
+### device-id-not-persisted
+
+A saved model names no device: parallel.device_id is a property of the machine that trained it, and a model loaded elsewhere places itself under the loader's config. The writer skips the leaf and the loader ignores it, so a file carries no "device_id" key and a load reads the default.
+
+- enforced by: [`ModelIo: a saved model carries no device id`](../tests/unit/test_model_io.cpp)
+
 ### device-ingest-chunk-reuse
 
 Device ingest above 8 GiB of raw floats streams chunks through three pinned slots; a slot is reused only after the fence that follows its copy and bin kernel, so a matrix spanning more chunks than slots (here 256 MB row-major, four 64 MB chunks, and sixteen single-chunk columns) bins identically to the host on both paths. A slot reused early would bin a chunk from half-written raw. BONSAI_CUDA_INGEST_RING engages the ring below the threshold so this matrix exercises it; without the flag the same matrix uploads pageable through one slot and must bin the same bytes.
