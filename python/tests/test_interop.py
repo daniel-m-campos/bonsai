@@ -208,8 +208,19 @@ def test_from_lightgbm_translates_objectives():
     }
 
 
-def test_from_lightgbm_drops_the_overloaded_alpha():
-    assert interop.from_lightgbm({"alpha": 0.9}).to_dict() == LEAFWISE
+@pytest.mark.parametrize(
+    ("objective", "native"), [("quantile", "quantile_alpha"), ("huber", "huber_delta")]
+)
+@pytest.mark.parametrize(("stated", "alpha"), [({"alpha": 0.8}, 0.8), ({}, 0.9)])
+def test_from_lightgbm_routes_alpha_by_objective(objective, native, stated, alpha):
+    out = interop.from_lightgbm({"objective": objective, **stated}).to_dict()
+    assert out == {**LEAFWISE, "dispatch.objective_name": objective, f"objective.{native}": alpha}
+
+
+def test_from_lightgbm_reports_alpha_outside_its_objectives():
+    with pytest.raises(ValueError, match="alpha"):
+        interop.from_lightgbm({"alpha": 0.9})
+    assert interop.from_lightgbm({"alpha": 0.9}, strict=False).to_dict() == LEAFWISE
 
 
 def test_from_lightgbm_grows_leafwise_so_num_leaves_binds(toy_train):
@@ -379,6 +390,23 @@ def test_to_lightgbm_keeps_goss_as_its_own_sampler():
     out = interop.to_lightgbm(goss)
     assert out == {"data_sample_strategy": "goss", "top_rate": 0.3}
     assert interop.from_lightgbm(out).to_dict()["dispatch.sampler_name"] == "goss"
+
+
+@pytest.mark.parametrize(
+    ("objective", "native", "default"),
+    [("quantile", "quantile_alpha", 0.5), ("huber", "huber_delta", 1.0)],
+)
+def test_to_lightgbm_carries_the_loss_parameter_as_alpha(objective, native, default):
+    pairs = {"dispatch.objective_name": objective}
+    assert interop.to_lightgbm(pairs) == {"objective": objective, "alpha": default}
+    stated = {**pairs, f"objective.{native}": 0.8}
+    assert interop.to_lightgbm(stated) == {"objective": objective, "alpha": 0.8}
+
+
+def test_to_library_drops_loss_parameters_another_objective_reads():
+    pairs = {"objective.quantile_alpha": 0.8, "objective.huber_delta": 2.0}
+    assert interop.to_lightgbm(pairs) == {}
+    assert interop.to_xgboost(pairs, strict=False) == {}
 
 
 def test_to_lightgbm_drops_the_grower_name():

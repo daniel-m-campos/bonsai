@@ -128,8 +128,9 @@ class _ReadUnder:
     bonsai ignores the key unless ``selector`` resolves, stated or at its
     registry default, to one of ``values``. Outbound such a key is dropped,
     since the reference library would enforce a value bonsai never read.
-    Inbound it is reported as unmappable, since the reference library read
-    a value bonsai would ignore.
+    Inbound it is reported as unmappable, since under that selector bonsai
+    has nothing to translate it to. Knobs that share a foreign spelling
+    under disjoint selectors split one overloaded key by selector.
     """
 
     selector: str
@@ -325,6 +326,8 @@ _ROW_SAMPLING: Final = {"dispatch.sampler_name": "bernoulli"}
 _UNDER_SOFTMAX: Final = _ReadUnder("dispatch.objective_name", frozenset({"softmax"}))
 _UNDER_BERNOULLI: Final = _ReadUnder("dispatch.sampler_name", frozenset({"bernoulli"}))
 _UNDER_GOSS: Final = _ReadUnder("dispatch.sampler_name", frozenset({"goss"}))
+_UNDER_QUANTILE: Final = _ReadUnder("dispatch.objective_name", frozenset({"quantile"}))
+_UNDER_HUBER: Final = _ReadUnder("dispatch.objective_name", frozenset({"huber"}))
 _UNDER_LEAFWISE: Final = _ReadUnder(
     "dispatch.grower_name", frozenset({"leafwise", "cuda_leafwise"})
 )
@@ -485,7 +488,7 @@ _XGBOOST: Final = _Library(
         _Knob("booster.early_stopping_rounds", "early_stopping_rounds"),
         _Knob("dispatch.objective_name", "objective", values=_XGB_OBJECTIVES),
         _Knob("objective.n_classes", "num_class", read_under=_UNDER_SOFTMAX),
-        _Knob("objective.quantile_alpha", "quantile_alpha"),
+        _Knob("objective.quantile_alpha", "quantile_alpha", read_under=_UNDER_QUANTILE),
         # XGBoost has no symmetric-tree policy, so bonsai's levelwise grower
         # is reported as unmappable rather than flattened to depthwise.
         _Knob("dispatch.grower_name", "grow_policy", values=_XGB_GROW_POLICY),
@@ -627,6 +630,16 @@ _LIGHTGBM: Final = _Library(
         _Knob("booster.early_stopping_rounds", "early_stopping_round", "early_stopping_rounds"),
         _Knob("dispatch.objective_name", "objective", "application", values=_LGBM_OBJECTIVES),
         _Knob("objective.n_classes", "num_class", "num_classes", read_under=_UNDER_SOFTMAX),
+        # LightGBM overloads alpha: the target quantile under quantile, the
+        # Huber delta under huber, 0.9 for both when unset, where bonsai
+        # defaults to 0.5 and 1.0.
+        _Knob(
+            "objective.quantile_alpha",
+            "alpha",
+            read_under=_UNDER_QUANTILE,
+            foreign_default=0.9,
+        ),
+        _Knob("objective.huber_delta", "alpha", read_under=_UNDER_HUBER, foreign_default=0.9),
         _Knob(
             "booster.dart_drop_rate",
             "drop_rate",
@@ -659,9 +672,6 @@ _LIGHTGBM: Final = _Library(
         "verbosity": "logging only",
         "device": "in bonsai the device is the grower name, e.g. cuda_leafwise",
         "device_type": "in bonsai the device is the grower name",
-        # LightGBM overloads one key for two objectives' parameters, so it
-        # cannot be translated without knowing which objective is active.
-        "alpha": "set objective.huber_delta or objective.quantile_alpha directly",
     },
     dropped_native={
         **_DROPPED_NATIVE_SHARED,
@@ -896,7 +906,9 @@ from_lightgbm.__doc__ = _doc(
     "LightGBM bags only above frequency 0, and bonsai draws for every tree.\n"
     "``boosting='goss'`` selects the goss sampler, ``'dart'`` sets\n"
     "``booster.dart_drop_rate`` (LightGBM's 0.1 unless ``drop_rate`` is\n"
-    "given), and ``'rf'`` raises.",
+    "given), and ``'rf'`` raises. ``alpha`` becomes\n"
+    "``objective.quantile_alpha`` or ``objective.huber_delta`` by objective,\n"
+    "at LightGBM's 0.9 when unset.",
     call='{"num_leaves": 63, "max_depth": -1}',
     result="Params(tree=Tree(max_depth=255, max_leaves=63), "
     "dispatch=Dispatch(grower_name='leafwise'))",
@@ -956,7 +968,9 @@ to_lightgbm.__doc__ = _doc(
     _LIGHTGBM,
     notes="The bernoulli sampler goes out with ``bagging_freq=1`` and DART with\n"
     "``boosting='dart'``, the switches that turn their rates on. The goss\n"
-    "sampler goes out as ``data_sample_strategy='goss'``.",
+    "sampler goes out as ``data_sample_strategy='goss'``. The quantile and\n"
+    "huber objectives carry their parameter as ``alpha``, stated or at\n"
+    "bonsai's default, since LightGBM's own default is 0.9.",
     call='[("tree.max_leaves", 63)]',
     result="{'num_leaves': 63}",
 )
@@ -992,7 +1006,10 @@ def _from_library(lib: _Library, params: Mapping[str, Any], strict: bool) -> Par
         for key, value in dict(params).items()
         if value is not None and key not in lib.dropped_foreign
     }
-    knobs = {spelling: knob for knob in lib.knobs for spelling in knob.spellings}
+    knobs: dict[str, list[_Knob]] = {}
+    for knob in lib.knobs:
+        for spelling in knob.spellings:
+            knobs.setdefault(spelling, []).append(knob)
     switches = {spelling: switch for switch in lib.switches for spelling in switch.spellings}
     translation = _Translation(dict(lib.implies))
     unmappable = []
@@ -1018,30 +1035,38 @@ class _Translation:
     implied: dict[str, Any]
     mapped: dict[str, Any] = dataclasses.field(default_factory=dict)
     forced: dict[str, Any] = dataclasses.field(default_factory=dict)
-    read: dict[str, _Knob] = dataclasses.field(default_factory=dict)
+    read: dict[str, list[_Knob]] = dataclasses.field(default_factory=dict)
 
-    def add(self, key: str, knob: _Knob, stated: Mapping[str, Any]) -> list[str]:
-        """Translate one stated key; return it if it must be reported."""
-        if knob.when is not None and not knob.when.holds(stated):
-            return [key] if knob.when.reported else []
-        if knob.is_inert(stated[key]):
-            return []
-        self.mapped[knob.native] = knob.inbound(stated[key])
-        self.implied.update(knob.implies)
-        self.forced.update(knob.forces)
-        self.read[key] = knob
-        return []
+    def add(self, key: str, candidates: list[_Knob], stated: Mapping[str, Any]) -> list[str]:
+        """Translate one stated key through every knob it spells; return
+        it if it must be reported."""
+        reported = False
+        for knob in candidates:
+            if knob.when is not None and not knob.when.holds(stated):
+                reported = reported or knob.when.reported
+                continue
+            if knob.is_inert(stated[key]):
+                continue
+            self.mapped[knob.native] = knob.inbound(stated[key])
+            self.implied.update(knob.implies)
+            self.forced.update(knob.forces)
+            self.read.setdefault(key, []).append(knob)
+        return [key] if reported else []
 
     def resolved(self) -> dict[str, Any]:
         return {**self.implied, **self.mapped, **self.forced}
 
 
-def _drop_unread(knobs: Mapping[str, _Knob], translated: dict[str, Any]) -> list[str]:
-    """Remove, and name, each foreign key whose bonsai key the translated
-    selectors leave unread."""
-    unread = [key for key, knob in knobs.items() if not knob.is_read(translated)]
-    for key in unread:
-        translated.pop(knobs[key].native, None)
+def _drop_unread(read: Mapping[str, list[_Knob]], translated: dict[str, Any]) -> list[str]:
+    """Remove each bonsai key the translated selectors leave unread, and
+    name every foreign key left with none."""
+    unread = []
+    for key, candidates in read.items():
+        dropped = [knob for knob in candidates if not knob.is_read(translated)]
+        for knob in dropped:
+            translated.pop(knob.native, None)
+        if len(dropped) == len(candidates):
+            unread.append(key)
     return unread
 
 
