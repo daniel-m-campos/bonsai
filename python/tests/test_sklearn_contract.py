@@ -323,3 +323,54 @@ def test_params_subsample_warm_start_meets_the_subsample_argument_rule(tmp_path)
     for est in (by_argument, by_params):
         with pytest.raises(ValueError, match=r"dispatch\.sampler_name=bernoulli disagrees"):
             est.fit(X, y, init_model=path)
+
+
+def test_from_file_parameters_describe_the_loaded_model(tmp_path):
+    from sklearn.base import clone
+
+    X, y = _regression()
+    original = bonsai.BonsaiRegressor(
+        n_iters=10,
+        max_depth=2,
+        learning_rate=0.3,
+        objective="quantile",
+        quantile_alpha=0.9,
+        n_threads=2,
+        params={"tree.lambda_l2": 3.0},
+    ).fit(X, y)
+    path = str(tmp_path / "quantile.msgpack")
+    original.save(path)
+
+    loaded = bonsai.BonsaiRegressor.from_file(path)
+
+    assert loaded.get_params() == original.get_params()
+    np.testing.assert_array_equal(clone(loaded).fit(X, y).predict(X), original.predict(X))
+
+
+def test_classifier_from_file_refits_the_loaded_configuration(tmp_path):
+    from sklearn.base import clone
+
+    X, _ = _binary()
+    y = np.digitize(X[:, 0], [-0.5, 0.5])
+    original = _classifier(max_leaves=7, params={"tree.min_data_in_leaf": 5}).fit(X, y)
+    path = str(tmp_path / "softmax.msgpack")
+    original.save(path)
+
+    loaded = bonsai.BonsaiClassifier.from_file(path)
+
+    assert loaded.get_params() == original.get_params()
+    np.testing.assert_array_equal(
+        clone(loaded).fit(X, y).predict_proba(X), original.predict_proba(X)
+    )
+
+
+def test_from_file_keeps_a_subsample_the_all_rows_sampler_ignored(tmp_path):
+    X, y = _regression()
+    model = bonsai.train({"sampler.subsample": 0.5, "booster.n_iters": 5}, X, y)
+    path = str(tmp_path / "all_rows.msgpack")
+    model.save(path)
+
+    loaded = bonsai.BonsaiRegressor.from_file(path)
+    refit = bonsai.BonsaiRegressor(**loaded.get_params()).fit(X, y)
+
+    np.testing.assert_array_equal(refit.predict(X), model.predict(X))

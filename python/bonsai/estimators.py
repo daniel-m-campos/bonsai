@@ -26,8 +26,9 @@ import numpy as np
 import numpy.typing as npt
 from typing_extensions import Self
 
-from bonsai._bonsai import Dataset, Model, load, train
+from bonsai._bonsai import Dataset, Model, _params_from_toml, default_config_toml, load, train
 from bonsai._coerce import _as_f32, _as_targets
+from bonsai._params import Params
 from bonsai._params_ops import ParamsOps
 
 __all__ = ["BonsaiClassifier", "BonsaiRegressor"]
@@ -406,7 +407,10 @@ class _BonsaiEstimator:
         """Load a fitted model from a saved ``.msgpack`` file.
 
         The loaded model carries its feature count and its column names, so
-        ``n_features_in_`` and ``feature_names_in_`` come back with it.
+        ``n_features_in_`` and ``feature_names_in_`` come back with it. Its
+        resolved config becomes the estimator's parameters, so
+        ``get_params`` describes the model and ``clone(...).fit`` trains the
+        same configuration.
 
         Parameters
         ----------
@@ -418,8 +422,9 @@ class _BonsaiEstimator:
         _BonsaiEstimator
             A fresh estimator instance wrapping the loaded model.
         """
-        out = cls()
-        out._model = load(path)
+        model = load(path)
+        out = cls(**cls._arguments_from_model(model))
+        out._model = model
         names = _model_feature_names(out._model)
         out.n_features_in_ = len(out._fitted().feature_names)
         out._set_feature_names(names)
@@ -531,6 +536,77 @@ class _BonsaiEstimator:
             ("dispatch.sampler_name", "sampler.subsample"),
         ),
     )
+
+    # The constructor arguments a model's resolved config gives back, with
+    # the config key each reads. Keys a fit derives from its data, or never
+    # stores, stay out of the loaded estimator's params.
+    _MODEL_ARGUMENTS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("n_iters", "booster.n_iters"),
+        ("learning_rate", "booster.learning_rate"),
+        ("max_depth", "tree.max_depth"),
+        ("max_leaves", "tree.max_leaves"),
+        ("grower", "dispatch.grower_name"),
+        ("sampler", "dispatch.sampler_name"),
+        ("early_stopping_rounds", "booster.early_stopping_rounds"),
+        ("n_threads", "parallel.n_threads"),
+        ("random_seed", "booster.random_seed"),
+        ("max_bin", "bin_mapper.max_bin"),
+    )
+    _DERIVED_KEYS: ClassVar[tuple[str, ...]] = ("parallel.device_id",)
+
+    @classmethod
+    def _arguments_from_model(cls, model: Model) -> dict[str, object]:
+        """Constructor arguments that reproduce ``model``'s resolved config.
+
+        An argument whose default is a value takes the model's value, since
+        the estimator's defaults are not the library's. An argument whose
+        default is None (leave the library default) is set only where the
+        model differs from the library. Every other key that differs goes to
+        ``params``, except the ``data`` section, which names input files,
+        and the keys a fit derives from ``y``.
+
+        Parameters
+        ----------
+        model
+            A loaded model.
+
+        Returns
+        -------
+        dict
+            Keyword arguments for ``cls``.
+        """
+        resolved = _shortest_spellings(Params.from_model(model).to_dict())
+        library = _shortest_spellings(_params_from_toml(default_config_toml()))
+        defaults = _init_defaults(cls)
+        changed = {k: v for k, v in resolved.items() if v != library.get(k)}
+        arguments: dict[str, object] = {}
+        for name, key in cls._MODEL_ARGUMENTS:
+            if defaults[name] is not None:
+                arguments[name] = resolved[key]
+            elif key in changed:
+                arguments[name] = changed[key]
+        params = cls._params_from_model(changed, resolved)
+        if params:
+            arguments["params"] = params
+        return arguments
+
+    @classmethod
+    def _params_from_model(
+        cls, changed: dict[str, object], resolved: dict[str, object]
+    ) -> dict[str, object]:
+        """The ``params`` of a loaded estimator: the changed keys no
+        constructor argument carries. A ``sampler.subsample`` brings the
+        model's sampler with it, so a fraction the ``all_rows`` sampler
+        ignored does not turn on ``bernoulli`` at refit."""
+        mapped = {key for _, key in cls._MODEL_ARGUMENTS}
+        params = {
+            k: v
+            for k, v in changed.items()
+            if k not in mapped and k not in cls._DERIVED_KEYS and not k.startswith("data.")
+        }
+        if "sampler.subsample" in params:
+            params["dispatch.sampler_name"] = resolved["dispatch.sampler_name"]
+        return params
 
     def _store(self, arguments: dict):
         """Keep every constructor argument raw; ``get_params``/``clone`` read
@@ -969,6 +1045,13 @@ class BonsaiRegressor(_BonsaiEstimator):
         ("dispatch.objective_name", ("objective", "quantile_alpha"), ("dispatch.objective_name",)),
     )
 
+    _MODEL_ARGUMENTS = (
+        *_BonsaiEstimator._MODEL_ARGUMENTS,
+        ("objective", "dispatch.objective_name"),
+        ("quantile_alpha", "objective.quantile_alpha"),
+    )
+    _DERIVED_KEYS = (*_BonsaiEstimator._DERIVED_KEYS, "objective.n_targets")
+
     @classmethod
     def from_file(cls, path: str) -> BonsaiRegressor:
         """Load a saved regressor; ``n_outputs_`` is read off the model."""
@@ -1160,6 +1243,12 @@ class BonsaiClassifier(_BonsaiEstimator):
             raise ValueError("sample_weight sums to zero; accuracy is undefined")
         return float(np.average(correct, weights=w))
 
+    _DERIVED_KEYS = (
+        *_BonsaiEstimator._DERIVED_KEYS,
+        "dispatch.objective_name",
+        "objective.n_classes",
+    )
+
     @classmethod
     def from_file(cls, path: str) -> BonsaiClassifier:
         """Load a saved ``.msgpack`` classifier.
@@ -1281,6 +1370,16 @@ def _init_defaults(cls) -> dict[str, object]:
     """Constructor-signature defaults, keyed by parameter name."""
     sig = inspect.signature(cls.__init__)
     return {name: prm.default for name, prm in sig.parameters.items() if name != "self"}
+
+
+def _shortest_spellings(config: dict[str, object]) -> dict[str, object]:
+    """A config dict with each float in its shortest float32 spelling.
+
+    The config stores its floats as float32, so a learning rate of 0.3
+    reads back as 0.30000001192092896; the shortest spelling that rounds
+    to the same float32 is the value the caller wrote.
+    """
+    return {k: float(str(np.float32(v))) if isinstance(v, float) else v for k, v in config.items()}
 
 
 def _names_disagreement(fitted: list[str], given: list[str]) -> str:
