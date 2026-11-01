@@ -164,3 +164,25 @@ def test_amazon_quality_pin():
     encoded = fit_auc(enc.fit_transform(Xtr, ytr), enc.transform(Xte))
     assert encoded - ordinal > 0.03, (ordinal, encoded)
     assert encoded > 0.85, encoded
+
+
+def test_codes_past_float32_precision_stay_distinct():
+    """Codes above 2^24 are identities, not magnitudes: reading them through
+    float32 merged neighbours into one category."""
+    codes = np.array([16777216, 16777217] * 50, dtype=np.int64).reshape(-1, 1)
+    y = (codes[:, 0] == 16777217).astype(np.float64)
+    enc = bonsai.OrderedTargetEncoder(columns=[0])
+    enc.fit_transform(codes, y)
+    encoded = enc.transform(np.array([[16777216], [16777217]]))[:, 0]
+    assert encoded[0] < 0.2 < 0.8 < encoded[1], encoded
+
+
+def test_pair_keys_past_float32_precision_stay_distinct():
+    """cross=2 pair keys read the same codes, so they keep the same precision."""
+    a = np.array([16777216, 16777217] * 50, dtype=np.int64)
+    X = np.column_stack([a, np.zeros_like(a)])
+    y = (a == 16777217).astype(np.float64)
+    enc = bonsai.OrderedTargetEncoder(columns=[0, 1], keep_codes=False, cross=2)
+    enc.fit_transform(X, y)
+    pairs = enc.transform(np.array([[16777216, 0], [16777217, 0]]))[:, 2]
+    assert pairs[0] < 0.2 < 0.8 < pairs[1], pairs
