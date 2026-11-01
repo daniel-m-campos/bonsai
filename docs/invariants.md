@@ -164,6 +164,12 @@ The level plane fills a level's smaller children in one call and derives each la
 
 - enforced by: [`CpuHistogramEngine: the level fill matches the nodes filled alone`](../tests/unit/test_populate.cpp)
 
+### level-finder-skips-empty-slots
+
+A feature the tree's sample left out is an empty histogram slot on every frontier node. The level finder skips it on both its paths, the lane group and the scalar scan, the way the node finder does; reading it as a histogram with zero cuts walked past its storage.
+
+- enforced by: [`HistogramLevelSplitFinder: a feature's empty slot is skipped, not read`](../tests/unit/test_split_level.cpp)
+
 ### levelwise-monotone-holds
 
 A levelwise fit under a monotone constraint produces predictions ordered by that feature, on both the CPU and CUDA engines. The mechanism is a projection of the finished leaf table onto the monotone cone (project_monotone), not a veto during growth, so the tree's structure is whatever the unconstrained search would have chosen.

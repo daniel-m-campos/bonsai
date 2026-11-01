@@ -89,6 +89,37 @@ TEST_CASE("feature_fraction=0.25 restricts each tree to one feature",
     CHECK(seen_across_trees.size() > 1); // draws vary across trees
 }
 
+TEST_CASE("feature_fraction=0.25 restricts each oblivious tree to one feature",
+          "[grower][colsample][oblivious]")
+{
+    auto               built = build(four_identical_features());
+    std::vector<float> grad{-1.0F, -1.0F, +1.0F, +1.0F};
+    std::vector<float> hess(4, 1.0F);
+    auto               rows = iota_rows(4);
+
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .feature_fraction = 0.25F,
+                          .max_depth        = 2,
+                          .min_data_in_leaf = 0};
+    ObliviousGrower<> grower{cfg};
+
+    std::set<feature_id_t> seen_across_trees;
+    for (int t = 0; t < 8; ++t)
+    {
+        auto [tree, values, tree_lids, tree_bounds] =
+            grower.grow(built.ds, grad, hess, rows);
+        std::set<feature_id_t> used;
+        for (auto const &level : tree.splits())
+        {
+            used.insert(level.feature_id);
+        }
+        CHECK(used.size() == 1);
+        seen_across_trees.insert(used.begin(), used.end());
+    }
+    CHECK(seen_across_trees.size() > 1);
+}
+
 TEST_CASE("feature_fraction leaf values still use full node totals",
           "[grower][colsample]")
 {

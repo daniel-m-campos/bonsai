@@ -551,6 +551,10 @@ inline LevelGroup level_group(LevelParents const &lp, feature_id_t f0, feature_i
     LevelGroup g;
     for (feature_id_t fid = f0; fid < f1; ++fid)
     {
+        if (lp.front().hists[fid].size() == 0)
+        {
+            continue;
+        }
         g.fids[g.n] = fid;
         g.cuts[g.n] = lp.front().hists[fid].prefix_size();
         g.max_cuts  = std::max(g.max_cuts, g.cuts[g.n]);
