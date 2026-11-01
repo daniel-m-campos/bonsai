@@ -464,7 +464,9 @@ Parameters
 ----------
 params
     {title} parameter names to values, under any spelling the library
-    documents.
+    documents. A None value leaves that parameter unset, the way the
+    library's scikit-learn wrapper means it, so an estimator's
+    ``get_params()`` translates directly.
 strict
     True raises on any parameter with no bonsai counterpart, naming
     every one. False drops them and translates the rest, which loses
@@ -638,7 +640,7 @@ def _from_library(lib: _Library, params: Mapping[str, Any], strict: bool) -> Par
     mapped: dict[str, Any] = {}
     unmappable = []
     for key, value in dict(params).items():
-        if key in lib.dropped_foreign:
+        if value is None or key in lib.dropped_foreign:
             continue
         knob = index.get(key)
         if knob is None:

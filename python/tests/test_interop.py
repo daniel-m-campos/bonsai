@@ -74,6 +74,17 @@ def test_from_xgboost_rejects_an_unknown_objective():
         interop.from_xgboost({"objective": "rank:pairwise"})
 
 
+def test_from_xgboost_leaves_a_none_value_unset():
+    out = interop.from_xgboost(
+        {"grow_policy": None, "objective": None, "colsample_bylevel": None, "max_depth": 4}
+    )
+    assert out.to_dict() == {"tree.max_depth": 4}
+
+
+def test_from_lightgbm_leaves_a_none_objective_unset():
+    assert "dispatch.objective_name" not in interop.from_lightgbm({"objective": None}).to_dict()
+
+
 def test_from_xgboost_accepts_the_booster_api_aliases():
     assert interop.from_xgboost({"eta": 0.1, "lambda": 2.0}).to_dict() == {
         "booster.learning_rate": 0.1,
