@@ -63,7 +63,7 @@ SECTION_INTRO = {
     "objective": "Extra parameters read only by the matching objective.",
     "metrics": "Which metrics to report during fit and eval; no effect on the trained model.",
     "data": "Dataset IO for the CLI; the Python API passes arrays instead of paths. Missing values are NaN everywhere: in a CSV write the literal `nan`, since an empty field is a parse error naming its row and column.",
-    "parallel": "Compute placement: CPU threads and CUDA device. No effect on the model bits.",
+    "parallel": "Compute placement: CPU threads and CUDA device. A fixed `n_threads` gives the same model bits on every run; another thread count can move them within numerical tolerance (u16 bins, `max_bin` above 255, stay bit-identical at any count), and so can `n_threads = 0` on hosts with different core counts.",
 }
 
 # One effect-on-model line per dotted knob (type and default come from the
