@@ -821,6 +821,34 @@ def test_nullable_pandas_columns_read_missing_cells_as_nan():
     np.testing.assert_array_equal(got, want)
 
 
+@pytest.mark.parametrize(
+    "key,names,objective",
+    [
+        ("metrics.fit", ["no_such_metric"], "mse"),
+        ("metrics.eval", ["no_such_metric"], "mse"),
+        ("metrics.fit", ["auc"], "mse"),
+    ],
+)
+def test_train_refuses_a_metric_the_task_cannot_report(key, names, objective):
+    """bonsai.train resolves metric names against the registry the CLI uses,
+    so an unknown or task-mismatched name is refused instead of stored."""
+    rng = np.random.default_rng(18)
+    x = rng.standard_normal((60, 3)).astype(np.float32)
+    y = x[:, 0].astype(np.float32)
+    with pytest.raises(ValueError, match=key):
+        bonsai.train({"dispatch.objective_name": objective, "booster.n_iters": 1, key: names}, x, y)
+
+
+def test_train_accepts_built_in_metric_names():
+    rng = np.random.default_rng(19)
+    x = rng.standard_normal((60, 3)).astype(np.float32)
+    y = x[:, 0].astype(np.float32)
+    m = bonsai.train(
+        {"booster.n_iters": 1, "metrics.fit": ["rmse", "mae"], "metrics.eval": ["r2"]}, x, y
+    )
+    assert m.n_iters == 1
+
+
 _SAVE_UNDER_A_FILE_SIZE_LIMIT = """
 import resource
 import signal
