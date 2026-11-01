@@ -435,3 +435,11 @@ def test_dataset_refuses_a_max_bin_outside_the_bin_id_range(max_bin):
     X = np.arange(30, dtype=np.float32).reshape(-1, 1)
     with pytest.raises(RuntimeError, match=r"max_bin: must be in \[3, 65535\]"):
         bonsai.Dataset(X, X[:, 0], max_bin=max_bin)
+
+
+def test_dataset_refuses_more_bin_edges_than_bin_ids():
+    X = np.arange(30, dtype=np.float32).reshape(-1, 1)
+    edges = np.arange(65534, dtype=np.float32) + 0.5
+    with pytest.raises(RuntimeError, match="takes at most 65533 edges"):
+        bonsai.Dataset(X, X[:, 0], bin_edges={0: edges})
+    assert bonsai.Dataset(X, X[:, 0], bin_edges={0: edges[:-1]}).n_rows == 30
