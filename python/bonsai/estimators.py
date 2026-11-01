@@ -239,9 +239,10 @@ class _BonsaiEstimator:
             If ``eval_set`` is a list, or given at all with
             ``dart_drop_rate > 0``; if ``X`` has no rows or no columns,
             ``y`` holds a non-finite value, or ``sample_weight`` a
-            non-finite or negative one; for a classifier
-            also if ``y`` contains NaN or fewer than 2 classes, or an
-            eval-set label was not seen in the training classes.
+            non-finite or negative one; for a classifier also if ``y``
+            contains NaN (in any dtype), holds floats that are not finite
+            integers (a continuous target), or has fewer than 2 classes,
+            or an eval-set label was not seen in the training classes.
         """
         _reject_eval_set_list(eval_set)
         y_enc = self._encode_targets(y)
@@ -1119,8 +1120,9 @@ class BonsaiClassifier(_BonsaiEstimator):
 
     def _encode_targets(self, y: npt.ArrayLike) -> np.ndarray:
         y_arr = np.asarray(y)
-        if y_arr.dtype.kind == "f" and np.isnan(y_arr).any():
+        if _has_nan_label(y_arr):
             raise ValueError("Input y contains NaN.")
+        _reject_continuous_labels(y_arr)
         self.classes_ = np.unique(y_arr)
         self.n_classes_ = len(self.classes_)
         if self.n_classes_ < 2:
@@ -1258,6 +1260,31 @@ def _grower_for_device(grower: str, device: str) -> str:
     if dev == "cpu":
         return grower.removeprefix("cuda_")
     raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")
+
+
+def _has_nan_label(y: np.ndarray) -> bool:
+    """NaN among labels of any dtype; an object array tests each entry
+    against itself, since NaN is the one value unequal to itself."""
+    if y.dtype.kind == "f":
+        return bool(np.isnan(y).any())
+    if y.dtype.kind != "O":
+        return False
+    return bool((y != y).any())
+
+
+def _reject_continuous_labels(y: np.ndarray):
+    """Refuse sklearn's ``continuous`` target type: float labels that are
+    not all finite integers, a regression target handed to a classifier."""
+    if y.dtype.kind != "f":
+        return
+    discrete = np.isfinite(y) & (y == np.floor(y))
+    if discrete.all():
+        return
+    raise ValueError(
+        f"Unknown label type: continuous. BonsaiClassifier needs discrete class "
+        f"labels, and y holds the float {float(y[~discrete].flat[0])!r}, which is not an "
+        f"integer; use BonsaiRegressor for a continuous target"
+    )
 
 
 def _reject_eval_set_list(eval_set):

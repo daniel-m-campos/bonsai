@@ -800,3 +800,19 @@ def test_model_pickles_like_its_saved_file(tmp_path):
     np.testing.assert_array_equal(m.predict(x), again.predict(x))
     assert again.n_iters == m.n_iters
     assert again.config_toml == m.config_toml
+
+
+def test_classifier_refuses_nan_in_object_labels():
+    X, y = _three_class_data()
+    labels = y.astype(int).astype(object)
+    labels[:3] = np.nan
+    with pytest.raises(ValueError, match="Input y contains NaN"):
+        bonsai.BonsaiClassifier(n_iters=1).fit(X, labels)
+
+
+def test_classifier_refuses_a_continuous_target():
+    X, y = _three_class_data()
+    for target in (y + 0.25, np.where(y == 0, np.inf, y)):
+        with pytest.raises(ValueError, match="Unknown label type: continuous"):
+            bonsai.BonsaiClassifier(n_iters=1).fit(X, target)
+    assert bonsai.BonsaiClassifier(n_iters=1).fit(X, y.astype(np.float64)).n_classes_ == 3
