@@ -7,6 +7,7 @@ import pathlib
 
 import bonsai
 import numpy as np
+import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -116,6 +117,21 @@ def test_cross_pairs_shape_and_unseen():
     expect = (y[mask].sum() + 10.0 * y.mean()) / (mask.sum() + 10.0)
     t = enc.transform(np.array([[i, 0.0, j]], dtype=np.float32))
     assert np.isclose(t[0, -1], expect, atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"n_permutations": 0}, "n_permutations must be >= 1"),
+        ({"n_permutations": -1}, "n_permutations must be >= 1"),
+        ({"prior_weight": 0.0}, "prior_weight must be finite and > 0"),
+        ({"prior_weight": -1.0}, "prior_weight must be finite and > 0"),
+        ({"prior_weight": float("nan")}, "prior_weight must be finite and > 0"),
+    ],
+)
+def test_encoder_refuses_counts_without_meaning(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        bonsai.OrderedTargetEncoder(columns=[0], **kwargs)
 
 
 def test_cross_pairs_amazon_quality():

@@ -65,7 +65,8 @@ class OrderedTargetEncoder:
     Raises
     ------
     ValueError
-        If ``cross`` is not 1 or 2.
+        If ``cross`` is not 1 or 2, ``n_permutations`` is below 1, or
+        ``prior_weight`` is not a finite number above 0.
     """
 
     def __init__(
@@ -77,7 +78,7 @@ class OrderedTargetEncoder:
         seed: int = 0,
         cross: int = 1,
     ):
-        """Validate ``cross`` and store constructor arguments."""
+        """Validate the encoding arguments and store them."""
         self.columns = list(columns)
         self.prior_weight = float(prior_weight)
         self.n_permutations = int(n_permutations)
@@ -86,6 +87,10 @@ class OrderedTargetEncoder:
         self.cross = int(cross)
         if self.cross not in (1, 2):
             raise ValueError("cross must be 1 (singles) or 2 (add pairs)")
+        if self.n_permutations < 1:
+            raise ValueError(f"n_permutations must be >= 1, got {self.n_permutations}")
+        if not (np.isfinite(self.prior_weight) and self.prior_weight > 0):
+            raise ValueError(f"prior_weight must be finite and > 0, got {self.prior_weight}")
         self._stats: dict[int, tuple[np.ndarray, np.ndarray]] | None = None
         self._pair_stats: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
         self._prior: float = 0.0
