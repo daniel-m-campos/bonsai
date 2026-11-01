@@ -23,6 +23,7 @@ Read them before trusting a translated config to reproduce a number.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import json
 import re
 from collections.abc import Callable, Iterable, Mapping
@@ -100,6 +101,39 @@ class _Policies(_Values):
         return super().outbound(str(value).removeprefix("cuda_"))
 
 
+@functools.cache
+def _registry_default(key: str) -> Any:
+    """The value bonsai resolves a dotted config key to when it is unset."""
+    from bonsai import _bonsai
+
+    section, leaf = key.split(".", 1)
+    for entry in _bonsai._params_schema():
+        if entry["section"] != section:
+            continue
+        for field in entry["fields"]:
+            if field["name"] == leaf:
+                return field["default"]
+    raise KeyError(key)
+
+
+@dataclasses.dataclass(frozen=True)
+class _ReadUnder:
+    """The bonsai selector a config key is read under.
+
+    bonsai ignores the key unless ``selector`` resolves, stated or at its
+    registry default, to one of ``values``. Outbound such a key is dropped,
+    since the reference library would enforce a value bonsai never read.
+    Inbound it is reported as unmappable, since the reference library read
+    a value bonsai would ignore.
+    """
+
+    selector: str
+    values: frozenset[str]
+
+    def holds(self, native: Mapping[str, Any]) -> bool:
+        return str(native.get(self.selector, _registry_default(self.selector))) in self.values
+
+
 class _Knob:
     """One bonsai config key under a reference library's spellings.
 
@@ -120,6 +154,12 @@ class _Knob:
     implies
         Extra bonsai pairs this knob turns on, applied underneath any
         explicitly translated key.
+    forces
+        bonsai pairs this knob sets over everything else the parameters
+        translate to, for a value the reference library enforces where the
+        translated selector would leave it unread.
+    read_under
+        The bonsai selector the key is read under; None reads it always.
     inert
         A value that configures nothing on either side, such as a disabled
         sentinel one library refuses; it translates to no pair at all.
@@ -133,6 +173,8 @@ class _Knob:
         to_native: Callable[[Any], Any] | None = None,
         to_foreign: Callable[[Any], Any] | None = None,
         implies: Mapping[str, Any] | None = None,
+        forces: Mapping[str, Any] | None = None,
+        read_under: _ReadUnder | None = None,
         inert: Any = None,
     ):
         self.native = native
@@ -141,10 +183,15 @@ class _Knob:
         self.to_native = values.inbound if values is not None else to_native
         self.to_foreign = values.outbound if values is not None else to_foreign
         self.implies = dict(implies or {})
+        self.forces = dict(forces or {})
+        self.read_under = read_under
         self.inert = inert
 
     def is_inert(self, value: Any) -> bool:
         return self.inert is not None and value == self.inert
+
+    def is_read(self, native: Mapping[str, Any]) -> bool:
+        return self.read_under is None or self.read_under.holds(native)
 
     def inbound(self, value: Any) -> Any:
         return value if self.to_native is None else self.to_native(value)
@@ -190,6 +237,12 @@ class _Library:
 # A subsample fraction implies row sampling everywhere; bonsai makes the
 # sampler explicit, so the fraction turns it on.
 _ROW_SAMPLING: Final = {"dispatch.sampler_name": "bernoulli"}
+
+_UNDER_SOFTMAX: Final = _ReadUnder("dispatch.objective_name", frozenset({"softmax"}))
+_UNDER_BERNOULLI: Final = _ReadUnder("dispatch.sampler_name", frozenset({"bernoulli"}))
+_UNDER_LEAFWISE: Final = _ReadUnder(
+    "dispatch.grower_name", frozenset({"leafwise", "cuda_leafwise"})
+)
 
 # Every library implies its row sampler from the subsample fraction, and none
 # of them treats device placement as a parameter bonsai can honor: in bonsai
@@ -310,7 +363,18 @@ _XGBOOST: Final = _Library(
         _Knob("booster.learning_rate", "learning_rate", "eta"),
         # max_depth=0 is XGBoost's uncapped growth; see the LightGBM row.
         _Knob("tree.max_depth", "max_depth", to_native=_uncapped_depth),
-        _Knob("tree.max_leaves", "max_leaves"),
+        # XGBoost enforces max_leaves under depthwise growth too, where
+        # bonsai's depthwise grower ignores it, so a binding cap selects
+        # leafwise growth: the leaf budget matches, the split order becomes
+        # best-first. bonsai grows depthwise anyway when the cap cannot bind.
+        # 0 is XGBoost's no-cap default and translates to nothing.
+        _Knob(
+            "tree.max_leaves",
+            "max_leaves",
+            forces={"dispatch.grower_name": "leafwise"},
+            read_under=_UNDER_LEAFWISE,
+            inert=0,
+        ),
         # NOT a row count. Both sides are a minimum summed hessian, so under
         # squared error the value is a row count and under logloss it is far
         # more rows than its face value (the correction of decision 68).
@@ -322,7 +386,12 @@ _XGBOOST: Final = _Library(
         # have no bonsai counterpart and are reported as unmappable.
         _Knob("tree.feature_fraction", "colsample_bytree"),
         _Knob("bin_mapper.max_bin", "max_bin"),
-        _Knob("sampler.subsample", "subsample", implies=_ROW_SAMPLING),
+        _Knob(
+            "sampler.subsample",
+            "subsample",
+            implies=_ROW_SAMPLING,
+            read_under=_UNDER_BERNOULLI,
+        ),
         _Knob("booster.random_seed", "seed", "random_state"),
         _Knob("parallel.n_threads", "n_jobs", "nthread", to_native=_all_cores_as_auto),
         # XGBoost keeps every tree it grew on a stop and leaves truncation to
@@ -330,7 +399,7 @@ _XGBOOST: Final = _Library(
         # model, so a translated config predicts from a shorter ensemble.
         _Knob("booster.early_stopping_rounds", "early_stopping_rounds"),
         _Knob("dispatch.objective_name", "objective", values=_XGB_OBJECTIVES),
-        _Knob("objective.n_classes", "num_class"),
+        _Knob("objective.n_classes", "num_class", read_under=_UNDER_SOFTMAX),
         _Knob("objective.quantile_alpha", "quantile_alpha"),
         # XGBoost has no symmetric-tree policy, so bonsai's levelwise grower
         # is reported as unmappable rather than flattened to depthwise.
@@ -418,7 +487,13 @@ _LIGHTGBM: Final = _Library(
         _Knob("tree.lambda_l2", "lambda_l2", "reg_lambda"),
         _Knob("tree.min_gain_to_split", "min_gain_to_split", "min_split_gain"),
         _Knob("tree.feature_fraction", "feature_fraction", "colsample_bytree"),
-        _Knob("sampler.subsample", "bagging_fraction", "subsample", implies=_ROW_SAMPLING),
+        _Knob(
+            "sampler.subsample",
+            "bagging_fraction",
+            "subsample",
+            implies=_ROW_SAMPLING,
+            read_under=_UNDER_BERNOULLI,
+        ),
         _Knob("bin_mapper.max_bin", "max_bin"),
         _Knob("bin_mapper.min_data_in_bin", "min_data_in_bin"),
         _Knob("booster.random_seed", "seed", "random_state", "random_seed"),
@@ -429,7 +504,7 @@ _LIGHTGBM: Final = _Library(
         # is accepted here because its params-dict spelling is documented.
         _Knob("booster.early_stopping_rounds", "early_stopping_round", "early_stopping_rounds"),
         _Knob("dispatch.objective_name", "objective", "application", values=_LGBM_OBJECTIVES),
-        _Knob("objective.n_classes", "num_class", "num_classes"),
+        _Knob("objective.n_classes", "num_class", "num_classes", read_under=_UNDER_SOFTMAX),
         _Knob("booster.dart_drop_rate", "drop_rate"),
         _Knob(
             "tree.monotone_constraints",
@@ -503,7 +578,8 @@ _CATBOOST: Final = _Library(
         _Knob("booster.n_iters", "iterations", "n_estimators", "num_boost_round", "num_trees"),
         _Knob("booster.learning_rate", "learning_rate", "eta"),
         _Knob("tree.max_depth", "depth", "max_depth"),
-        _Knob("tree.max_leaves", "max_leaves", "num_leaves"),
+        # CatBoost reads max_leaves under Lossguide only, bonsai's leafwise.
+        _Knob("tree.max_leaves", "max_leaves", "num_leaves", read_under=_UNDER_LEAFWISE),
         _Knob("tree.lambda_l2", "l2_leaf_reg", "reg_lambda"),
         # A node gate on bonsai's side, a child gate on CatBoost's; see the
         # LightGBM table's note.
@@ -521,7 +597,12 @@ _CATBOOST: Final = _Library(
         # rsm samples features per level, tree.feature_fraction per tree, so
         # the same fraction decorrelates differently.
         _Knob("tree.feature_fraction", "rsm", "colsample_bylevel"),
-        _Knob("sampler.subsample", "subsample", implies=_ROW_SAMPLING),
+        _Knob(
+            "sampler.subsample",
+            "subsample",
+            implies=_ROW_SAMPLING,
+            read_under=_UNDER_BERNOULLI,
+        ),
         _Knob("booster.random_seed", "random_seed", "random_state"),
         _Knob("parallel.n_threads", "thread_count", to_native=_all_cores_as_auto),
         # CatBoost's patience is od_wait under od_type="Iter"; the
@@ -529,7 +610,7 @@ _CATBOOST: Final = _Library(
         # disables patience with 0, which CatBoost refuses, so 0 stays unset.
         _Knob("booster.early_stopping_rounds", "early_stopping_rounds", "od_wait", inert=0),
         _Knob("dispatch.objective_name", "loss_function", "objective", values=_CATBOOST_OBJECTIVES),
-        _Knob("objective.n_classes", "classes_count"),
+        _Knob("objective.n_classes", "classes_count", read_under=_UNDER_SOFTMAX),
         _Knob("dispatch.grower_name", "grow_policy", values=_CATBOOST_GROW_POLICY),
         _Knob(
             "tree.monotone_constraints",
@@ -642,6 +723,10 @@ def from_xgboost(params: Mapping[str, Any], *, strict: bool = True) -> Params:
 from_xgboost.__doc__ = _doc(
     _FROM_DOC,
     _XGBOOST,
+    notes="A ``max_leaves`` above 0 selects the ``leafwise`` grower whatever the\n"
+    "``grow_policy``: XGBoost enforces the cap under depthwise growth too, and\n"
+    "bonsai's depthwise grower ignores it. The leaf budget matches; the split\n"
+    "order becomes best-first.",
     call='{"n_estimators": 300, "reg_lambda": 2.0}',
     result="Params(tree=Tree(lambda_l2=2.0), booster=Booster(n_iters=300))",
 )
@@ -693,7 +778,10 @@ def to_xgboost(
 to_xgboost.__doc__ = _doc(
     _TO_DOC,
     _XGBOOST,
-    notes="bonsai's ``levelwise`` grower has no XGBoost policy and raises.",
+    notes="bonsai's ``levelwise`` grower has no XGBoost policy and raises.\n"
+    "A key bonsai reads only under one selector, such as ``tree.max_leaves``\n"
+    "under leafwise growth or ``sampler.subsample`` under the bernoulli\n"
+    "sampler, is left out elsewhere, since bonsai ignores it there.",
     call='[("tree.lambda_l2", 2.0)]',
     result="{'reg_lambda': 2.0}",
 )
@@ -739,6 +827,8 @@ def _from_library(lib: _Library, params: Mapping[str, Any], strict: bool) -> Par
     index = {spelling: knob for knob in lib.knobs for spelling in knob.spellings}
     implied: dict[str, Any] = dict(lib.implies)
     mapped: dict[str, Any] = {}
+    forced: dict[str, Any] = {}
+    knobs: dict[str, _Knob] = {}
     unmappable = []
     for key, value in dict(params).items():
         if value is None or key in lib.dropped_foreign:
@@ -751,8 +841,21 @@ def _from_library(lib: _Library, params: Mapping[str, Any], strict: bool) -> Par
             continue
         mapped[knob.native] = knob.inbound(value)
         implied.update(knob.implies)
+        forced.update(knob.forces)
+        knobs[key] = knob
+    translated = {**implied, **mapped, **forced}
+    unmappable += _drop_unread(knobs, translated)
     _reject_unmappable(unmappable, strict, lib.name, "bonsai")
-    return Params.from_dict({**implied, **mapped})
+    return Params.from_dict(translated)
+
+
+def _drop_unread(knobs: Mapping[str, _Knob], translated: dict[str, Any]) -> list[str]:
+    """Remove, and name, each foreign key whose bonsai key the translated
+    selectors leave unread."""
+    unread = [key for key, knob in knobs.items() if not knob.is_read(translated)]
+    for key in unread:
+        translated.pop(knobs[key].native, None)
+    return unread
 
 
 def _to_library(
@@ -763,11 +866,6 @@ def _to_library(
     out: dict[str, Any] = {}
     unmappable = []
     items = pairs.to_dict() if isinstance(pairs, ParamsOps) else dict(pairs)
-    if items.get("dispatch.objective_name") != "softmax":
-        # Every objective carries the registry default n_classes=3 in a full
-        # config dump; only softmax consumes it, and the reference libraries
-        # reject a class count on non-multiclass objectives.
-        items.pop("objective.n_classes", None)
     for key, value in items.items():
         if key in lib.dropped_native:
             continue
@@ -775,7 +873,7 @@ def _to_library(
         if knob is None:
             unmappable.append(key)
             continue
-        if knob.is_inert(value):
+        if knob.is_inert(value) or not knob.is_read(items):
             continue
         out[knob.foreign] = knob.outbound(value)
     _reject_unmappable(unmappable, strict, "bonsai", lib.name)

@@ -86,6 +86,20 @@ def test_from_lightgbm_leaves_a_none_objective_unset():
     assert "dispatch.objective_name" not in interop.from_lightgbm({"objective": None}).to_dict()
 
 
+def test_from_xgboost_grows_leafwise_under_a_leaf_cap():
+    out = interop.from_xgboost({"grow_policy": "depthwise", "max_depth": 6, "max_leaves": 8})
+    assert out.to_dict() == {**LEAFWISE, "tree.max_depth": 6, "tree.max_leaves": 8}
+
+
+def test_from_xgboost_leaves_the_no_cap_leaf_count_unset():
+    assert interop.from_xgboost({"max_leaves": 0}) == Params()
+
+
+def test_from_xgboost_reports_a_class_count_without_a_multiclass_objective():
+    with pytest.raises(ValueError, match="num_class"):
+        interop.from_xgboost({"objective": "reg:squarederror", "num_class": 3})
+
+
 def test_from_xgboost_accepts_the_booster_api_aliases():
     assert interop.from_xgboost({"eta": 0.1, "lambda": 2.0}).to_dict() == {
         "booster.learning_rate": 0.1,
@@ -186,6 +200,13 @@ def test_from_catboost_translates_the_grow_policy():
     assert interop.from_catboost({"grow_policy": "SymmetricTree"}).to_dict() == LEVELWISE
 
 
+def test_from_catboost_reports_a_leaf_cap_outside_lossguide():
+    with pytest.raises(ValueError, match="max_leaves"):
+        interop.from_catboost({"max_leaves": 31})
+    lossguide = interop.from_catboost({"grow_policy": "Lossguide", "max_leaves": 31}).to_dict()
+    assert lossguide == {**LEAFWISE, "tree.max_leaves": 31}
+
+
 def test_from_catboost_rejects_a_parametrized_loss():
     with pytest.raises(ValueError, match="loss_function"):
         interop.from_catboost({"loss_function": "Huber:delta=1.0"})
@@ -224,6 +245,22 @@ def test_to_xgboost_drops_the_implied_sampler():
             ("dispatch.sampler_name", "bernoulli"),
         ]
     ) == {"subsample": 0.8}
+
+
+@pytest.mark.parametrize("sampler", [{"dispatch.sampler_name": "all_rows"}, {}])
+def test_to_xgboost_drops_a_subsample_the_sampler_never_reads(sampler):
+    assert interop.to_xgboost({**sampler, "sampler.subsample": 0.5}) == {}
+
+
+def test_to_xgboost_emits_the_leaf_cap_only_under_leafwise_growth():
+    depthwise = {"dispatch.grower_name": "depthwise", "tree.max_depth": 6, "tree.max_leaves": 31}
+    assert interop.to_xgboost(depthwise) == {"grow_policy": "depthwise", "max_depth": 6}
+    leafwise = {**depthwise, **LEAFWISE}
+    assert interop.to_xgboost(leafwise) == {
+        "grow_policy": "lossguide",
+        "max_depth": 6,
+        "max_leaves": 31,
+    }
 
 
 def test_to_xgboost_strict_names_every_unmappable_key():
