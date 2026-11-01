@@ -233,6 +233,32 @@ VectorArg resolve_targets(nb::handle y, uint32_t device_id)
     return resolve_vector(y, device_id, "y");
 }
 
+template <typename Accept>
+void require_each(VectorArg const &v, std::string_view where, std::string_view what,
+                  std::string_view rule, Accept accept)
+{
+    bonsai::floats_view const values = v.view();
+    auto const                bad    = std::ranges::find_if_not(values, accept);
+    if (bad != values.end())
+    {
+        throw std::invalid_argument(
+            std::format("{}{} must be {}; entry {} is {}", where, what, rule,
+                        std::distance(values.begin(), bad), *bad));
+    }
+}
+
+void require_finite_labels(VectorArg const &y, std::string_view where)
+{
+    require_each(y, where, "y", "finite", [](float v) { return std::isfinite(v); });
+}
+
+void require_usable_weights(VectorArg const &w, std::string_view name,
+                            std::string_view where)
+{
+    require_each(w, where, name, "finite and non-negative",
+                 [](float v) { return std::isfinite(v) && v >= 0.0F; });
+}
+
 struct Inputs
 {
     MatrixArg                xarg;
@@ -259,6 +285,11 @@ Inputs resolve_inputs(nb::handle X, nb::handle y, nb::handle weight, uint32_t de
     {
         throw std::invalid_argument(
             std::format("{}len({}) must equal the row count", where, weight_name));
+    }
+    require_finite_labels(in.yarg, where);
+    if (in.warg)
+    {
+        require_usable_weights(*in.warg, weight_name, where);
     }
     return in;
 }
@@ -2074,10 +2105,10 @@ NB_MODULE(_bonsai, m)
             "(cupy, torch, jax) is binned on the GPU in place, with no host "
             "round trip.\n"
             "y : float32 array, shape (n_rows,) or (n_rows, n_targets)\n"
-            "    Labels, one per row or a row of targets per row. May be "
-            "device-resident; downloaded once, labels stay on the host.\n"
+            "    Labels, one per row or a row of targets per row, all finite. "
+            "May be device-resident; downloaded once, labels stay on the host.\n"
             "weight : float32 array, shape (n_rows,), optional\n"
-            "    Per-row weights; the same device rules as ``y``.\n"
+            "    Per-row weights, finite and >= 0; the same device rules as ``y``.\n"
             "max_bin, n_samples, seed, min_data_in_bin : optional\n"
             "    Bin-mapper settings, fixed at construction. Unset means the "
             "library default, or the reference's value in the ``reference=`` "
@@ -2318,8 +2349,8 @@ NB_MODULE(_bonsai, m)
           "host round trip. The columns are named by ``feature_names``, or "
           "``f0``..``fN`` when it is unset.\n"
           "y : float32 array, shape (n_rows,) or (n_rows, n_targets)\n"
-          "    Labels, or one row of regression targets per row; a device-resident "
-          "y is downloaded once.\n"
+          "    Labels, or one row of regression targets per row, all finite; a "
+          "device-resident y is downloaded once.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
           "    Host arrays, or a Dataset binned with this fit's cut points. "
           "Stays host-side either way, because the per-iteration eval "
@@ -2327,8 +2358,8 @@ NB_MODULE(_bonsai, m)
           "init_model : str, optional\n"
           "    Continue training from this saved model (warm start).\n"
           "sample_weight : float32 array, shape (n_rows,), optional\n"
-          "    Per-row weights; scales each row's gradient and hessian. A "
-          "device-resident vector is downloaded once.\n"
+          "    Per-row weights, finite and non-negative; scales each row's "
+          "gradient and hessian. A device-resident vector is downloaded once.\n"
           "feature_names : sequence of str, optional\n"
           "    One name per column, carried into the model: ``dump`` prints "
           "them and ``tree.monotone_constraints`` may be keyed by them. Unset, "
