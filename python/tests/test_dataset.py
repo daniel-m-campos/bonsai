@@ -428,3 +428,10 @@ def test_dataset_takes_a_2d_y_as_a_block_of_targets():
     with pytest.raises(ValueError, match="no columns"):
         bonsai.Dataset(X, Y[:, :0])
     assert bonsai.Dataset(X, Y.astype(np.float64)).n_targets == 3
+
+
+@pytest.mark.parametrize("max_bin", [-7, 0, 1, 2, 65536])
+def test_dataset_refuses_a_max_bin_outside_the_bin_id_range(max_bin):
+    X = np.arange(30, dtype=np.float32).reshape(-1, 1)
+    with pytest.raises(RuntimeError, match=r"max_bin: must be in \[3, 65535\]"):
+        bonsai.Dataset(X, X[:, 0], max_bin=max_bin)

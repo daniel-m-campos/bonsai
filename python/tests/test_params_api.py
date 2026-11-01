@@ -157,6 +157,16 @@ def test_train_accepts_none_params():
 @pytest.mark.parametrize(
     ("key", "value", "message"),
     [
+        (
+            "booster.learning_rate",
+            float("nan"),
+            r"\[booster\]\.learning_rate: must be finite and > 0",
+        ),
+        ("booster.dart_drop_rate", 1.5, r"\[booster\]\.dart_drop_rate: must be in \[0, 1\]"),
+        ("tree.lambda_l1", -500.0, r"\[tree\]\.lambda_l1: must be finite and >= 0"),
+        ("tree.feature_fraction", 0.0, r"\[tree\]\.feature_fraction: must be in \(0, 1\]"),
+        ("objective.quantile_alpha", 1.5, r"\[objective\]\.quantile_alpha: must be in \(0, 1\)"),
+        ("bin_mapper.max_bin", 100_000, r"\[bin_mapper\]\.max_bin: must be in \[3, 65535\]"),
         ("tree.min_data_in_leaf", 256, r"\[tree\]\.min_data_in_leaf: must be at most 255"),
         (
             "booster.random_seed",

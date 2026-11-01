@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -186,6 +187,87 @@ TEST_CASE("Config codec: an integer past its field's width is refused",
         bonsai::config::apply_overrides(cfg, {{"tree.max_depth", "255"}});
         REQUIRE(cfg.tree_config.max_depth == 255);
     }
+}
+
+TEST_CASE("Config bounds: a value outside its key's domain is refused",
+          "[toml][overrides][edge][nan]")
+{
+    using Catch::Matchers::ContainsSubstring;
+    struct Case
+    {
+        char const *key;
+        char const *value;
+        char const *message;
+    };
+    auto const [key, value, message] = GENERATE(
+        Case{"booster.learning_rate", "nan",
+             "[booster].learning_rate: must be finite and > 0 (got nan)"},
+        Case{"booster.learning_rate", "-0.5", "must be finite and > 0 (got -0.5)"},
+        Case{"booster.learning_rate", "0", "must be finite and > 0 (got 0)"},
+        Case{"booster.learning_rate", "1e39", "must be finite and > 0 (got inf)"},
+        Case{"booster.dart_drop_rate", "1.5",
+             "[booster].dart_drop_rate: must be in [0, 1] (got 1.5)"},
+        Case{"tree.lambda_l2", "-0.99", "[tree].lambda_l2: must be finite and >= 0"},
+        Case{"tree.lambda_l2", "nan", "[tree].lambda_l2: must be finite and >= 0"},
+        Case{"tree.lambda_l1", "-500", "[tree].lambda_l1: must be finite and >= 0"},
+        Case{"tree.min_gain_to_split", "nan",
+             "[tree].min_gain_to_split: must be finite (got nan)"},
+        Case{"tree.feature_fraction", "0",
+             "[tree].feature_fraction: must be in (0, 1] (got 0)"},
+        Case{"tree.feature_fraction", "2", "must be in (0, 1] (got 2)"},
+        Case{"tree.feature_fraction", "nan", "must be in (0, 1] (got nan)"},
+        Case{"tree.monotone_constraints", "1,0,2",
+             "[tree].monotone_constraints: item 2: must be in [-1, 1] (got 2)"},
+        Case{"objective.quantile_alpha", "0",
+             "[objective].quantile_alpha: must be in (0, 1) (got 0)"},
+        Case{"objective.quantile_alpha", "1.5", "must be in (0, 1) (got 1.5)"},
+        Case{"objective.huber_delta", "0",
+             "[objective].huber_delta: must be finite and > 0 (got 0)"},
+        Case{"bin_mapper.max_bin", "2",
+             "[bin_mapper].max_bin: must be in [3, 65535] (got 2)"},
+        Case{"bin_mapper.max_bin", "-7", "must be in [3, 65535] (got -7)"},
+        Case{"bin_mapper.max_bin", "65536", "must be in [3, 65535] (got 65536)"});
+    CAPTURE(key, value);
+    bonsai::Config cfg;
+    REQUIRE_THROWS_WITH(bonsai::config::apply_overrides(cfg, {{key, value}}),
+                        ContainsSubstring(message));
+}
+
+TEST_CASE("Config bounds: a TOML value outside its key's domain is refused",
+          "[toml][edge]")
+{
+    REQUIRE_THROWS_WITH(bonsai::config::parse_toml("[booster]\nlearning_rate = -0.5\n"),
+                        Catch::Matchers::ContainsSubstring(
+                            "[booster].learning_rate: must be finite and > 0"));
+}
+
+TEST_CASE("Config bounds: a value on a closed edge of its domain is kept",
+          "[toml][overrides]")
+{
+    bonsai::Config cfg;
+    bonsai::config::apply_overrides(cfg, {{"tree.feature_fraction", "1"},
+                                          {"tree.lambda_l2", "0"},
+                                          {"tree.monotone_constraints", "-1,0,1"},
+                                          {"booster.dart_drop_rate", "1"},
+                                          {"bin_mapper.max_bin", "3"}});
+    CHECK(cfg.tree_config.feature_fraction == 1.0F);
+    CHECK(cfg.tree_config.lambda_l2 == 0.0F);
+    CHECK(cfg.tree_config.monotone_constraints == std::vector<int>{-1, 0, 1});
+    CHECK(cfg.booster_config.dart_drop_rate == 1.0F);
+    CHECK(cfg.bin_mapper.max_bin == 3);
+    bonsai::config::apply_overrides(cfg, {{"bin_mapper.max_bin", "65535"}});
+    CHECK(cfg.bin_mapper.max_bin == 65535);
+}
+
+TEST_CASE("Config bounds: require_in_bounds refuses a field set by hand",
+          "[toml][edge]")
+{
+    bonsai::Config cfg;
+    REQUIRE_NOTHROW(bonsai::config::require_in_bounds(cfg));
+    cfg.bin_mapper.max_bin = 1;
+    REQUIRE_THROWS_WITH(bonsai::config::require_in_bounds(cfg),
+                        Catch::Matchers::ContainsSubstring(
+                            "[bin_mapper].max_bin: must be in [3, 65535]"));
 }
 
 TEST_CASE("Toml: [metrics] section populates fit and eval lists", "[toml][metrics]")
