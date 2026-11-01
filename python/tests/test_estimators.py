@@ -849,6 +849,18 @@ def test_train_accepts_built_in_metric_names():
     assert m.n_iters == 1
 
 
+def test_logloss_on_one_class_keeps_a_finite_margin():
+    """A training set with no positives (a rare-event fold) gets a clamped base
+    rate, so its predictions and contributions stay finite."""
+    rng = np.random.default_rng(20)
+    x = rng.standard_normal((80, 3)).astype(np.float32)
+    y = np.zeros(80, dtype=np.float32)
+    m = bonsai.train({"dispatch.objective_name": "logloss", "booster.n_iters": 3}, x, y)
+    assert np.isfinite(np.asarray(m.pred_contribs(x))).all()
+    proba = np.asarray(m.predict(x))
+    assert ((proba > 0.0) & (proba < 0.5)).all()
+
+
 _SAVE_UNDER_A_FILE_SIZE_LIMIT = """
 import resource
 import signal

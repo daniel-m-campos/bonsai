@@ -17,6 +17,8 @@ namespace bonsai
 namespace
 {
 
+constexpr float k_logloss_min_base_rate = 1e-7F;
+
 float quantile_in_place(std::span<float> v, float alpha)
 {
     assert(!v.empty());
@@ -116,7 +118,8 @@ auto LogLossObjective::init_score(floats_view labels) -> floats_view::value_type
     assert(!labels.empty());
     auto const  n   = static_cast<float>(labels.size());
     float const sum = std::accumulate(labels.begin(), labels.end(), 0.0F);
-    float const p   = sum / n;
+    float const p =
+        std::clamp(sum / n, k_logloss_min_base_rate, 1.0F - k_logloss_min_base_rate);
     return std::log(p / (1.0F - p));
 }
 
