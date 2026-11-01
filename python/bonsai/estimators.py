@@ -303,9 +303,11 @@ class _BonsaiEstimator:
         numpy.ndarray
             Shape ``(n_iters, n_rows)``, or ``(n_iters, n_rows, n_targets)`` for
             a multi-target regressor: predictions after each boosting
-            iteration.
+            iteration, each stage what ``predict`` would return for that
+            prefix (class labels for ``BonsaiClassifier``).
         """
-        return np.asarray(self._fitted().staged_predict(self._predict_input(X)))
+        raw = np.asarray(self._fitted().staged_predict(self._predict_input(X)))
+        return self._decode_predictions(raw)
 
     def predict_leaf(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
         """Predict per-tree leaf indices, for feature engineering / embedding.
@@ -1024,8 +1026,8 @@ class BonsaiClassifier(_BonsaiEstimator):
     def predict_proba(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
         """Predict class probabilities with the fitted model.
 
-        Binary uses the ``logloss`` objective's P(class 1) directly
-        (``[1 - p, p]``); multiclass uses the ``softmax`` booster's per-class
+        A ``logloss`` model's P(class 1) becomes ``[1 - p, p]``; a
+        ``softmax`` model, two classes included, gives its per-class
         probabilities (a row-wise softmax of the class logits).
 
         Parameters
@@ -1039,7 +1041,7 @@ class BonsaiClassifier(_BonsaiEstimator):
             Shape ``(n_rows, n_classes)``, columns in ``classes_`` order.
         """
         X = self._predict_input(X)
-        if self.n_classes_ == 2:
+        if self._is_logloss():
             p = np.asarray(self._fitted().predict(X), dtype=np.float64)
             return np.column_stack([1.0 - p, p])
         return np.asarray(self._fitted().predict_proba(X), dtype=np.float64)
@@ -1155,9 +1157,17 @@ class BonsaiClassifier(_BonsaiEstimator):
         return _as_f32(ids, 1, "y")
 
     def _decode_predictions(self, raw: np.ndarray) -> np.ndarray:
-        if self.n_classes_ == 2:
+        if self._is_logloss():
             return self.classes_[(raw >= 0.5).astype(np.int64)]
         return self.classes_[raw.astype(np.int64)]
+
+    def _is_logloss(self) -> bool:
+        """Whether the model predicts P(class 1) rather than class ids.
+
+        Read off the model, not the class count: a two-class ``softmax``
+        model, loaded or forced through ``params``, predicts ids.
+        """
+        return self._fitted().objective_name == "logloss"
 
 
 # Private Functions ================================================================================

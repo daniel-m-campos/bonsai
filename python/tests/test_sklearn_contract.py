@@ -87,3 +87,32 @@ def test_regressor_score_scores_the_targets_in_float64():
 
     assert reg.score(X, y) == pytest.approx(expected)
     assert reg.score(X, y) < 0.0
+
+
+def test_classifier_staged_predict_decodes_each_stage_like_predict():
+    X, y = _binary()
+    names = np.array(["cat", "dog"])[y]
+    three = np.array([10, 20, 30])[np.digitize(X[:, 0], [-0.5, 0.5])]
+
+    for labels in (names, three):
+        clf = _classifier().fit(X, labels)
+        staged = clf.staged_predict(X)
+
+        assert staged.shape == (clf.n_iters_, len(X))
+        np.testing.assert_array_equal(staged[-1], clf.predict(X))
+        np.testing.assert_array_equal(staged[2], clf.predict(X, num_iteration=3))
+
+
+def test_classifier_predict_proba_of_a_two_class_softmax_is_its_probabilities(tmp_path):
+    X, y = _binary()
+    softmax = {"dispatch.objective_name": "softmax", "objective.n_classes": 2}
+    model = bonsai.train({**softmax, "booster.n_iters": 10, "parallel.n_threads": 2}, X, y)
+    path = str(tmp_path / "softmax.msgpack")
+    model.save(path)
+
+    loaded = bonsai.BonsaiClassifier.from_file(path)
+    forced = _classifier(params=softmax).fit(X, y)
+
+    np.testing.assert_allclose(loaded.predict_proba(X[:20]), model.predict_proba(X[:20]))
+    assert 0.0 < forced.predict_proba(X).min() < 1.0
+    np.testing.assert_array_equal(loaded.predict(X), np.argmax(model.predict_proba(X), axis=1))
