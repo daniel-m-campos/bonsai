@@ -10,6 +10,8 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ### Fixed
 
+- **The levelwise grower no longer crashes under `feature_fraction` below 1.** The lane level finder read a feature the tree's sample left out as a histogram with zero cuts and walked past its storage; it now skips the empty slot the way the node finder does. Pinned by `level-finder-skips-empty-slots`.
+- **`tree.interaction_constraints` is validated.** A group token must be a whole feature index (`0.9`, `0x` and `0+1abc` were parsed by their numeric prefix), a group naming a feature the data lacks is refused at the first grow instead of writing out of bounds, and the list forms `["0,1", "2,3"]` and `[[0, 1], [2, 3]]` name the same groups as the string form `"0+1,2+3"` (the list items were re-joined on commas and split into singletons).
 - **`random_seed` seeds the feature_fraction draws.** The booster's seed reached the row sampler and DART only; the per-tree feature draw took `tree.feature_seed` alone, so under the default `all_rows` sampler a seed set declared through the estimator's `random_seed` fitted one model five times. The grower's feature sample is now seeded from `random_seed` and `feature_seed` together: two fits that differ in either draw different features, and a fit with both fixed refits the same bytes. A model with `feature_fraction` below 1 refits to different trees than 2.10.0 drew; every model hash holds since the default fraction draws nothing. Issue 547, decision 168.
 
 ## [2.10.0] - 2026-10-22
