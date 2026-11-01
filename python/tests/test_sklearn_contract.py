@@ -3,6 +3,8 @@ shapes, refusals and fitted state sklearn's own estimators promise."""
 
 from __future__ import annotations
 
+import pickle
+
 import bonsai
 import numpy as np
 import pytest
@@ -141,3 +143,51 @@ def test_regressor_fit_that_raises_keeps_its_target_count():
 
     assert reg.n_outputs_ == 3
     assert reg.predict(X).shape == (len(X), 3)
+
+
+def _early_stopping_fit(**kwargs) -> bonsai.BonsaiRegressor:
+    """A regressor fit with a held-out eval set that stops well before 200 rounds."""
+    X, y = _regression(n=400)
+    y = y + np.random.default_rng(1).normal(size=len(y))
+    est = bonsai.BonsaiRegressor(n_iters=200, learning_rate=0.3, n_threads=2, **kwargs)
+    return est.fit(X[100:], y[100:], eval_set=(X[:100], y[:100]))
+
+
+def test_best_iteration_follows_early_stopping_set_through_params():
+    by_kwarg = _early_stopping_fit(early_stopping_rounds=5)
+    by_params = _early_stopping_fit(params={"booster.early_stopping_rounds": 5})
+
+    assert by_params.n_iters_ == by_kwarg.n_iters_ < 200
+    assert by_params.best_iteration == by_kwarg.best_iteration
+    assert by_params.best_score == by_kwarg.best_score
+
+
+def test_best_iteration_is_undefined_when_params_turn_early_stopping_off():
+    est = _early_stopping_fit(early_stopping_rounds=5, params={"booster.early_stopping_rounds": 0})
+
+    assert est.n_iters_ == 200
+    for attribute in ("best_iteration", "best_score"):
+        with pytest.raises(AttributeError, match="needs fit"):
+            getattr(est, attribute)
+
+
+def test_pickle_keeps_the_eval_history():
+    est = _early_stopping_fit(early_stopping_rounds=5)
+
+    loaded = pickle.loads(pickle.dumps(est))
+
+    assert loaded.evals_result() == est.evals_result()
+    assert loaded.best_iteration == est.best_iteration
+    assert loaded.best_score == est.best_score
+
+
+def test_pickle_written_without_an_eval_history_loads_without_one():
+    est = _early_stopping_fit(early_stopping_rounds=5)
+    state = est.__getstate__()
+    del state["_fit_eval_history"], state["_fit_early_stopping_rounds"]
+
+    loaded = bonsai.BonsaiRegressor.__new__(bonsai.BonsaiRegressor)
+    loaded.__setstate__(state)
+
+    assert loaded.evals_result() == {}
+    np.testing.assert_array_equal(loaded.predict(np.zeros((2, 4))), est.predict(np.zeros((2, 4))))

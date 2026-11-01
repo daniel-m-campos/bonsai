@@ -66,6 +66,8 @@ class _BonsaiEstimator:
     subsample: float | None
     device: str | None
     params: dict | ParamsOps | None
+    _fit_eval_history: list[float]
+    _fit_early_stopping_rounds: int
 
     def __repr__(self) -> str:
         """sklearn-style: class name plus the non-default parameters."""
@@ -267,6 +269,7 @@ class _BonsaiEstimator:
         self.__dict__.update(targets)
         self._model = model
         self._record_fit_inputs(Xa)
+        self._record_eval(model, overrides)
         return self
 
     def predict(self, X: npt.ArrayLike | Dataset, num_iteration: int = 0) -> np.ndarray:
@@ -441,7 +444,7 @@ class _BonsaiEstimator:
         """
         self._check_fitted()
         name = self._fitted().objective_name
-        hist = [float(v) for v in self._fitted().eval_history]
+        hist = self._fit_eval_history
         start = next((i for i, v in enumerate(hist) if not np.isnan(v)), len(hist))
         hist = hist[start:]
         if not hist:
@@ -491,8 +494,14 @@ class _BonsaiEstimator:
         return state
 
     def __setstate__(self, state: dict):
-        """Pickle support: restore the native model from its msgpack bytes."""
+        """Pickle support: restore the native model from its msgpack bytes.
+
+        The eval history rides in the state beside the bytes, since the
+        saved model carries none; a pickle written before the history was
+        kept comes back without one.
+        """
         model_bytes = state.pop("_model_bytes", None)
+        self._forget_eval()
         self.__dict__.update(state)
         if model_bytes is not None:
             with tempfile.TemporaryDirectory() as td:
@@ -519,6 +528,7 @@ class _BonsaiEstimator:
         for name in _constructor_names(type(self)):
             setattr(self, name, arguments[name])
         self._model: Model | None = None
+        self._forget_eval()
 
     def _objective_pairs(self, targets: dict[str, object]) -> dict[str, object]:
         """Config keys the objective needs. ``BonsaiRegressor`` exposes a
@@ -657,8 +667,8 @@ class _BonsaiEstimator:
         """The eval history, when fit ran with early stopping; ``what`` names
         the property asking, for the error."""
         self._check_fitted()
-        hist = self._fitted().eval_history
-        if not self.early_stopping_rounds or not len(hist):
+        hist = self._fit_eval_history
+        if not self._fit_early_stopping_rounds or not hist:
             raise AttributeError(f"{what} needs fit(eval_set=...) with early_stopping_rounds set")
         return hist
 
@@ -765,6 +775,24 @@ class _BonsaiEstimator:
         """
         self.n_features_in_ = Xa.shape[1]
         self._set_feature_names(_model_feature_names(self._fitted()))
+
+    def _forget_eval(self):
+        """The eval record of an estimator no fit has run on."""
+        self._fit_eval_history = []
+        self._fit_early_stopping_rounds = 0
+
+    def _record_eval(self, model: Model, overrides: dict[str, object]):
+        """Keep the fit's eval history and the early stopping it ran under.
+
+        The rounds come from the overrides the fit resolved, where
+        ``params`` has the last word over the ``early_stopping_rounds``
+        argument. The history is copied off the model because a saved or
+        pickled model carries none.
+        """
+        self._fit_eval_history = [float(v) for v in model.eval_history]
+        self._fit_early_stopping_rounds = int(
+            cast("int", overrides["booster.early_stopping_rounds"])
+        )
 
     def _set_feature_names(self, names: list[str] | None):
         """Set ``feature_names_in_``, or remove it when there are no names."""
