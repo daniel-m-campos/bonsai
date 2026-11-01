@@ -266,6 +266,12 @@ def test_to_catboost_subtracts_the_border_fencepost():
     assert interop.to_catboost({"bin_mapper.max_bin": 255}) == {"border_count": 254}
 
 
+def test_to_catboost_leaves_disabled_early_stopping_unset():
+    assert interop.to_catboost({"booster.n_iters": 5, "booster.early_stopping_rounds": 0}) == {
+        "iterations": 5
+    }
+
+
 def test_to_catboost_maps_a_cuda_grower_to_its_growth_policy():
     assert interop.to_catboost({"dispatch.grower_name": "cuda_levelwise"}) == {
         "grow_policy": "SymmetricTree"

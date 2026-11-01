@@ -120,6 +120,9 @@ class _Knob:
     implies
         Extra bonsai pairs this knob turns on, applied underneath any
         explicitly translated key.
+    inert
+        A value that configures nothing on either side, such as a disabled
+        sentinel one library refuses; it translates to no pair at all.
     """
 
     def __init__(
@@ -130,6 +133,7 @@ class _Knob:
         to_native: Callable[[Any], Any] | None = None,
         to_foreign: Callable[[Any], Any] | None = None,
         implies: Mapping[str, Any] | None = None,
+        inert: Any = None,
     ):
         self.native = native
         self.spellings = spellings
@@ -137,6 +141,10 @@ class _Knob:
         self.to_native = values.inbound if values is not None else to_native
         self.to_foreign = values.outbound if values is not None else to_foreign
         self.implies = dict(implies or {})
+        self.inert = inert
+
+    def is_inert(self, value: Any) -> bool:
+        return self.inert is not None and value == self.inert
 
     def inbound(self, value: Any) -> Any:
         return value if self.to_native is None else self.to_native(value)
@@ -517,8 +525,9 @@ _CATBOOST: Final = _Library(
         _Knob("booster.random_seed", "random_seed", "random_state"),
         _Knob("parallel.n_threads", "thread_count", to_native=_all_cores_as_auto),
         # CatBoost's patience is od_wait under od_type="Iter"; the
-        # constructor's early_stopping_rounds sets the same detector.
-        _Knob("booster.early_stopping_rounds", "early_stopping_rounds", "od_wait"),
+        # constructor's early_stopping_rounds sets the same detector. bonsai
+        # disables patience with 0, which CatBoost refuses, so 0 stays unset.
+        _Knob("booster.early_stopping_rounds", "early_stopping_rounds", "od_wait", inert=0),
         _Knob("dispatch.objective_name", "loss_function", "objective", values=_CATBOOST_OBJECTIVES),
         _Knob("objective.n_classes", "classes_count"),
         _Knob("dispatch.grower_name", "grow_policy", values=_CATBOOST_GROW_POLICY),
@@ -738,6 +747,8 @@ def _from_library(lib: _Library, params: Mapping[str, Any], strict: bool) -> Par
         if knob is None:
             unmappable.append(key)
             continue
+        if knob.is_inert(value):
+            continue
         mapped[knob.native] = knob.inbound(value)
         implied.update(knob.implies)
     _reject_unmappable(unmappable, strict, lib.name, "bonsai")
@@ -763,6 +774,8 @@ def _to_library(
         knob = index.get(key)
         if knob is None:
             unmappable.append(key)
+            continue
+        if knob.is_inert(value):
             continue
         out[knob.foreign] = knob.outbound(value)
     _reject_unmappable(unmappable, strict, "bonsai", lib.name)
