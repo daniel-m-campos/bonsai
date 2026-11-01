@@ -367,11 +367,11 @@ def test_subset_columns_refuses_a_repeated_column():
     only the first copy. By name or by index, it is refused."""
     X, y = _blocky_data(n=300, f=3)
     ds = bonsai.Dataset(X, y, feature_names=["a", "b", "c"])
-    with pytest.raises(ValueError, match="'a' more than once"):
+    with pytest.raises(ValueError, match="'a' twice"):
         ds.subset(columns=["a", "a", "b"])
-    with pytest.raises(ValueError, match="'b' more than once"):
+    with pytest.raises(ValueError, match="'b' twice"):
         ds.subset(columns=[1, 2, 1])
-    with pytest.raises(ValueError, match="more than once"):
+    with pytest.raises(ValueError, match="twice"):
         ds.subset(rows=np.arange(100), columns=[0, 0])
 
 

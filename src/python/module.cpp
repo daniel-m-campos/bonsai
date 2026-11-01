@@ -608,9 +608,7 @@ void require_distinct_columns(std::span<bonsai::feature_id_t const> keep,
         if (seen[id])
         {
             throw nb::value_error(
-                std::format("Dataset.subset(columns=...) names the feature '{}' more "
-                            "than once; feature names must be unique, so each column "
-                            "can be selected once",
+                std::format("subset(columns=...) selects '{}' twice; names are unique",
                             names[id])
                     .c_str());
         }
@@ -2231,9 +2229,8 @@ NB_MODULE(_bonsai, m)
             "wherever the parent's bins were: a device-resident parent is "
             "rewritten on the device and the result reports that device, so a "
             "feature-selection loop never round-trips through the host. "
-            "Out-of-range and negative indices raise, an unknown name raises "
-            "KeyError, and a column named twice raises ValueError: feature "
-            "names are unique.\n"
+            "Out-of-range, negative and repeated columns raise, and an unknown "
+            "name raises KeyError.\n"
             "\n"
             "Returns\n"
             "-------\n"
