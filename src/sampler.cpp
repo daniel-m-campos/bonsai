@@ -27,10 +27,10 @@ size_t AllRowsSampler::sample(floats_out /*grad*/, floats_out /*hess*/,
 
 BernoulliSampler::BernoulliSampler(Config const &cfg) : p_(cfg.sampler.subsample)
 {
-    if (!(p_ > 0.0F))
+    if (!(p_ > 0.0F) || p_ > 1.0F)
     {
-        throw ConfigError("sampler.subsample must be > 0 (got " + std::to_string(p_) +
-                          ")");
+        throw ConfigError("sampler.subsample must be in (0, 1] (got " +
+                          std::to_string(p_) + ")");
     }
 }
 

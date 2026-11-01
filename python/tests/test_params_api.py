@@ -173,6 +173,7 @@ def test_train_accepts_none_params():
             2**32 + 42,
             r"\[booster\]\.random_seed: must be at most 4294967295",
         ),
+        ("sampler.subsample", 1.5, r"sampler\.subsample must be in \(0, 1\]"),
     ],
 )
 def test_train_refuses_a_value_outside_its_key_domain(key, value, message):

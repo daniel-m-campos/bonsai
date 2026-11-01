@@ -113,11 +113,22 @@ TEST_CASE("BernoulliSampler: same seed → same selection",
     }
 }
 
-TEST_CASE("BernoulliSampler: non-positive p throws ConfigError",
+TEST_CASE("BernoulliSampler: p outside the unit interval throws ConfigError",
           "[sampler][bernoulli][error]")
 {
-    CHECK_THROWS_AS(BernoulliSampler{cfg_with_subsample(0.0F)}, ConfigError);
-    CHECK_THROWS_AS(BernoulliSampler{cfg_with_subsample(-0.5F)}, ConfigError);
+    SECTION("non-positive")
+    {
+        CHECK_THROWS_AS(BernoulliSampler{cfg_with_subsample(0.0F)}, ConfigError);
+        CHECK_THROWS_AS(BernoulliSampler{cfg_with_subsample(-0.5F)}, ConfigError);
+    }
+    SECTION("above one")
+    {
+        CHECK_THROWS_AS(BernoulliSampler{cfg_with_subsample(1.5F)}, ConfigError);
+    }
+    SECTION("one is every row, not a refusal")
+    {
+        CHECK_NOTHROW(BernoulliSampler{cfg_with_subsample(1.0F)});
+    }
 }
 
 TEST_CASE("GossSampler: keeps top-|grad| rows and amplifies sampled rest",
