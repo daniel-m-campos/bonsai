@@ -100,6 +100,14 @@ def test_from_xgboost_reports_a_class_count_without_a_multiclass_objective():
         interop.from_xgboost({"objective": "reg:squarederror", "num_class": 3})
 
 
+def test_from_xgboost_reads_the_drop_rate_under_dart_only():
+    dart = interop.from_xgboost({"booster": "dart", "rate_drop": 0.2}).to_dict()
+    assert dart == {"booster.dart_drop_rate": 0.2}
+    assert interop.from_xgboost({"booster": "gbtree", "rate_drop": 0.2}) == Params()
+    with pytest.raises(ValueError, match="booster"):
+        interop.from_xgboost({"booster": "gblinear"})
+
+
 def test_from_xgboost_accepts_the_booster_api_aliases():
     assert interop.from_xgboost({"eta": 0.1, "lambda": 2.0}).to_dict() == {
         "booster.learning_rate": 0.1,
@@ -147,6 +155,7 @@ def test_from_lightgbm_accepts_the_documented_aliases():
             "num_iterations": 100,
             "min_child_samples": 20,
             "bagging_fraction": 0.5,
+            "subsample_freq": 1,
         }
     ).to_dict() == {
         **LEAFWISE,
@@ -155,6 +164,37 @@ def test_from_lightgbm_accepts_the_documented_aliases():
         "sampler.subsample": 0.5,
         "dispatch.sampler_name": "bernoulli",
     }
+
+
+def test_from_lightgbm_ignores_a_bagging_fraction_without_a_bagging_freq():
+    assert interop.from_lightgbm({"bagging_fraction": 0.5, "bagging_freq": 0}).to_dict() == LEAFWISE
+
+
+def test_from_lightgbm_refuses_a_bagging_freq_above_one():
+    with pytest.raises(ValueError, match="bagging_freq"):
+        interop.from_lightgbm({"bagging_fraction": 0.5, "bagging_freq": 5})
+
+
+def test_from_lightgbm_selects_the_goss_sampler():
+    for params in ({"boosting": "goss"}, {"data_sample_strategy": "goss", "top_rate": 0.3}):
+        out = interop.from_lightgbm(params).to_dict()
+        assert out["dispatch.sampler_name"] == "goss"
+    assert out["sampler.top_rate"] == 0.3
+
+
+@pytest.mark.parametrize(("stated", "rate"), [({}, 0.1), ({"drop_rate": 0.3}, 0.3)])
+def test_from_lightgbm_dart_sets_the_drop_rate(stated, rate):
+    out = interop.from_lightgbm({"boosting_type": "dart", **stated}).to_dict()
+    assert out["booster.dart_drop_rate"] == rate
+
+
+def test_from_lightgbm_ignores_a_drop_rate_outside_dart():
+    assert interop.from_lightgbm({"drop_rate": 0.3}).to_dict() == LEAFWISE
+
+
+def test_from_lightgbm_refuses_random_forest_mode():
+    with pytest.raises(ValueError, match="boosting"):
+        interop.from_lightgbm({"boosting": "rf"})
 
 
 def test_from_lightgbm_translates_objectives():
@@ -205,6 +245,20 @@ def test_from_catboost_reports_a_leaf_cap_outside_lossguide():
         interop.from_catboost({"max_leaves": 31})
     lossguide = interop.from_catboost({"grow_policy": "Lossguide", "max_leaves": 31}).to_dict()
     assert lossguide == {**LEAFWISE, "tree.max_leaves": 31}
+
+
+@pytest.mark.parametrize(("stated", "rate"), [({"subsample": 0.7}, 0.7), ({}, 0.66)])
+def test_from_catboost_reads_a_bernoulli_bootstrap(stated, rate):
+    out = interop.from_catboost({"bootstrap_type": "Bernoulli", **stated}).to_dict()
+    assert out["dispatch.sampler_name"] == "bernoulli"
+    assert out["sampler.subsample"] == rate
+
+
+def test_from_catboost_reports_a_subsample_outside_bernoulli():
+    with pytest.raises(ValueError, match="subsample"):
+        interop.from_catboost({"subsample": 0.7})
+    with pytest.raises(ValueError, match="bootstrap_type"):
+        interop.from_catboost({"bootstrap_type": "MVS", "subsample": 0.7})
 
 
 def test_from_catboost_rejects_a_parametrized_loss():
@@ -263,6 +317,20 @@ def test_to_xgboost_emits_the_leaf_cap_only_under_leafwise_growth():
     }
 
 
+def test_to_xgboost_turns_dart_on_with_its_drop_rate():
+    assert interop.to_xgboost({"booster.dart_drop_rate": 0.5}) == {
+        "rate_drop": 0.5,
+        "booster": "dart",
+    }
+    assert interop.to_xgboost({"booster.dart_drop_rate": 0.0}) == {}
+
+
+@pytest.mark.parametrize("translate", [interop.to_xgboost, interop.to_catboost])
+def test_to_library_refuses_a_sampler_it_lacks(translate):
+    with pytest.raises(ValueError, match=r"dispatch\.sampler_name"):
+        translate({"dispatch.sampler_name": "goss"})
+
+
 def test_to_xgboost_strict_names_every_unmappable_key():
     with pytest.raises(ValueError, match=r"tree\.min_data_in_leaf"):
         interop.to_xgboost({"tree.min_data_in_leaf": 20})
@@ -292,6 +360,27 @@ def test_to_lightgbm_uses_the_canonical_names():
     }
 
 
+def test_to_lightgbm_bags_every_tree_under_bernoulli():
+    bernoulli = {"dispatch.sampler_name": "bernoulli", "sampler.subsample": 0.5}
+    assert interop.to_lightgbm(bernoulli) == {"bagging_fraction": 0.5, "bagging_freq": 1}
+    all_rows = {"dispatch.sampler_name": "all_rows", "sampler.subsample": 0.5}
+    assert interop.to_lightgbm(all_rows) == {}
+
+
+def test_to_lightgbm_turns_dart_on_with_its_drop_rate():
+    assert interop.to_lightgbm({"booster.dart_drop_rate": 0.5}) == {
+        "drop_rate": 0.5,
+        "boosting": "dart",
+    }
+
+
+def test_to_lightgbm_keeps_goss_as_its_own_sampler():
+    goss = {"dispatch.sampler_name": "goss", "sampler.top_rate": 0.3, "sampler.subsample": 0.5}
+    out = interop.to_lightgbm(goss)
+    assert out == {"data_sample_strategy": "goss", "top_rate": 0.3}
+    assert interop.from_lightgbm(out).to_dict()["dispatch.sampler_name"] == "goss"
+
+
 def test_to_lightgbm_drops_the_grower_name():
     assert interop.to_lightgbm({"dispatch.grower_name": "leafwise"}) == {}
 
@@ -307,6 +396,16 @@ def test_to_catboost_leaves_disabled_early_stopping_unset():
     assert interop.to_catboost({"booster.n_iters": 5, "booster.early_stopping_rounds": 0}) == {
         "iterations": 5
     }
+
+
+@pytest.mark.parametrize(("stated", "rate"), [({"sampler.subsample": 0.7}, 0.7), ({}, 1.0)])
+def test_to_catboost_draws_bernoulli_rows(stated, rate):
+    out = interop.to_catboost({"dispatch.sampler_name": "bernoulli", **stated})
+    assert out == {"bootstrap_type": "Bernoulli", "subsample": rate}
+
+
+def test_to_catboost_samples_no_rows_under_all_rows():
+    assert interop.to_catboost({"dispatch.sampler_name": "all_rows"}) == {"bootstrap_type": "No"}
 
 
 def test_to_catboost_maps_a_cuda_grower_to_its_growth_policy():
