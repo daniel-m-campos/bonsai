@@ -540,7 +540,14 @@ class _BonsaiEstimator:
         encoded ids and the native layer range-checks them."""
         if isinstance(eval_set, Dataset):
             return eval_set
-        return (_as_f32(eval_set[0], 2, "X"), self._encode_eval_targets(eval_set[1]))
+        X_eval = _as_f32(eval_set[0], 2, "X")
+        y_shape = np.shape(eval_set[1])
+        if len(y_shape) == 2 and y_shape[0] != X_eval.shape[0]:
+            raise ValueError(
+                f"eval_set y has {y_shape[0]} rows and eval_set X has {X_eval.shape[0]}; "
+                "a 2-D y is n_rows x n_targets"
+            )
+        return (X_eval, self._encode_eval_targets(eval_set[1]))
 
     def _build_overrides(self) -> dict[str, object]:
         """Translate the first-class kwargs and ``params`` into the dotted
