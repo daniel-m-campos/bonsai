@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bonsai
+import numpy as np
 import pytest
 from bonsai import interop
 from bonsai.params import Params
@@ -269,6 +270,52 @@ def test_to_catboost_maps_a_cuda_grower_to_its_growth_policy():
     assert interop.to_catboost({"dispatch.grower_name": "cuda_levelwise"}) == {
         "grow_policy": "SymmetricTree"
     }
+
+
+# constraints ======================================================================================
+
+
+@pytest.mark.parametrize("native", [[1, -1, 0], "1,-1,0"])
+def test_to_xgboost_emits_monotone_constraints_as_a_tuple(native):
+    out = interop.to_xgboost({"tree.monotone_constraints": native})
+    assert out == {"monotone_constraints": (1, -1, 0)}
+
+
+@pytest.mark.parametrize("translate", [interop.from_xgboost, interop.from_catboost])
+@pytest.mark.parametrize("foreign", ["(1,-1,0)", "(1, -1, 0)", np.array([1, -1, 0])])
+def test_from_library_parses_monotone_constraints_to_a_list(translate, foreign):
+    out = translate({"monotone_constraints": foreign}).to_dict()
+    assert out["tree.monotone_constraints"] == [1, -1, 0]
+
+
+def test_from_xgboost_refuses_an_unparseable_monotone_value():
+    with pytest.raises(ValueError, match="monotone_constraints"):
+        interop.from_xgboost({"monotone_constraints": "(1,up)"})
+
+
+@pytest.mark.parametrize("native", [["0,1", "2,3"], "0+1,2+3"])
+def test_to_lightgbm_emits_interaction_groups_as_index_lists(native):
+    out = interop.to_lightgbm({"tree.interaction_constraints": native})
+    assert out == {"interaction_constraints": [[0, 1], [2, 3]]}
+
+
+def test_to_xgboost_emits_interaction_groups_as_a_json_index_string():
+    out = interop.to_xgboost({"tree.interaction_constraints": ["0,1", "2,3"]})
+    assert out == {"interaction_constraints": "[[0, 1], [2, 3]]"}
+
+
+@pytest.mark.parametrize(
+    ("translate", "foreign"),
+    [(interop.from_lightgbm, [[0, 1], [2, 3]]), (interop.from_xgboost, "[[0, 1], [2, 3]]")],
+)
+def test_from_library_translates_interaction_index_lists(translate, foreign):
+    out = translate({"interaction_constraints": foreign}).to_dict()
+    assert out["tree.interaction_constraints"] == ["0,1", "2,3"]
+
+
+def test_from_xgboost_refuses_named_interaction_groups():
+    with pytest.raises(ValueError, match="feature names"):
+        interop.from_xgboost({"interaction_constraints": [["age", "debt"]]})
 
 
 # round trips ======================================================================================

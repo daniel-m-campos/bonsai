@@ -23,6 +23,8 @@ Read them before trusting a translated config to reproduce a number.
 from __future__ import annotations
 
 import dataclasses
+import json
+import re
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Final
 
@@ -202,6 +204,67 @@ def _all_cores_as_auto(value: Any) -> int:
     return max(int(value), 0)
 
 
+def _monotone_directions(value: Any) -> list[int] | dict[str, int]:
+    """Monotone directions as a list, from a list, an array, bonsai's
+    ``"1,0,-1"`` or the reference libraries' ``"(1,0,-1)"``; a mapping
+    keyed by feature name passes through, since every side takes one."""
+    if isinstance(value, Mapping):
+        return dict(value)
+    parts = value.strip("()[] ").split(",") if isinstance(value, str) else value
+    try:
+        return [int(part) for part in parts if str(part).strip()]
+    except (TypeError, ValueError) as err:
+        raise ValueError(
+            f"monotone_constraints value {value!r} is not a sequence of -1/0/+1 directions"
+        ) from err
+
+
+def _xgb_monotone_directions(value: Any) -> tuple[int, ...] | dict[str, int]:
+    """Monotone directions as XGBoost takes them: a tuple or a mapping,
+    never a list, which its Booster reads as a mapping and crashes on."""
+    directions = _monotone_directions(value)
+    return directions if isinstance(directions, dict) else tuple(directions)
+
+
+def _feature_indices(group: Any) -> list[int]:
+    """One interaction group's feature indices, from a sequence or from
+    bonsai's ``"0,1"`` / ``"0+1"`` spelling."""
+    parts = re.split(r"[,+]", group) if isinstance(group, str) else group
+    try:
+        return [int(part) for part in parts if str(part).strip()]
+    except (TypeError, ValueError) as err:
+        raise ValueError(
+            f"interaction_constraints group {group!r} is not a list of feature indices; "
+            "bonsai takes indices, not feature names"
+        ) from err
+
+
+def _interaction_groups(value: Any) -> list[list[int]]:
+    """bonsai's interaction groups (``["0,1", "2,3"]`` or ``"0+1,2+3"``)
+    as the reference libraries' lists of feature indices."""
+    entries = value.split(",") if isinstance(value, str) else value
+    return [_feature_indices(entry) for entry in entries]
+
+
+def _xgb_interaction_groups(value: Any) -> str:
+    """Interaction groups as XGBoost's index form, a JSON string: its
+    Booster reads a list of lists as feature names."""
+    return json.dumps(_interaction_groups(value))
+
+
+def _interaction_strings(value: Any) -> list[str]:
+    """The reference libraries' lists of feature indices, or XGBoost's
+    JSON string of one, as bonsai's group strings."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as err:
+            raise ValueError(
+                f"interaction_constraints value {value!r} is not a JSON list of index lists"
+            ) from err
+    return [",".join(str(index) for index in _feature_indices(group)) for group in value]
+
+
 # XGBoost ==========================================================================================
 
 _XGB_OBJECTIVES: Final = _Values(
@@ -265,8 +328,20 @@ _XGBOOST: Final = _Library(
         # is reported as unmappable rather than flattened to depthwise.
         _Knob("dispatch.grower_name", "grow_policy", values=_XGB_GROW_POLICY),
         _Knob("booster.dart_drop_rate", "rate_drop"),
-        _Knob("tree.monotone_constraints", "monotone_constraints"),
-        _Knob("tree.interaction_constraints", "interaction_constraints"),
+        _Knob(
+            "tree.monotone_constraints",
+            "monotone_constraints",
+            to_native=_monotone_directions,
+            to_foreign=_xgb_monotone_directions,
+        ),
+        # bonsai spells a group "0,1"; XGBoost takes lists of indices, as a
+        # JSON string, because its Booster reads a list as feature names.
+        _Knob(
+            "tree.interaction_constraints",
+            "interaction_constraints",
+            to_native=_interaction_strings,
+            to_foreign=_xgb_interaction_groups,
+        ),
     ),
     implies={},
     dropped_foreign={
@@ -348,8 +423,20 @@ _LIGHTGBM: Final = _Library(
         _Knob("dispatch.objective_name", "objective", "application", values=_LGBM_OBJECTIVES),
         _Knob("objective.n_classes", "num_class", "num_classes"),
         _Knob("booster.dart_drop_rate", "drop_rate"),
-        _Knob("tree.monotone_constraints", "monotone_constraints"),
-        _Knob("tree.interaction_constraints", "interaction_constraints"),
+        _Knob(
+            "tree.monotone_constraints",
+            "monotone_constraints",
+            to_native=_monotone_directions,
+            to_foreign=_monotone_directions,
+        ),
+        # bonsai spells a group "0,1"; LightGBM takes lists of indices and
+        # silently ignores the string form.
+        _Knob(
+            "tree.interaction_constraints",
+            "interaction_constraints",
+            to_native=_interaction_strings,
+            to_foreign=_interaction_groups,
+        ),
     ),
     # LightGBM grows leaf-wise only, and bonsai's default grower is
     # depthwise, which ignores tree.max_leaves; without this num_leaves
@@ -435,7 +522,12 @@ _CATBOOST: Final = _Library(
         _Knob("dispatch.objective_name", "loss_function", "objective", values=_CATBOOST_OBJECTIVES),
         _Knob("objective.n_classes", "classes_count"),
         _Knob("dispatch.grower_name", "grow_policy", values=_CATBOOST_GROW_POLICY),
-        _Knob("tree.monotone_constraints", "monotone_constraints"),
+        _Knob(
+            "tree.monotone_constraints",
+            "monotone_constraints",
+            to_native=_monotone_directions,
+            to_foreign=_monotone_directions,
+        ),
     ),
     # CatBoost's default grow_policy is SymmetricTree, bonsai's levelwise.
     implies={"dispatch.grower_name": "levelwise"},
