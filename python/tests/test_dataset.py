@@ -460,3 +460,19 @@ def test_training_input_refuses_a_non_finite_or_negative_weight(fit, bad):
         fit(X, y, w)
     w[5] = 0.0
     assert fit(X, y, w).n_iters == 1
+
+
+def _fit_estimator(X, y):
+    return bonsai.BonsaiRegressor(n_iters=1).fit(X, y)
+
+
+@pytest.mark.parametrize("fit", [_fit_dataset, _fit_arrays, _fit_estimator])
+def test_training_input_refuses_a_matrix_with_no_rows(fit):
+    with pytest.raises(ValueError, match="X has no rows; an empty training set"):
+        fit(np.zeros((0, 3), np.float32), np.zeros(0, np.float32))
+
+
+@pytest.mark.parametrize("fit", [_fit_dataset, _fit_arrays, _fit_estimator])
+def test_training_input_refuses_a_matrix_with_no_columns(fit):
+    with pytest.raises(ValueError, match="X has no columns; a dataset with no columns"):
+        fit(np.zeros((12, 0), np.float32), np.zeros(12, np.float32))

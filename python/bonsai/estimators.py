@@ -237,8 +237,9 @@ class _BonsaiEstimator:
         ------
         ValueError
             If ``eval_set`` is a list, or given at all with
-            ``dart_drop_rate > 0``; if ``y`` holds a non-finite value or
-            ``sample_weight`` a non-finite or negative one; for a classifier
+            ``dart_drop_rate > 0``; if ``X`` has no rows or no columns,
+            ``y`` holds a non-finite value, or ``sample_weight`` a
+            non-finite or negative one; for a classifier
             also if ``y`` contains NaN or fewer than 2 classes, or an
             eval-set label was not seen in the training classes.
         """

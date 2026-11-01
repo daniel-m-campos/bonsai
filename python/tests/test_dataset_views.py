@@ -226,6 +226,15 @@ def test_subset_rejects_abuse():
         ds.subset(rows=np.arange(4).reshape(2, 2))
 
 
+def test_subset_refuses_a_mask_that_selects_nothing():
+    X, y = _blocky_data(n=500, f=6)
+    ds = bonsai.Dataset(X, y)
+    with pytest.raises(ValueError, match="selected no rows; an empty training set"):
+        ds.subset(rows=np.zeros(500, dtype=bool))
+    with pytest.raises(ValueError, match="selected no features; a dataset with no columns"):
+        ds.subset(columns=np.zeros(6, dtype=bool))
+
+
 # Column selection ================================================================================
 
 
