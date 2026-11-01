@@ -79,6 +79,29 @@ void check_label_domain(Config const &cfg, floats_view labels, std::string_view 
     }
 }
 
+class SelectedLabels
+{
+  public:
+    SelectedLabels(Dataset const &dataset, floats_view labels)
+        : all_(labels), identity_(dataset.row_view().is_identity())
+    {
+        if (!identity_)
+        {
+            gathered_ = dataset.row_view().gather(labels, dataset.n_targets());
+        }
+    }
+
+    floats_view view() const
+    {
+        return identity_ ? all_ : floats_view{gathered_};
+    }
+
+  private:
+    floats_view        all_;
+    bool               identity_;
+    std::vector<float> gathered_;
+};
+
 struct ParsedFeatures
 {
     detail::ColumnBatch batch;
@@ -275,7 +298,8 @@ class ValidationScorer
     ValidationScorer(Config const &cfg, Dataset const &train, LabeledData const &valid,
                      [[maybe_unused]] bool warm_start)
         : cfg_(cfg), train_(train), valid_(valid),
-          device_grower_(grower_runs_on_device(cfg.dispatch.grower_name))
+          device_grower_(grower_runs_on_device(cfg.dispatch.grower_name)),
+          labels_(valid.dataset, valid.labels)
     {
         if (valid.dataset.view_n_rows() > 0 && valid.dataset.bins_are_u8())
         {
@@ -289,10 +313,6 @@ class ValidationScorer
         assert(has_raw_rows(valid) || (bins_ != nullptr && !warm_start));
         assert(valid.dataset.row_view().is_identity() ||
                (bins_ != nullptr && !warm_start));
-        if (!valid.dataset.row_view().is_identity())
-        {
-            narrowed_labels_ = valid.dataset.row_view().gather(valid.labels);
-        }
     }
 
     size_t base() const
@@ -314,7 +334,7 @@ class ValidationScorer
         std::optional<float> const device_loss = route(booster);
         return device_loss.has_value()
                    ? *device_loss
-                   : round_validation_loss(booster, scores_, labels());
+                   : round_validation_loss(booster, scores_, labels_.view());
     }
 
   private:
@@ -372,21 +392,15 @@ class ValidationScorer
         return device_loss;
     }
 
-    floats_view labels() const
-    {
-        return valid_.dataset.row_view().is_identity() ? floats_view{valid_.labels}
-                                                       : floats_view{narrowed_labels_};
-    }
-
     Config const          &cfg_;
     Dataset const         &train_;
     LabeledData const     &valid_;
     bool const             device_grower_;
+    SelectedLabels const   labels_;
     Dataset const         *bins_          = nullptr;
     bool                   defer_binning_ = false;
     bool                   device_eval_   = false;
     std::optional<Dataset> binned_here_;
-    std::vector<float>     narrowed_labels_;
     std::vector<float>     scores_;
     size_t                 base_ = 0;
 };
@@ -562,10 +576,14 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                     std::unique_ptr<ITrainableBooster> initial,
                     EvalHistoryRef                     eval_history)
 {
-    check_label_domain(cfg, train.dataset.labels(), "train");
+    check_label_domain(
+        cfg, SelectedLabels(train.dataset, train.dataset.labels()).view(), "train");
     if (validation)
     {
-        check_label_domain(cfg, validation->get().labels, "validation");
+        check_label_domain(
+            cfg,
+            SelectedLabels(validation->get().dataset, validation->get().labels).view(),
+            "validation");
     }
     select_device_for(cfg);
     [[maybe_unused]] bool const warm_start = initial != nullptr;

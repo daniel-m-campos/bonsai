@@ -152,6 +152,21 @@ def test_dataset_api_refuses_a_width_that_disagrees_with_the_config():
         bonsai.train({"dispatch.objective_name": "logloss"}, bonsai.Dataset(X, binary))
 
 
+def test_a_row_view_eval_set_scores_its_own_target_rows():
+    X, Y = _data()
+    full = bonsai.Dataset(X, Y)
+    pairs = {"booster.n_iters": 4, "parallel.n_threads": 2}
+    for valid_rows in (np.arange(400, 600), np.arange(400, 600)[::-1]):
+        model = bonsai.train(
+            pairs, full.subset(rows=slice(0, 400)), eval_set=full.subset(rows=valid_rows)
+        )
+        by_hand = [
+            float(((model.predict(X[400:], num_iteration=r + 1) - Y[400:]) ** 2).mean())
+            for r in range(4)
+        ]
+        np.testing.assert_allclose(model.eval_history, by_hand, rtol=1e-4)
+
+
 @requires_cuda
 @pytest.mark.parametrize("grower", ["depthwise", "levelwise", "leafwise"])
 def test_cuda_grower_fits_a_2d_y_and_matches_k_device_fits(grower, monkeypatch):

@@ -1437,7 +1437,9 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
                              "mirror for the binned walk to route, leaving only the "
                              "raw rows its parent retained");
     }
-    check_eval_labels(dataset->row_view().gather(dataset->train_data().labels), cfg);
+    check_eval_labels(
+        dataset->row_view().gather(dataset->train_data().labels, dataset->n_targets()),
+        cfg);
     return std::cref(dataset->train_data());
 }
 
