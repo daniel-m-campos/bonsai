@@ -104,8 +104,8 @@ def test_from_xgboost_reads_the_drop_rate_under_dart_only():
     dart = interop.from_xgboost({"booster": "dart", "rate_drop": 0.2}).to_dict()
     assert dart == {"booster.dart_drop_rate": 0.2}
     assert interop.from_xgboost({"booster": "gbtree", "rate_drop": 0.2}) == Params()
-    with pytest.raises(ValueError, match="booster"):
-        interop.from_xgboost({"booster": "gblinear"})
+    with pytest.raises(ValueError, match=r"booster value 'gblinear'.*accepted values"):
+        interop.from_xgboost({"booster": "gblinear"}, strict=False)
 
 
 def test_from_xgboost_accepts_the_booster_api_aliases():
@@ -171,8 +171,8 @@ def test_from_lightgbm_ignores_a_bagging_fraction_without_a_bagging_freq():
 
 
 def test_from_lightgbm_refuses_a_bagging_freq_above_one():
-    with pytest.raises(ValueError, match="bagging_freq"):
-        interop.from_lightgbm({"bagging_fraction": 0.5, "bagging_freq": 5})
+    with pytest.raises(ValueError, match=r"bagging_freq value 5.*accepted values"):
+        interop.from_lightgbm({"bagging_fraction": 0.5, "bagging_freq": 5}, strict=False)
 
 
 def test_from_lightgbm_selects_the_goss_sampler():
@@ -268,8 +268,8 @@ def test_from_catboost_reads_a_bernoulli_bootstrap(stated, rate):
 def test_from_catboost_reports_a_subsample_outside_bernoulli():
     with pytest.raises(ValueError, match="subsample"):
         interop.from_catboost({"subsample": 0.7})
-    with pytest.raises(ValueError, match="bootstrap_type"):
-        interop.from_catboost({"bootstrap_type": "MVS", "subsample": 0.7})
+    with pytest.raises(ValueError, match=r"bootstrap_type value 'MVS'.*accepted values"):
+        interop.from_catboost({"bootstrap_type": "MVS", "subsample": 0.7}, strict=False)
 
 
 def test_from_catboost_rejects_a_parametrized_loss():
