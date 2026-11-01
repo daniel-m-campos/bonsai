@@ -60,10 +60,11 @@ TEST_CASE("train_with_progress: a zero-round fit predicts the init score",
 {
     auto cfg                   = make_tiny_config();
     cfg.booster_config.n_iters = 0;
-    auto const loaded          = load_train_from_csv(cfg, cfg.data.train);
+    auto const loaded          = load_train_and_validation_from_csv(cfg);
 
     auto const         booster = train_with_progress(cfg, loaded.train);
     std::vector<float> preds(loaded.train.features.n_rows);
+    REQUIRE(!preds.empty());
     booster->predict(loaded.train.features.view(), preds);
     CHECK(booster->n_iters() == 0);
     for (float const p : preds)
