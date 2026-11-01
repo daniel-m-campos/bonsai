@@ -183,6 +183,16 @@ def test_train_refuses_a_value_outside_its_key_domain(key, value, message):
         bonsai.train(params, X, y)
 
 
+def test_train_with_zero_rounds_predicts_the_base_score():
+    X, y = _reg_data(n=300, f=3)
+    y = y + 10.0
+    reg = bonsai.train({"booster.n_iters": 0}, X, y)
+    np.testing.assert_allclose(np.asarray(reg.predict(X)), y.mean(), rtol=1e-5)
+    labels = (X[:, 0] > 0.8).astype(np.float32)
+    clf = bonsai.train({"booster.n_iters": 0, "dispatch.objective_name": "logloss"}, X, labels)
+    np.testing.assert_allclose(np.asarray(clf.predict_proba(X)), labels.mean(), rtol=1e-5)
+
+
 def test_train_refuses_a_bad_positional_monotone_list():
     X, y = _reg_data(n=200, f=3)
     with pytest.raises(RuntimeError, match=r"item 0: must be in \[-1, 1\] \(got 2\)"):

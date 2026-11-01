@@ -582,6 +582,7 @@ train_with_progress(Config const &cfg, LabeledData const &train,
     select_device_for(cfg);
     [[maybe_unused]] bool const warm_start = initial != nullptr;
     auto booster = initial ? std::move(initial) : make_booster(cfg);
+    booster->begin_fit(train.dataset);
 
     FitTicker ticker(cfg, train, validation, on_tick);
     ticker.baseline(*booster);
