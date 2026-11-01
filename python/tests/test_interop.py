@@ -7,6 +7,9 @@ import pytest
 from bonsai import interop
 from bonsai.params import Params
 
+LEAFWISE = {"dispatch.grower_name": "leafwise"}
+LEVELWISE = {"dispatch.grower_name": "levelwise"}
+
 # from_xgboost =====================================================================================
 
 
@@ -120,6 +123,7 @@ def test_from_lightgbm_accepts_the_documented_aliases():
             "bagging_fraction": 0.5,
         }
     ).to_dict() == {
+        **LEAFWISE,
         "booster.n_iters": 100,
         "tree.min_data_in_leaf": 20,
         "sampler.subsample": 0.5,
@@ -129,28 +133,45 @@ def test_from_lightgbm_accepts_the_documented_aliases():
 
 def test_from_lightgbm_translates_objectives():
     assert interop.from_lightgbm({"objective": "regression_l1"}).to_dict() == {
-        "dispatch.objective_name": "mae"
+        **LEAFWISE,
+        "dispatch.objective_name": "mae",
     }
     assert interop.from_lightgbm({"objective": "multiclass"}).to_dict() == {
-        "dispatch.objective_name": "softmax"
+        **LEAFWISE,
+        "dispatch.objective_name": "softmax",
     }
 
 
 def test_from_lightgbm_drops_the_overloaded_alpha():
-    assert interop.from_lightgbm({"alpha": 0.9}) == Params()
+    assert interop.from_lightgbm({"alpha": 0.9}).to_dict() == LEAFWISE
+
+
+def test_from_lightgbm_grows_leafwise_so_num_leaves_binds(toy_train):
+    Xtr, ytr = toy_train
+    p = interop.from_lightgbm({"num_leaves": 7, "max_depth": -1, "n_estimators": 1})
+    assert p.to_dict()["dispatch.grower_name"] == "leafwise"
+    leaves = bonsai.train(p, Xtr, ytr).predict_leaf(Xtr)
+    assert len(set(leaves.ravel().tolist())) <= 7
 
 
 # from_catboost ====================================================================================
 
 
 def test_from_catboost_adds_the_border_fencepost():
-    assert interop.from_catboost({"border_count": 254}).to_dict() == {"bin_mapper.max_bin": 255}
+    assert interop.from_catboost({"border_count": 254}).to_dict() == {
+        **LEVELWISE,
+        "bin_mapper.max_bin": 255,
+    }
+
+
+def test_from_catboost_defaults_to_the_symmetric_tree_policy():
+    assert interop.from_catboost({"depth": 6}).to_dict()["dispatch.grower_name"] == "levelwise"
+    explicit = interop.from_catboost({"grow_policy": "Depthwise"}).to_dict()
+    assert explicit["dispatch.grower_name"] == "depthwise"
 
 
 def test_from_catboost_translates_the_grow_policy():
-    assert interop.from_catboost({"grow_policy": "SymmetricTree"}).to_dict() == {
-        "dispatch.grower_name": "levelwise"
-    }
+    assert interop.from_catboost({"grow_policy": "SymmetricTree"}).to_dict() == LEVELWISE
 
 
 def test_from_catboost_rejects_a_parametrized_loss():
@@ -159,7 +180,9 @@ def test_from_catboost_rejects_a_parametrized_loss():
 
 
 def test_from_catboost_drops_the_best_model_flag():
-    assert interop.from_catboost({"use_best_model": False, "task_type": "GPU"}) == Params()
+    assert interop.from_catboost({"use_best_model": False, "task_type": "GPU"}).to_dict() == (
+        LEVELWISE
+    )
 
 
 # to_xgboost =======================================================================================
@@ -253,8 +276,8 @@ def test_round_trip_preserves_the_shared_knobs():
 
 
 def test_round_trip_survives_the_catboost_fencepost():
-    p = interop.from_catboost({"border_count": 254})
-    assert interop.to_catboost(p) == {"border_count": 254}
+    p = interop.from_catboost({"border_count": 254, "grow_policy": "SymmetricTree"})
+    assert interop.to_catboost(p) == {"border_count": 254, "grow_policy": "SymmetricTree"}
 
 
 def test_every_native_key_is_reachable_from_the_reverse_index():

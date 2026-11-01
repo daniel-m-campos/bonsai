@@ -10,10 +10,9 @@ library's parameter dict into a ``bonsai.Params``, ready for
 go the other way, returning that library's parameter dict.
 
     >>> import bonsai
-    >>> p = bonsai.interop.from_lightgbm(
-    ...     {"num_leaves": 63, "max_depth": -1, "learning_rate": 0.05})
+    >>> p = bonsai.interop.from_lightgbm({"num_leaves": 63, "max_depth": -1})
     >>> p
-    Params(tree=Tree(max_depth=255, max_leaves=63), booster=Booster(learning_rate=0.05))
+    Params(tree=Tree(max_depth=255, max_leaves=63), dispatch=Dispatch(grower_name='leafwise'))
 
 Translation is not equivalence. Every mapping whose two sides mean different
 things carries a note at its table row, and the module-level notes below
@@ -156,6 +155,10 @@ class _Library:
         The name as the library spells it, ``"XGBoost"``.
     knobs
         The parameter mapping table for this library.
+    implies
+        bonsai pairs every translation from this library carries, because
+        the library's own default differs from bonsai's; applied underneath
+        everything the parameters translate to.
     dropped_foreign
         Foreign parameter names that are recognized and deliberately
         discarded, each with the reason; everything else unrecognized is
@@ -169,6 +172,7 @@ class _Library:
     name: str
     title: str
     knobs: tuple[_Knob, ...]
+    implies: dict[str, Any]
     dropped_foreign: dict[str, str]
     dropped_native: dict[str, str]
 
@@ -264,6 +268,7 @@ _XGBOOST: Final = _Library(
         _Knob("tree.monotone_constraints", "monotone_constraints"),
         _Knob("tree.interaction_constraints", "interaction_constraints"),
     ),
+    implies={},
     dropped_foreign={
         "tree_method": "bonsai is always histogram-based",
         "device": "in bonsai the device is the grower name, e.g. cuda_leafwise",
@@ -346,6 +351,10 @@ _LIGHTGBM: Final = _Library(
         _Knob("tree.monotone_constraints", "monotone_constraints"),
         _Knob("tree.interaction_constraints", "interaction_constraints"),
     ),
+    # LightGBM grows leaf-wise only, and bonsai's default grower is
+    # depthwise, which ignores tree.max_leaves; without this num_leaves
+    # would never bind.
+    implies={"dispatch.grower_name": "leafwise"},
     dropped_foreign={
         "verbose": "logging only",
         "verbosity": "logging only",
@@ -428,6 +437,8 @@ _CATBOOST: Final = _Library(
         _Knob("dispatch.grower_name", "grow_policy", values=_CATBOOST_GROW_POLICY),
         _Knob("tree.monotone_constraints", "monotone_constraints"),
     ),
+    # CatBoost's default grow_policy is SymmetricTree, bonsai's levelwise.
+    implies={"dispatch.grower_name": "levelwise"},
     dropped_foreign={
         "task_type": "in bonsai the device is the grower name, e.g. cuda_levelwise",
         "devices": "in bonsai the device is the grower name",
@@ -540,11 +551,14 @@ def from_lightgbm(params: Mapping[str, Any], *, strict: bool = True) -> Params:
 from_lightgbm.__doc__ = _doc(
     _FROM_DOC,
     _LIGHTGBM,
-    notes="``max_depth=-1`` (LightGBM's uncapped growth) becomes\n"
-    "``tree.max_depth = 255``: bonsai has no sentinel, and under leafwise\n"
-    "growth ``num_leaves`` is the binding budget either way.",
+    notes="The translation always selects the ``leafwise`` grower, LightGBM's only\n"
+    "growth policy, so ``num_leaves`` binds. ``max_depth <= 0`` (LightGBM's\n"
+    "uncapped growth) becomes ``tree.max_depth = 255``: bonsai has no\n"
+    "sentinel, and under leafwise growth ``num_leaves`` is the binding budget\n"
+    "either way.",
     call='{"num_leaves": 63, "max_depth": -1}',
-    result="Params(tree=Tree(max_depth=255, max_leaves=63))",
+    result="Params(tree=Tree(max_depth=255, max_leaves=63), "
+    "dispatch=Dispatch(grower_name='leafwise'))",
 )
 
 
@@ -555,12 +569,15 @@ def from_catboost(params: Mapping[str, Any], *, strict: bool = True) -> Params:
 from_catboost.__doc__ = _doc(
     _FROM_DOC,
     _CATBOOST,
-    notes="``border_count`` counts splits where ``bin_mapper.max_bin`` counts bins,\n"
-    "so the value gains one crossing over. CatBoost's parametrized losses\n"
+    notes="Without a ``grow_policy`` the translation selects the ``levelwise``\n"
+    "grower, CatBoost's default SymmetricTree policy. ``border_count`` counts\n"
+    "splits where ``bin_mapper.max_bin`` counts bins, so the value gains one\n"
+    "crossing over. CatBoost's parametrized losses\n"
     "(``Huber:delta=...``, ``Quantile:alpha=...``) raise: set\n"
     "``dispatch.objective_name`` and the loss parameter by hand.",
     call='{"depth": 6, "border_count": 254}',
-    result="Params(bin_mapper=BinMapper(max_bin=255), tree=Tree(max_depth=6))",
+    result="Params(bin_mapper=BinMapper(max_bin=255), tree=Tree(max_depth=6), "
+    "dispatch=Dispatch(grower_name='levelwise'))",
 )
 
 
@@ -617,7 +634,7 @@ to_catboost.__doc__ = _doc(
 def _from_library(lib: _Library, params: Mapping[str, Any], strict: bool) -> Params:
     """Foreign dict to a ``Params``; the shared engine behind ``from_*``."""
     index = {spelling: knob for knob in lib.knobs for spelling in knob.spellings}
-    implied: dict[str, Any] = {}
+    implied: dict[str, Any] = dict(lib.implies)
     mapped: dict[str, Any] = {}
     unmappable = []
     for key, value in dict(params).items():
