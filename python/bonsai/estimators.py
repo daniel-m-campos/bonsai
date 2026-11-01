@@ -224,9 +224,9 @@ class _BonsaiEstimator:
             prints them, and ``tree.monotone_constraints`` may be keyed by
             them. None with an unnamed X leaves the columns ``f0``..``fN``.
             Rejected with ``init_model``: a warm start keeps the loaded
-            model's names. Predict-time inputs are checked against the
-            fitted names, sklearn's rule: names that go missing or appear
-            warn, names that disagree raise.
+            model's names. Predict-time inputs and the eval_set's X are
+            checked against the fitted names, sklearn's rule: names that go
+            missing or appear warn, names that disagree raise.
 
         Returns
         -------
@@ -246,12 +246,14 @@ class _BonsaiEstimator:
         overrides = (
             self._warm_start_overrides() if init_model is not None else self._build_overrides()
         )
+        names = self._fit_names(X, feature_names, init_model)
         ev = None
         if eval_set is not None:
             self._reject_dart_eval_set(overrides)
+            if init_model is None:
+                self._check_names_against(names, _eval_set_features(eval_set))
             ev = self._encode_eval_set(eval_set)
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
-        names = self._fit_names(X, feature_names, init_model)
         Xa = _as_f32(X, 2, "X")
         self._model = train(
             overrides,
@@ -679,7 +681,11 @@ class _BonsaiEstimator:
             If both the fit and X have names and they differ.
         """
         fitted = getattr(self, "feature_names_in_", None)
-        fitted = None if fitted is None else [str(name) for name in fitted]
+        self._check_names_against(None if fitted is None else [str(name) for name in fitted], X)
+
+    def _check_names_against(self, fitted: list[str] | None, X: object):
+        """Compare X's names with ``fitted``, the names a fit trains or
+        trained under, by the rule ``_check_predict_names`` documents."""
         given = _input_feature_names(X)
         if fitted is None and given is None:
             return
@@ -1180,6 +1186,11 @@ def _names_disagreement(fitted: list[str], given: list[str]) -> str:
     return "The feature names should match those that were passed during fit." + (
         detail or " The same names arrived in a different order."
     )
+
+
+def _eval_set_features(eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset) -> object:
+    """The feature half of an eval set, before any coercion."""
+    return eval_set if isinstance(eval_set, Dataset) else eval_set[0]
 
 
 def _input_feature_names(X: object) -> list[str] | None:
