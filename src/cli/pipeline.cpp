@@ -55,28 +55,49 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
 namespace
 {
 
+template <class InDomain>
+void refuse_labels_outside(Config const &cfg, floats_view labels,
+                           std::string_view which, InDomain in_domain,
+                           std::string const &rule)
+{
+    auto const bad = std::ranges::find_if_not(labels, in_domain);
+    if (bad != labels.end())
+    {
+        throw std::invalid_argument(
+            std::format("{} labels must be {}; {} labels include {}",
+                        cfg.dispatch.objective_name, rule, which, *bad));
+    }
+}
+
 void check_label_domain(Config const &cfg, floats_view labels, std::string_view which)
 {
-    auto const &name   = cfg.dispatch.objective_name;
-    auto const  refuse = [&](auto in_domain, std::string const &rule)
-    {
-        auto const bad = std::ranges::find_if_not(labels, in_domain);
-        if (bad != labels.end())
-        {
-            throw std::invalid_argument(std::format(
-                "{} labels must be {}; {} labels include {}", name, rule, which, *bad));
-        }
-    };
+    auto const &name = cfg.dispatch.objective_name;
     if (name == "logloss")
     {
-        refuse([](float v) { return v == 0.0F || v == 1.0F; }, "0 or 1");
+        refuse_labels_outside(
+            cfg, labels, which, [](float v) { return v == 0.0F || v == 1.0F; },
+            "0 or 1");
     }
     else if (name == "softmax")
     {
         auto const k = static_cast<float>(cfg.objective.n_classes);
-        refuse([k](float v) { return v >= 0.0F && v < k && v == std::floor(v); },
-               std::format("integers in [0, {})", cfg.objective.n_classes));
+        refuse_labels_outside(
+            cfg, labels, which,
+            [k](float v) { return v >= 0.0F && v < k && v == std::floor(v); },
+            std::format("integers in [0, {})", cfg.objective.n_classes));
     }
+    else if (name == "poisson")
+    {
+        refuse_labels_outside(
+            cfg, labels, which, [](float v) { return v >= 0.0F; }, "non-negative");
+    }
+}
+
+void check_validation_labels(Config const &cfg, floats_view labels)
+{
+    refuse_labels_outside(
+        cfg, labels, "validation", [](float v) { return std::isfinite(v); }, "finite");
+    check_label_domain(cfg, labels, "validation");
 }
 
 class SelectedLabels
@@ -580,10 +601,9 @@ train_with_progress(Config const &cfg, LabeledData const &train,
         cfg, SelectedLabels(train.dataset, train.dataset.labels()).view(), "train");
     if (validation)
     {
-        check_label_domain(
+        check_validation_labels(
             cfg,
-            SelectedLabels(validation->get().dataset, validation->get().labels).view(),
-            "validation");
+            SelectedLabels(validation->get().dataset, validation->get().labels).view());
     }
     select_device_for(cfg);
     [[maybe_unused]] bool const warm_start = initial != nullptr;
