@@ -542,15 +542,31 @@ struct EvalPlan
     EvalHistoryRef history;
 };
 
+bool tracks_history(Config const &cfg, ValidationRef validation,
+                    EvalHistoryRef eval_history)
+{
+    if (!eval_history.has_value() || !validation.has_value() ||
+        eval_row_count(validation->get()) == 0)
+    {
+        return false;
+    }
+    if (cfg.booster_config.dart_drop_rate > 0.0F)
+    {
+        throw std::invalid_argument(
+            "eval_set is unsupported with dart_drop_rate > 0: eval history relies "
+            "on incremental valid-loss bookkeeping that DART's per-round tree "
+            "rescaling invalidates");
+    }
+    return true;
+}
+
 EvalPlan eval_plan(Config const &cfg, ValidationRef validation,
                    EvalHistoryRef eval_history)
 {
     EvalPlan plan;
     plan.early_stop =
         cfg.booster_config.early_stopping_rounds > 0 && validation.has_value();
-    bool const track_history = eval_history.has_value() && validation.has_value() &&
-                               eval_row_count(validation->get()) > 0 &&
-                               cfg.booster_config.dart_drop_rate == 0.0F;
+    bool const track_history = tracks_history(cfg, validation, eval_history);
     if (plan.early_stop && eval_row_count(validation->get()) == 0)
     {
         throw ConfigError("early stopping needs a non-empty validation set");

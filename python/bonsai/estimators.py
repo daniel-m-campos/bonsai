@@ -19,7 +19,7 @@ import tempfile
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 import numpy as np
 import numpy.typing as npt
@@ -249,7 +249,6 @@ class _BonsaiEstimator:
         names = self._fit_names(X, feature_names, init_model)
         ev = None
         if eval_set is not None:
-            self._reject_dart_eval_set(overrides)
             if init_model is None:
                 self._check_names_against(names, _eval_set_features(eval_set))
             ev = self._encode_eval_set(eval_set)
@@ -616,21 +615,6 @@ class _BonsaiEstimator:
             if all(getattr(self, a) == defaults[a] for a in args):
                 overrides.pop(key, None)
         return overrides
-
-    @staticmethod
-    def _reject_dart_eval_set(overrides: dict[str, object]):
-        """Eval history shares early stopping's incremental valid-loss
-        accumulation, which DART's per-round tree rescaling invalidates;
-        the native layer would silently record nothing (and
-        ``evals_result()`` would come back empty), so fail loudly at fit
-        time, mirroring the native early-stopping + DART rejection."""
-        for key, value in overrides.items():
-            if key == "booster.dart_drop_rate" and float(cast("float", value)) > 0.0:
-                raise ValueError(
-                    "eval_set is unsupported with dart_drop_rate > 0: eval "
-                    "history relies on incremental valid-loss bookkeeping "
-                    "that DART's per-round tree rescaling invalidates"
-                )
 
     def _check_fitted(self):
         """One guard for every fitted-state precondition (the exception type
