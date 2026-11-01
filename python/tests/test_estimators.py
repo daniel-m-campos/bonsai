@@ -861,6 +861,20 @@ def test_logloss_on_one_class_keeps_a_finite_margin():
     assert ((proba > 0.0) & (proba < 0.5)).all()
 
 
+def test_dump_prints_thresholds_that_route_like_the_model():
+    """A feature on a 1e-7 scale dumped as 0.000000 under six fixed decimals,
+    so the printed split sent rows elsewhere than the tree did."""
+    rng = np.random.default_rng(21)
+    x = (rng.standard_normal((500, 1)) * 1e-7).astype(np.float32)
+    y = (x[:, 0] > 2e-8).astype(np.float32)
+    m = bonsai.train({"booster.n_iters": 1, "tree.max_depth": 1, "tree.min_data_in_leaf": 1}, x, y)
+    root, left = m.dump().splitlines()[1:3]
+    threshold = float(root.split(" <= ")[1].split()[0])
+    left_cover = int(left.split("cover=")[1])
+    assert threshold != 0.0
+    assert int((x[:, 0] <= threshold).sum()) == left_cover
+
+
 _SAVE_UNDER_A_FILE_SIZE_LIMIT = """
 import resource
 import signal

@@ -91,11 +91,11 @@ inline void dump_tree(DenseTree const &tree, std::span<std::string const> names,
         bool const  leaf = DenseTree::is_leaf(n);
         if (leaf)
         {
-            std::format_to(into, "leaf={:f}", n.threshold_or_value);
+            std::format_to(into, "leaf={}", n.threshold_or_value);
         }
         else
         {
-            std::format_to(into, "{} <= {:f} [nan->{}] gain={:f}",
+            std::format_to(into, "{} <= {} [nan->{}] gain={}",
                            feature_label(names, n.feature_id), n.threshold_or_value,
                            n.default_left ? "left" : "right",
                            id < gains.size() ? gains[id] : 0.0F);
@@ -122,7 +122,7 @@ inline void dump_tree(ObliviousTree const &tree, std::span<std::string const> na
     auto        into   = std::back_inserter(out);
     for (size_t lvl = 0; lvl < splits.size(); ++lvl)
     {
-        std::format_to(into, "level {}: {} <= {:f} [nan->{}] gain={:f}\n", lvl,
+        std::format_to(into, "level {}: {} <= {} [nan->{}] gain={}\n", lvl,
                        feature_label(names, splits[lvl].feature_id),
                        splits[lvl].threshold,
                        splits[lvl].default_left ? "left" : "right",
@@ -131,7 +131,7 @@ inline void dump_tree(ObliviousTree const &tree, std::span<std::string const> na
     out += "leaves:";
     for (float const v : tree.leaf_table())
     {
-        std::format_to(into, " {:f}", v);
+        std::format_to(into, " {}", v);
     }
     out += '\n';
     if (!tree.leaf_covers().empty())
