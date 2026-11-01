@@ -95,6 +95,11 @@ def test_from_xgboost_leaves_the_no_cap_leaf_count_unset():
     assert interop.from_xgboost({"max_leaves": 0}) == Params()
 
 
+def test_from_xgboost_carries_the_no_cap_leaf_count_under_lossguide():
+    out = interop.from_xgboost({"grow_policy": "lossguide", "max_leaves": 0})
+    assert out.to_dict() == {**LEAFWISE, "tree.max_leaves": 0}
+
+
 def test_from_xgboost_reports_a_class_count_without_a_multiclass_objective():
     with pytest.raises(ValueError, match="num_class"):
         interop.from_xgboost({"objective": "reg:squarederror", "num_class": 3})

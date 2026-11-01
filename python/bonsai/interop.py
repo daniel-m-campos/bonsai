@@ -217,6 +217,10 @@ class _Knob:
         bonsai pairs this knob sets over everything else the parameters
         translate to, for a value the reference library enforces where the
         translated selector would leave it unread.
+    binds
+        Whether a value constrains anything; None treats every value as
+        binding. A value that does not bind forces nothing, and is dropped
+        without a report where the translated selectors leave it unread.
     read_under
         The bonsai selector the key is read under; None reads it always.
     when
@@ -244,6 +248,7 @@ class _Knob:
         to_foreign: Callable[[Any], Any] | None = None,
         implies: Mapping[str, Any] | None = None,
         forces: Mapping[str, Any] | None = None,
+        binds: Callable[[Any], bool] | None = None,
         read_under: _ReadUnder | None = None,
         when: _When | None = None,
         foreign_default: Any = None,
@@ -257,6 +262,7 @@ class _Knob:
         self.to_foreign = values.outbound if values is not None else to_foreign
         self.implies = dict(implies or {})
         self.forces = dict(forces or {})
+        self.binds = binds
         self.read_under = read_under
         self.when = when
         self.foreign_default = foreign_default
@@ -265,6 +271,9 @@ class _Knob:
 
     def is_inert(self, value: Any) -> bool:
         return self.inert is not None and value == self.inert
+
+    def is_binding(self, value: Any) -> bool:
+        return self.binds is None or self.binds(value)
 
     def is_read(self, native: Mapping[str, Any]) -> bool:
         return self.read_under is None or self.read_under.holds(native)
@@ -337,6 +346,11 @@ _UNDER_LEAFWISE: Final = _ReadUnder(
 _DROPPED_NATIVE_SHARED: Final = {
     "parallel.device_id": "device placement is not a reference-library knob",
 }
+
+
+def _caps_leaves(value: Any) -> bool:
+    """Whether a leaf count binds; 0 is the no-cap value."""
+    return int(value) > 0
 
 
 def _uncapped_depth(value: Any) -> int:
@@ -454,14 +468,14 @@ _XGBOOST: Final = _Library(
         # XGBoost enforces max_leaves under depthwise growth too, where
         # bonsai's depthwise grower ignores it, so a binding cap selects
         # leafwise growth: the leaf budget matches, the split order becomes
-        # best-first. bonsai grows depthwise anyway when the cap cannot bind.
-        # 0 is XGBoost's no-cap default and translates to nothing.
+        # best-first. 0 is the no-cap value on both sides, so it selects
+        # nothing and carries through only where leafwise growth reads it.
         _Knob(
             "tree.max_leaves",
             "max_leaves",
             forces={"dispatch.grower_name": "leafwise"},
+            binds=_caps_leaves,
             read_under=_UNDER_LEAFWISE,
-            inert=0,
         ),
         # NOT a row count. Both sides are a minimum summed hessian, so under
         # squared error the value is a row count and under logloss it is far
@@ -1021,7 +1035,7 @@ def _from_library(lib: _Library, params: Mapping[str, Any], strict: bool) -> Par
         else:
             unmappable.append(key)
     translated = translation.resolved()
-    unmappable += _drop_unread(translation.read, translated)
+    unmappable += _drop_unread(translation.read, translated, stated)
     _fill_foreign_defaults(lib, stated, translated)
     _reject_unmappable(unmappable, strict, lib.name, "bonsai")
     return Params.from_dict(translated)
@@ -1049,7 +1063,8 @@ class _Translation:
                 continue
             self.mapped[knob.native] = knob.inbound(stated[key])
             self.implied.update(knob.implies)
-            self.forced.update(knob.forces)
+            if knob.is_binding(stated[key]):
+                self.forced.update(knob.forces)
             self.read.setdefault(key, []).append(knob)
         return [key] if reported else []
 
@@ -1057,15 +1072,18 @@ class _Translation:
         return {**self.implied, **self.mapped, **self.forced}
 
 
-def _drop_unread(read: Mapping[str, list[_Knob]], translated: dict[str, Any]) -> list[str]:
+def _drop_unread(
+    read: Mapping[str, list[_Knob]], translated: dict[str, Any], stated: Mapping[str, Any]
+) -> list[str]:
     """Remove each bonsai key the translated selectors leave unread, and
-    name every foreign key left with none."""
+    name every foreign key left with none whose value binds."""
     unread = []
     for key, candidates in read.items():
         dropped = [knob for knob in candidates if not knob.is_read(translated)]
         for knob in dropped:
             translated.pop(knob.native, None)
-        if len(dropped) == len(candidates):
+        binding = any(knob.is_binding(stated[key]) for knob in dropped)
+        if len(dropped) == len(candidates) and binding:
             unread.append(key)
     return unread
 
