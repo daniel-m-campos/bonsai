@@ -2,7 +2,6 @@
 
 #include <charconv>
 #include <cstdint>
-#include <cstdlib>
 #include <expected>
 #include <string>
 #include <string_view>
@@ -64,13 +63,12 @@ template <typename U> ParseResult<U> read_uint_from_string(std::string_view valu
 
 inline ParseResult<float> read_float_from_string(std::string_view value)
 {
-    std::string const owned{value};
-    char             *end = nullptr;
-    float const       v   = std::strtof(owned.c_str(), &end);
-    auto const used = static_cast<size_t>(end != nullptr ? end - owned.c_str() : 0);
-    if (used != owned.size())
+    float       v   = 0.0F;
+    auto const *end = value.data() + value.size();
+    auto const  res = std::from_chars(value.data(), end, v);
+    if (res.ec != std::errc{} || res.ptr != end)
     {
-        return std::unexpected("cannot parse float from '" + owned + "'");
+        return std::unexpected("cannot parse float from '" + std::string{value} + "'");
     }
     return v;
 }

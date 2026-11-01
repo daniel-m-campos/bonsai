@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <clocale>
 #include <cstdio>
 #include <fstream>
 #include <string>
@@ -126,6 +127,38 @@ TEST_CASE("Overrides: apply dotted keys updates the right fields", "[overrides][
                  Catch::Matchers::WithinAbs(0.25F, 1e-6F));
     REQUIRE(cfg.dispatch.objective_name == "logloss");
     REQUIRE_FALSE(cfg.data.header);
+}
+
+namespace
+{
+char const *set_comma_decimal_locale()
+{
+    for (char const *name : {"de_DE.UTF-8", "de_DE.utf8", "fr_FR.UTF-8", "fr_FR.utf8"})
+    {
+        if (std::setlocale(LC_NUMERIC, name) != nullptr)
+        {
+            return name;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+TEST_CASE("Overrides: a float parses the same under a comma-decimal locale",
+          "[overrides][edge]")
+{
+    std::string const previous = std::setlocale(LC_NUMERIC, nullptr);
+    if (set_comma_decimal_locale() == nullptr)
+    {
+        SKIP("no comma-decimal locale installed");
+    }
+    bonsai::Config                              cfg;
+    std::vector<bonsai::config::Override> const ovs = {
+        {"booster.learning_rate", "0.25"}};
+    auto const apply = [&] { bonsai::config::apply_overrides(cfg, ovs); };
+    CHECK_NOTHROW(apply());
+    std::setlocale(LC_NUMERIC, previous.c_str());
+    CHECK(cfg.booster_config.learning_rate == 0.25F);
 }
 
 TEST_CASE("Overrides: malformed value throws ConfigError", "[overrides][edge]")
