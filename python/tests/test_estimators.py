@@ -38,6 +38,30 @@ def test_fit_predict_rmse():
     assert rmse < 0.50, rmse  # CLI depthwise lands ~0.474
 
 
+def test_interaction_constraints_list_forms_match_the_string_form():
+    """The TOML list form ``["0,1", "2,3"]`` and a list of lists name the
+    same groups as the string form ``"0+1,2+3"``; a list of singletons does
+    not, so the list items were not re-split on their commas."""
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(600, 4)).astype(np.float32)
+    y = (X[:, 0] * X[:, 1] + X[:, 2] * X[:, 3]).astype(np.float32)
+
+    def fit(groups):
+        est = bonsai.BonsaiRegressor(
+            n_iters=10, n_threads=1, params={"tree.interaction_constraints": groups}
+        )
+        return est.fit(X, y).predict(X)
+
+    base = fit("0+1,2+3")
+    np.testing.assert_array_equal(fit(["0,1", "2,3"]), base)
+    np.testing.assert_array_equal(fit([[0, 1], [2, 3]]), base)
+    assert not np.array_equal(fit(["0", "1", "2", "3"]), base)
+    with pytest.raises(Exception, match="interaction_constraints"):
+        fit(["0+9"])
+    with pytest.raises(Exception, match="interaction_constraints"):
+        fit(["0.5+1"])
+
+
 def test_random_seed_varies_feature_fraction_draws():
     """Two fits that differ only in ``random_seed`` draw different feature
     subsets under the default ``all_rows`` sampler, and one seed refits the
