@@ -1068,7 +1068,7 @@ class BonsaiClassifier(_BonsaiEstimator):
         ValueError
             If ``sample_weight`` sums to zero.
         """
-        y_true = np.asarray(y)
+        y_true = _as_labels(y, "y")
         y_pred = np.asarray(self.predict(X))
         correct = (y_true == y_pred).astype(np.float64)
 
@@ -1116,7 +1116,7 @@ class BonsaiClassifier(_BonsaiEstimator):
         }
 
     def _encode_targets(self, y: npt.ArrayLike) -> np.ndarray:
-        y_arr = np.asarray(y)
+        y_arr = _as_labels(y, "y")
         if y_arr.dtype.kind == "f" and np.isnan(y_arr).any():
             raise ValueError("Input y contains NaN.")
         self.classes_ = np.unique(y_arr)
@@ -1132,7 +1132,7 @@ class BonsaiClassifier(_BonsaiEstimator):
         """A label the training fold never saw cannot be encoded; letting
         searchsorted guess silently corrupts the eval metric and early
         stopping, so reject it."""
-        y_arr = np.asarray(y)
+        y_arr = _as_labels(y, "y")
         ids = np.clip(np.searchsorted(self.classes_, y_arr), 0, self.n_classes_ - 1)
         bad = self.classes_[ids] != y_arr
         if bad.any():
@@ -1242,6 +1242,38 @@ def _feature_names_of(X: object) -> list[str] | None:
     if not names or not all(isinstance(name, str) for name in names):
         return None
     return names
+
+
+def _as_labels(y: npt.ArrayLike, name: str) -> np.ndarray:
+    """Class labels as a vector, one per row.
+
+    A single-column 2-D array is read as one label per row, the way the
+    regressors read a single-column target and sklearn's classifiers read
+    a column vector.
+
+    Parameters
+    ----------
+    y
+        Labels of any hashable, orderable dtype.
+    name
+        The argument's name, for the error message.
+
+    Returns
+    -------
+    numpy.ndarray
+        Rank 1, in the caller's dtype.
+
+    Raises
+    ------
+    ValueError
+        When ``y`` is neither a vector nor a single column.
+    """
+    arr = np.asarray(y)
+    if arr.ndim == 2 and arr.shape[1] == 1:
+        arr = arr[:, 0]
+    if arr.ndim != 1:
+        raise ValueError(f"{name} must be 1-dimensional or a single column, got shape {arr.shape}")
+    return arr
 
 
 def _grower_for_device(grower: str, device: str) -> str:
