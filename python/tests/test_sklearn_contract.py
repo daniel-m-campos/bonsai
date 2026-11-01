@@ -116,3 +116,28 @@ def test_classifier_predict_proba_of_a_two_class_softmax_is_its_probabilities(tm
     np.testing.assert_allclose(loaded.predict_proba(X[:20]), model.predict_proba(X[:20]))
     assert 0.0 < forced.predict_proba(X).min() < 1.0
     np.testing.assert_array_equal(loaded.predict(X), np.argmax(model.predict_proba(X), axis=1))
+
+
+def test_fit_that_raises_leaves_the_previous_fit_in_place():
+    X, y = _binary()
+    labels = np.array(["cat", "dog", "eel"])[np.digitize(X[:, 0], [-0.5, 0.5])]
+    clf = _classifier().fit(X, labels)
+    before = clf.predict_proba(X[:5])
+
+    with pytest.raises(ValueError, match="not in the training classes"):
+        clf.fit(X, y, eval_set=(X[:50], np.full(50, 7)))
+
+    np.testing.assert_array_equal(clf.classes_, ["cat", "dog", "eel"])
+    assert clf.n_classes_ == 3
+    np.testing.assert_array_equal(clf.predict_proba(X[:5]), before)
+
+
+def test_regressor_fit_that_raises_keeps_its_target_count():
+    X, Y = _regression(n_targets=3)
+    reg = bonsai.BonsaiRegressor(n_iters=5, n_threads=2).fit(X, Y)
+
+    with pytest.raises(ValueError):
+        reg.fit(X, Y[:, 0], sample_weight=np.ones(3))
+
+    assert reg.n_outputs_ == 3
+    assert reg.predict(X).shape == (len(X), 3)

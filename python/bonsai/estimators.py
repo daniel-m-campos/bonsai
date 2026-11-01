@@ -242,18 +242,20 @@ class _BonsaiEstimator:
             in the training classes.
         """
         _reject_eval_set_list(eval_set)
-        y_enc = self._encode_targets(y)
+        y_enc, targets = self._encode_targets(y)
         overrides = (
-            self._warm_start_overrides() if init_model is not None else self._build_overrides()
+            self._warm_start_overrides(targets)
+            if init_model is not None
+            else self._build_overrides(targets)
         )
         ev = None
         if eval_set is not None:
             self._reject_dart_eval_set(overrides)
-            ev = self._encode_eval_set(eval_set)
+            ev = self._encode_eval_set(eval_set, targets)
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
         names = self._fit_names(X, feature_names, init_model)
         Xa = _as_f32(X, 2, "X")
-        self._model = train(
+        model = train(
             overrides,
             Xa,
             y_enc,
@@ -262,6 +264,8 @@ class _BonsaiEstimator:
             sample_weight=sw,
             feature_names=names,
         )
+        self.__dict__.update(targets)
+        self._model = model
         self._record_fit_inputs(Xa)
         return self
 
@@ -516,19 +520,21 @@ class _BonsaiEstimator:
             setattr(self, name, arguments[name])
         self._model: Model | None = None
 
-    def _objective_pairs(self) -> dict[str, object]:
+    def _objective_pairs(self, targets: dict[str, object]) -> dict[str, object]:
         """Config keys the objective needs. ``BonsaiRegressor`` exposes a
-        fixed ``objective`` kwarg; ``BonsaiClassifier`` derives it from
-        ``classes_`` at fit time."""
+        fixed ``objective`` kwarg; ``BonsaiClassifier`` derives it from the
+        class count in ``targets``."""
         raise NotImplementedError
 
-    def _encode_targets(self, y: npt.ArrayLike) -> np.ndarray:
-        """The training targets as the native booster takes them; a
-        classifier also records ``classes_`` here, before the overrides that
-        need the class count are built."""
+    def _encode_targets(self, y: npt.ArrayLike) -> tuple[np.ndarray, dict[str, object]]:
+        """The training targets as the native booster takes them, and the
+        fitted attributes they determine (``classes_``, ``n_outputs_``, ...)
+        by name. ``fit`` sets those attributes only once ``train`` returns,
+        so a fit that raises leaves the previous fit's encoding paired with
+        the previous fit's model."""
         raise NotImplementedError
 
-    def _encode_eval_targets(self, y: npt.ArrayLike) -> np.ndarray:
+    def _encode_eval_targets(self, y: npt.ArrayLike, targets: dict[str, object]) -> np.ndarray:
         """Eval-set targets, encoded against what ``_encode_targets`` saw."""
         raise NotImplementedError
 
@@ -536,15 +542,17 @@ class _BonsaiEstimator:
         """What ``predict`` returns for the native booster's output."""
         return raw
 
-    def _encode_eval_set(self, eval_set) -> tuple[np.ndarray, np.ndarray] | Dataset:
+    def _encode_eval_set(
+        self, eval_set, targets: dict[str, object]
+    ) -> tuple[np.ndarray, np.ndarray] | Dataset:
         """A pre-binned ``Dataset`` passes through: it was built before
         ``fit`` saw any class, so a classifier's labels there are already the
         encoded ids and the native layer range-checks them."""
         if isinstance(eval_set, Dataset):
             return eval_set
-        return (_as_f32(eval_set[0], 2, "X"), self._encode_eval_targets(eval_set[1]))
+        return (_as_f32(eval_set[0], 2, "X"), self._encode_eval_targets(eval_set[1], targets))
 
-    def _build_overrides(self) -> dict[str, object]:
+    def _build_overrides(self, targets: dict[str, object]) -> dict[str, object]:
         """Translate the first-class kwargs and ``params`` into the dotted
         config keys the native ``train()`` expects. Kept out of ``__init__``
         so constructor args stay raw attributes (required for
@@ -564,7 +572,7 @@ class _BonsaiEstimator:
             "dispatch.grower_name": self.grower,
             "dispatch.sampler_name": self.sampler,
             "parallel.n_threads": self.n_threads,
-            **self._objective_pairs(),
+            **self._objective_pairs(targets),
         }
         if self.max_bin is not None:
             merged["bin_mapper.max_bin"] = self.max_bin
@@ -589,7 +597,7 @@ class _BonsaiEstimator:
             return self.params.to_dict()
         return self.params or {}
 
-    def _warm_start_overrides(self) -> dict[str, object]:
+    def _warm_start_overrides(self, targets: dict[str, object]) -> dict[str, object]:
         """Overrides for a warm start, with the untouched knobs dropped.
 
         The native reconcile reads any key it is handed as user-chosen, so
@@ -600,7 +608,7 @@ class _BonsaiEstimator:
         data (``BonsaiClassifier`` derives its objective from ``y``, which
         a warm start should still be checked against).
         """
-        overrides = self._build_overrides()
+        overrides = self._build_overrides(targets)
         explicit = self._explicit_params()
         defaults = _init_defaults(type(self))
         for key, args in self._WARM_START_KNOBS:
@@ -911,20 +919,20 @@ class BonsaiRegressor(_BonsaiEstimator):
         out.n_outputs_ = int(out._fitted().n_targets)
         return out
 
-    def _objective_pairs(self) -> dict[str, object]:
+    def _objective_pairs(self, targets: dict[str, object]) -> dict[str, object]:
         pairs: dict[str, object] = {"dispatch.objective_name": self.objective}
         if self.quantile_alpha is not None:
             pairs["objective.quantile_alpha"] = self.quantile_alpha
-        if getattr(self, "n_outputs_", 1) > 1:
-            pairs["objective.n_targets"] = self.n_outputs_
+        n_outputs = cast("int", targets["n_outputs_"])
+        if n_outputs > 1:
+            pairs["objective.n_targets"] = n_outputs
         return pairs
 
-    def _encode_targets(self, y: npt.ArrayLike) -> np.ndarray:
+    def _encode_targets(self, y: npt.ArrayLike) -> tuple[np.ndarray, dict[str, object]]:
         arr = _as_targets(y, "y")
-        self.n_outputs_ = int(arr.shape[1]) if arr.ndim == 2 else 1
-        return arr
+        return arr, {"n_outputs_": int(arr.shape[1]) if arr.ndim == 2 else 1}
 
-    def _encode_eval_targets(self, y: npt.ArrayLike) -> np.ndarray:
+    def _encode_eval_targets(self, y: npt.ArrayLike, targets: dict[str, object]) -> np.ndarray:
         return _as_targets(y, "y").reshape(-1)
 
 
@@ -1121,38 +1129,39 @@ class BonsaiClassifier(_BonsaiEstimator):
         out.classes_ = np.arange(out.n_classes_)
         return out
 
-    def _objective_pairs(self) -> dict[str, object]:
-        if self.n_classes_ == 2:
+    def _objective_pairs(self, targets: dict[str, object]) -> dict[str, object]:
+        n_classes = targets["n_classes_"]
+        if n_classes == 2:
             return {"dispatch.objective_name": "logloss"}
         return {
             "dispatch.objective_name": "softmax",
-            "objective.n_classes": self.n_classes_,
+            "objective.n_classes": n_classes,
         }
 
-    def _encode_targets(self, y: npt.ArrayLike) -> np.ndarray:
+    def _encode_targets(self, y: npt.ArrayLike) -> tuple[np.ndarray, dict[str, object]]:
         y_arr = _as_labels(y, "y")
         if y_arr.dtype.kind == "f" and np.isnan(y_arr).any():
             raise ValueError("Input y contains NaN.")
-        self.classes_ = np.unique(y_arr)
-        self.n_classes_ = len(self.classes_)
-        if self.n_classes_ < 2:
+        classes = np.unique(y_arr)
+        if len(classes) < 2:
             raise ValueError(
-                f"BonsaiClassifier needs at least 2 classes, got {self.n_classes_} "
-                f"({self.classes_!r})"
+                f"BonsaiClassifier needs at least 2 classes, got {len(classes)} ({classes!r})"
             )
-        return np.searchsorted(self.classes_, y_arr).astype(np.float32)
+        encoded = np.searchsorted(classes, y_arr).astype(np.float32)
+        return encoded, {"classes_": classes, "n_classes_": len(classes)}
 
-    def _encode_eval_targets(self, y: npt.ArrayLike) -> np.ndarray:
+    def _encode_eval_targets(self, y: npt.ArrayLike, targets: dict[str, object]) -> np.ndarray:
         """A label the training fold never saw cannot be encoded; letting
         searchsorted guess silently corrupts the eval metric and early
         stopping, so reject it."""
+        classes = cast("np.ndarray", targets["classes_"])
         y_arr = _as_labels(y, "y")
-        ids = np.clip(np.searchsorted(self.classes_, y_arr), 0, self.n_classes_ - 1)
-        bad = self.classes_[ids] != y_arr
+        ids = np.clip(np.searchsorted(classes, y_arr), 0, len(classes) - 1)
+        bad = classes[ids] != y_arr
         if bad.any():
             raise ValueError(
                 f"eval_set labels {np.unique(y_arr[bad])!r} are not in the "
-                f"training classes {self.classes_!r}"
+                f"training classes {classes!r}"
             )
         return _as_f32(ids, 1, "y")
 
