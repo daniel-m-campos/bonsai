@@ -14,6 +14,7 @@ differ.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import tempfile
 import warnings
@@ -654,7 +655,10 @@ class _BonsaiEstimator:
     def _fitted(self) -> Model:
         """The native model, once ``fit`` or ``from_file`` has set it."""
         if self._model is None:
-            raise RuntimeError("fit() or from_file() first")
+            raise _not_fitted_error()(
+                f"This {type(self).__name__} instance is not fitted yet: "
+                "call fit() or from_file() first"
+            )
         return self._model
 
     def _predict_input(self, X: npt.ArrayLike | Dataset) -> np.ndarray | Dataset:
@@ -1213,6 +1217,37 @@ class BonsaiClassifier(_BonsaiEstimator):
 
 
 # Private Functions ================================================================================
+
+
+def __getattr__(name: str) -> type[Exception]:
+    """Resolve ``NotFittedError`` by name, so the error pickles across processes."""
+    if name == "NotFittedError":
+        return _not_fitted_error()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+@functools.cache
+def _not_fitted_error() -> type[Exception]:
+    """The error an unfitted estimator raises, built on first use.
+
+    It is sklearn's ``NotFittedError`` when sklearn is installed, which is
+    what sklearn's tooling and estimator checks catch, and stays a
+    ``RuntimeError`` for callers written against the earlier error. sklearn
+    is imported here rather than at module scope, so ``import bonsai`` never
+    needs it; without sklearn the error keeps ``NotFittedError``'s own bases.
+
+    Returns
+    -------
+    type
+        One class per process, named ``bonsai.estimators.NotFittedError``.
+    """
+    try:
+        from sklearn.exceptions import NotFittedError
+    except ImportError:
+        bases: tuple[type, ...] = (ValueError, AttributeError, RuntimeError)
+    else:
+        bases = (NotFittedError, RuntimeError)
+    return type("NotFittedError", bases, {"__module__": __name__})
 
 
 def _constructor_names(cls) -> list[str]:

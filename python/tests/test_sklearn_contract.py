@@ -4,6 +4,7 @@ shapes, refusals and fitted state sklearn's own estimators promise."""
 from __future__ import annotations
 
 import pickle
+import sys
 
 import bonsai
 import numpy as np
@@ -248,3 +249,42 @@ def test_sequential_feature_selector_passes_nan_through():
     )
 
     assert selector.fit(X, y).transform(X).shape == (len(X), 2)
+
+
+def test_unfitted_estimator_raises_not_fitted_error():
+    from sklearn.exceptions import NotFittedError
+
+    X = np.zeros((3, 2), dtype=np.float32)
+    for est in (bonsai.BonsaiRegressor(), bonsai.BonsaiClassifier()):
+        for method in ("predict", "pred_contribs", "predict_leaf", "staged_predict"):
+            with pytest.raises(NotFittedError, match="call fit"):
+                getattr(est, method)(X)
+        with pytest.raises(RuntimeError):
+            est.predict(X)
+    with pytest.raises(NotFittedError):
+        bonsai.BonsaiClassifier().predict_proba(X)
+
+
+def test_not_fitted_error_pickles():
+    with pytest.raises(Exception) as raised:
+        bonsai.BonsaiRegressor().predict(np.zeros((1, 2)))
+
+    again = pickle.loads(pickle.dumps(raised.value))
+
+    assert type(again) is type(raised.value)
+
+
+def test_unfitted_estimator_passes_sklearn_check():
+    from sklearn.utils.estimator_checks import check_estimators_unfitted
+
+    for est in (bonsai.BonsaiRegressor(n_iters=2), bonsai.BonsaiClassifier(n_iters=2)):
+        check_estimators_unfitted(type(est).__name__, est)
+
+
+def test_not_fitted_error_without_sklearn_keeps_its_bases(monkeypatch):
+    import bonsai.estimators
+
+    monkeypatch.setitem(sys.modules, "sklearn.exceptions", None)
+    error = bonsai.estimators._not_fitted_error.__wrapped__()
+
+    assert all(issubclass(error, base) for base in (ValueError, AttributeError, RuntimeError))
