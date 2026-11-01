@@ -819,3 +819,37 @@ def test_nullable_pandas_columns_read_missing_cells_as_nan():
     want = bonsai.BonsaiRegressor(n_iters=5).fit(spelled, y).predict(spelled)
     got = bonsai.BonsaiRegressor(n_iters=5).fit(nullable, y).predict(nullable)
     np.testing.assert_array_equal(got, want)
+
+
+_SAVE_UNDER_A_FILE_SIZE_LIMIT = """
+import resource
+import signal
+import sys
+
+import numpy as np
+
+import bonsai
+
+rng = np.random.default_rng(0)
+x = rng.standard_normal((500, 4)).astype(np.float32)
+m = bonsai.train({"booster.n_iters": 20}, x, x[:, 0].copy())
+signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+resource.setrlimit(resource.RLIMIT_FSIZE, (4096, resource.RLIM_INFINITY))
+try:
+    m.save(sys.argv[1])
+except RuntimeError as e:
+    assert sys.argv[1] in str(e), e
+    sys.exit(0)
+sys.exit("save reported success on a truncated file")
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="RLIMIT_FSIZE is POSIX")
+def test_save_raises_when_the_bytes_cannot_all_be_written(tmp_path):
+    """A full disk or quota (a 4 KiB file-size limit here) must fail the save,
+    not leave a truncated file that only load discovers."""
+    done = subprocess.run(
+        [sys.executable, "-c", _SAVE_UNDER_A_FILE_SIZE_LIMIT, str(tmp_path / "m.bonsai")],
+        capture_output=True,
+    )
+    assert done.returncode == 0, done.stderr.decode()
