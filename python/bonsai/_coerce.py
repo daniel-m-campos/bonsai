@@ -4,6 +4,7 @@ views for the native module."""
 from __future__ import annotations
 
 import numpy as np
+import numpy.typing as npt
 
 
 def _as_f32(a, ndim: int, name: str) -> np.ndarray:
@@ -35,8 +36,8 @@ def _as_f32(a, ndim: int, name: str) -> np.ndarray:
     return arr
 
 
-def _as_targets(a, name: str) -> np.ndarray:
-    """Contiguous float32 targets: a vector, or one target per column.
+def _as_targets(a, name: str, dtype: npt.DTypeLike = np.float32) -> np.ndarray:
+    """Contiguous targets: a vector, or one target per column.
 
     A single-column 2-D array is read as a vector of one target, the way
     sklearn's regressors read it.
@@ -47,18 +48,21 @@ def _as_targets(a, name: str) -> np.ndarray:
         Anything numpy can make an array of.
     name
         The argument's name, for the error message.
+    dtype
+        The element type: float32 for the native boundary, float64 where
+        the caller's targets are scored rather than trained on.
 
     Returns
     -------
     numpy.ndarray
-        C-contiguous float32 of rank 1, or rank 2 with at least two columns.
+        C-contiguous ``dtype`` of rank 1, or rank 2 with at least two columns.
 
     Raises
     ------
     ValueError
         When the array's rank is neither 1 nor 2.
     """
-    arr = np.ascontiguousarray(a, dtype=np.float32)
+    arr = np.ascontiguousarray(a, dtype=dtype)
     if arr.ndim == 2 and arr.shape[1] == 1:
         arr = np.ascontiguousarray(arr[:, 0])
     if arr.ndim not in (1, 2):

@@ -877,14 +877,21 @@ class BonsaiRegressor(_BonsaiEstimator):
         -------
         float
             The R² score.
+
+        Raises
+        ------
+        ValueError
+            If ``y`` or ``sample_weight`` disagrees with the predictions in
+            row count, or ``y`` in target count.
         """
-        y_true = _as_targets(y, "y").astype(np.float64)
+        y_true = _as_targets(y, "y", np.float64)
         y_pred = np.asarray(self.predict(X), dtype=np.float64)
         w = (
             None
             if sample_weight is None
             else _as_f32(sample_weight, 1, "sample_weight").astype(np.float64)
         )
+        _check_scored_shapes(y_true, y_pred, w)
         if y_true.ndim == 1:
             return _r2(y_true, y_pred, w)
         per_target = [_r2(y_true[:, k], y_pred[:, k], w) for k in range(y_true.shape[1])]
@@ -1066,15 +1073,20 @@ class BonsaiClassifier(_BonsaiEstimator):
         Raises
         ------
         ValueError
-            If ``sample_weight`` sums to zero.
+            If ``sample_weight`` sums to zero, or ``y`` or ``sample_weight``
+            disagrees with the predictions in row count.
         """
         y_true = _as_labels(y, "y")
         y_pred = np.asarray(self.predict(X))
+        w = (
+            None
+            if sample_weight is None
+            else _as_f32(sample_weight, 1, "sample_weight").astype(np.float64)
+        )
+        _check_scored_shapes(y_true, y_pred, w)
         correct = (y_true == y_pred).astype(np.float64)
-
-        if sample_weight is None:
+        if w is None:
             return float(correct.mean())
-        w = _as_f32(sample_weight, 1, "sample_weight").astype(np.float64)
         if w.sum() == 0.0:
             raise ValueError("sample_weight sums to zero; accuracy is undefined")
         return float(np.average(correct, weights=w))
@@ -1274,6 +1286,45 @@ def _as_labels(y: npt.ArrayLike, name: str) -> np.ndarray:
     if arr.ndim != 1:
         raise ValueError(f"{name} must be 1-dimensional or a single column, got shape {arr.shape}")
     return arr
+
+
+def _check_scored_shapes(y_true: np.ndarray, y_pred: np.ndarray, w: np.ndarray | None):
+    """Refuse a ``score`` whose inputs would broadcast instead of pairing up.
+
+    numpy would stretch a single row against many, or score only the
+    targets ``y`` happens to share with the predictions, and report a
+    number for data that does not line up.
+
+    Parameters
+    ----------
+    y_true
+        The caller's targets or labels, a single column already flattened.
+    y_pred
+        What ``predict`` returned for ``X``.
+    w
+        The sample weights, or None.
+
+    Raises
+    ------
+    ValueError
+        If the row counts differ, or the target counts do.
+    """
+    n_rows = len(y_pred)
+    if len(y_true) != n_rows:
+        raise ValueError(f"len(y) must equal the row count of X: got {len(y_true)} and {n_rows}")
+    if y_true.shape[1:] != y_pred.shape[1:]:
+        raise ValueError(
+            f"y has {_target_count(y_true)} targets but the model predicts {_target_count(y_pred)}"
+        )
+    if w is not None and len(w) != n_rows:
+        raise ValueError(
+            f"len(sample_weight) must equal the row count of X: got {len(w)} and {n_rows}"
+        )
+
+
+def _target_count(a: np.ndarray) -> int:
+    """Columns of a target array; a vector is one target."""
+    return 1 if a.ndim == 1 else int(a.shape[1])
 
 
 def _grower_for_device(grower: str, device: str) -> str:
