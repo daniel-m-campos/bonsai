@@ -91,6 +91,27 @@ def test_from_lightgbm_keeps_a_positive_depth_cap():
     assert interop.from_lightgbm({"max_depth": 8}).to_dict()["tree.max_depth"] == 8
 
 
+@pytest.mark.parametrize(
+    ("translate", "depth"),
+    [(interop.from_lightgbm, 0), (interop.from_lightgbm, -1), (interop.from_xgboost, 0)],
+)
+def test_from_library_resolves_the_no_limit_depth(translate, depth):
+    out = translate({"max_depth": depth}).to_dict()
+    assert out["tree.max_depth"] == interop.UNCAPPED_DEPTH
+
+
+@pytest.mark.parametrize(
+    ("translate", "key"),
+    [
+        (interop.from_xgboost, "n_jobs"),
+        (interop.from_lightgbm, "num_threads"),
+        (interop.from_catboost, "thread_count"),
+    ],
+)
+def test_from_library_resolves_all_cores_to_auto(translate, key):
+    assert translate({key: -1}).to_dict()["parallel.n_threads"] == 0
+
+
 def test_from_lightgbm_accepts_the_documented_aliases():
     assert interop.from_lightgbm(
         {

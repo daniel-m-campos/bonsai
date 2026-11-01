@@ -39,9 +39,10 @@ __all__ = [
     "to_xgboost",
 ]
 
-# LightGBM spells an uncapped depth -1; bonsai has no sentinel, so the cap
-# travels as a depth no histogram tree reaches. Under leafwise growth the
-# leaf budget (tree.max_leaves, LightGBM's num_leaves) is what binds anyway.
+# LightGBM spells an uncapped depth -1 (any value <= 0) and XGBoost spells it
+# 0; bonsai has no sentinel, so the cap travels as a depth no histogram tree
+# reaches. Under leafwise growth the leaf budget (tree.max_leaves, LightGBM's
+# num_leaves) is what binds anyway.
 UNCAPPED_DEPTH: Final = 255
 
 
@@ -185,6 +186,18 @@ _DROPPED_NATIVE_SHARED: Final = {
 }
 
 
+def _uncapped_depth(value: Any) -> int:
+    """A depth cap with the no-limit sentinel (0 and below) resolved."""
+    depth = int(value)
+    return UNCAPPED_DEPTH if depth <= 0 else depth
+
+
+def _all_cores_as_auto(value: Any) -> int:
+    """A thread count with the all-cores sentinel (any negative) resolved
+    to bonsai's auto-detect, 0."""
+    return max(int(value), 0)
+
+
 # XGBoost ==========================================================================================
 
 _XGB_OBJECTIVES: Final = _Values(
@@ -220,7 +233,8 @@ _XGBOOST: Final = _Library(
         # site rather than in the params dict.
         _Knob("booster.n_iters", "n_estimators", "num_boost_round"),
         _Knob("booster.learning_rate", "learning_rate", "eta"),
-        _Knob("tree.max_depth", "max_depth"),
+        # max_depth=0 is XGBoost's uncapped growth; see the LightGBM row.
+        _Knob("tree.max_depth", "max_depth", to_native=_uncapped_depth),
         _Knob("tree.max_leaves", "max_leaves"),
         # NOT a row count. Both sides are a minimum summed hessian, so under
         # squared error the value is a row count and under logloss it is far
@@ -235,7 +249,7 @@ _XGBOOST: Final = _Library(
         _Knob("bin_mapper.max_bin", "max_bin"),
         _Knob("sampler.subsample", "subsample", implies=_ROW_SAMPLING),
         _Knob("booster.random_seed", "seed", "random_state"),
-        _Knob("parallel.n_threads", "n_jobs", "nthread"),
+        _Knob("parallel.n_threads", "n_jobs", "nthread", to_native=_all_cores_as_auto),
         # XGBoost keeps every tree it grew on a stop and leaves truncation to
         # the caller's iteration_range; bonsai returns the best-iteration
         # model, so a translated config predicts from a shorter ensemble.
@@ -286,12 +300,6 @@ _LGBM_OBJECTIVES: Final = _Values(
 )
 
 
-def _lgbm_depth(value: Any) -> int:
-    """LightGBM's depth cap, with its -1 sentinel resolved."""
-    depth = int(value)
-    return UNCAPPED_DEPTH if depth < 0 else depth
-
-
 _LIGHTGBM: Final = _Library(
     name="lightgbm",
     title="LightGBM",
@@ -305,11 +313,11 @@ _LIGHTGBM: Final = _Library(
             "num_trees",
         ),
         _Knob("booster.learning_rate", "learning_rate", "shrinkage_rate", "eta"),
-        # max_depth=-1 is LightGBM's uncapped growth. bonsai has no sentinel,
-        # so it travels as UNCAPPED_DEPTH and num_leaves stays the binding
-        # budget, which is what governs a leafwise fit either way. The
-        # reverse never re-invents the sentinel: 255 comes back as 255.
-        _Knob("tree.max_depth", "max_depth", to_native=_lgbm_depth),
+        # max_depth <= 0 is LightGBM's uncapped growth. bonsai has no
+        # sentinel, so it travels as UNCAPPED_DEPTH and num_leaves stays the
+        # binding budget, which is what governs a leafwise fit either way.
+        # The reverse never re-invents the sentinel: 255 comes back as 255.
+        _Knob("tree.max_depth", "max_depth", to_native=_uncapped_depth),
         _Knob("tree.max_leaves", "num_leaves", "max_leaves"),
         # Same name, different gate. LightGBM rejects a candidate whose
         # child would hold fewer rows than this; bonsai only refuses to
@@ -326,7 +334,9 @@ _LIGHTGBM: Final = _Library(
         _Knob("bin_mapper.max_bin", "max_bin"),
         _Knob("bin_mapper.min_data_in_bin", "min_data_in_bin"),
         _Knob("booster.random_seed", "seed", "random_state", "random_seed"),
-        _Knob("parallel.n_threads", "num_threads", "n_jobs", "nthread"),
+        _Knob(
+            "parallel.n_threads", "num_threads", "n_jobs", "nthread", to_native=_all_cores_as_auto
+        ),
         # LightGBM arms patience through a callback, not this key; the key
         # is accepted here because its params-dict spelling is documented.
         _Knob("booster.early_stopping_rounds", "early_stopping_round", "early_stopping_rounds"),
@@ -409,7 +419,7 @@ _CATBOOST: Final = _Library(
         _Knob("tree.feature_fraction", "rsm", "colsample_bylevel"),
         _Knob("sampler.subsample", "subsample", implies=_ROW_SAMPLING),
         _Knob("booster.random_seed", "random_seed", "random_state"),
-        _Knob("parallel.n_threads", "thread_count"),
+        _Knob("parallel.n_threads", "thread_count", to_native=_all_cores_as_auto),
         # CatBoost's patience is od_wait under od_type="Iter"; the
         # constructor's early_stopping_rounds sets the same detector.
         _Knob("booster.early_stopping_rounds", "early_stopping_rounds", "od_wait"),
