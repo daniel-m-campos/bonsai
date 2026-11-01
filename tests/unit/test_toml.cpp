@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <clocale>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -159,6 +161,62 @@ TEST_CASE("Overrides: a float parses the same under a comma-decimal locale",
     CHECK_NOTHROW(apply());
     std::setlocale(LC_NUMERIC, previous.c_str());
     CHECK(cfg.booster_config.learning_rate == 0.25F);
+}
+
+namespace
+{
+float min_gain_from(std::string const &spelling)
+{
+    bonsai::Config cfg;
+    bonsai::config::apply_overrides(cfg, {{"tree.min_gain_to_split", spelling}});
+    return cfg.tree_config.min_gain_to_split;
+}
+} // namespace
+
+TEST_CASE("Overrides: a float beyond the float range saturates to zero or infinity",
+          "[overrides][edge]")
+{
+    constexpr float kInf = std::numeric_limits<float>::infinity();
+    SECTION("underflow keeps the sign of zero")
+    {
+        CHECK(min_gain_from("1e-50") == 0.0F);
+        CHECK_FALSE(std::signbit(min_gain_from("1e-50")));
+        CHECK(std::signbit(min_gain_from("-1e-50")));
+    }
+    SECTION("overflow keeps the sign of infinity")
+    {
+        CHECK(min_gain_from("1e+40") == kInf);
+        CHECK(min_gain_from("-1e+40") == -kInf);
+    }
+    SECTION("a subnormal stays subnormal")
+    {
+        CHECK(min_gain_from("1e-45") == std::numeric_limits<float>::denorm_min());
+    }
+    SECTION("beyond the double range is refused with the range named")
+    {
+        REQUIRE_THROWS_WITH(min_gain_from("1e-400"), Catch::Matchers::ContainsSubstring(
+                                                         "outside the double range"));
+    }
+}
+
+TEST_CASE("Overrides: a float accepts a leading sign, leading space and hex",
+          "[overrides][edge]")
+{
+    SECTION("accepted spellings")
+    {
+        CHECK(min_gain_from("+0.1") == 0.1F);
+        CHECK(min_gain_from(" \t0.1") == 0.1F);
+        CHECK(min_gain_from("0x1p-3") == 0.125F);
+        CHECK(min_gain_from("-0X1p-3") == -0.125F);
+    }
+    SECTION("refused spellings")
+    {
+        for (std::string const spelling : {"+-1", "--1", "0x-1", "0.1 ", "0x", "+"})
+        {
+            CAPTURE(spelling);
+            CHECK_THROWS_AS(min_gain_from(spelling), bonsai::ConfigError);
+        }
+    }
 }
 
 TEST_CASE("Overrides: malformed value throws ConfigError", "[overrides][edge]")

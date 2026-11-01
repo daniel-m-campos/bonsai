@@ -3,6 +3,8 @@
 #include <charconv>
 #include <cstdint>
 #include <expected>
+#include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -61,16 +63,68 @@ template <typename U> ParseResult<U> read_uint_from_string(std::string_view valu
     return static_cast<U>(*v);
 }
 
+struct FloatSpelling
+{
+    std::string_view  magnitude;
+    std::chars_format format;
+    bool              negative;
+};
+
+inline FloatSpelling float_spelling(std::string_view value)
+{
+    auto const first_visible = value.find_first_not_of(" \t\n\v\f\r");
+    value.remove_prefix(first_visible == std::string_view::npos ? value.size()
+                                                                : first_visible);
+    bool const negative = value.starts_with('-');
+    if (negative || value.starts_with('+'))
+    {
+        value.remove_prefix(1);
+    }
+    bool const hex = value.starts_with("0x") || value.starts_with("0X");
+    if (hex)
+    {
+        value.remove_prefix(2);
+    }
+    return {value, hex ? std::chars_format::hex : std::chars_format::general, negative};
+}
+
+inline std::optional<float> saturate_to_float(FloatSpelling const &spelling)
+{
+    double      wide = 0.0;
+    auto const *end  = spelling.magnitude.data() + spelling.magnitude.size();
+    auto const  res =
+        std::from_chars(spelling.magnitude.data(), end, wide, spelling.format);
+    if (res.ec != std::errc{} || res.ptr != end)
+    {
+        return std::nullopt;
+    }
+    return wide > 1.0 ? std::numeric_limits<float>::infinity()
+                      : static_cast<float>(wide);
+}
+
 inline ParseResult<float> read_float_from_string(std::string_view value)
 {
-    float       v   = 0.0F;
-    auto const *end = value.data() + value.size();
-    auto const  res = std::from_chars(value.data(), end, v);
-    if (res.ec != std::errc{} || res.ptr != end)
+    auto const  spelling  = float_spelling(value);
+    float       magnitude = 0.0F;
+    auto const *end       = spelling.magnitude.data() + spelling.magnitude.size();
+    auto const  res =
+        std::from_chars(spelling.magnitude.data(), end, magnitude, spelling.format);
+    bool const whole = res.ptr == end && !spelling.magnitude.starts_with('-');
+    if (whole && res.ec == std::errc::result_out_of_range)
+    {
+        auto const saturated = saturate_to_float(spelling);
+        if (!saturated)
+        {
+            return std::unexpected("'" + std::string{value} +
+                                   "' is outside the double range");
+        }
+        magnitude = *saturated;
+    }
+    else if (!whole || res.ec != std::errc{})
     {
         return std::unexpected("cannot parse float from '" + std::string{value} + "'");
     }
-    return v;
+    return spelling.negative ? -magnitude : magnitude;
 }
 
 template <> struct FieldCodec<bool>
