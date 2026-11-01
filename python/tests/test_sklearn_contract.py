@@ -222,3 +222,29 @@ def test_device_refuses_a_malformed_cuda_index():
     for device in ("cuda:abc", "cuda:", "tpu:0"):
         with pytest.raises(ValueError, match="device must be 'cpu', 'cuda' or 'cuda:N'"):
             bonsai.BonsaiRegressor(device=device).fit(X, y)
+
+
+def test_tags_allow_nan_features():
+    from sklearn.utils import get_tags
+
+    for est in (bonsai.BonsaiRegressor(), bonsai.BonsaiClassifier()):
+        assert get_tags(est).input_tags.allow_nan
+
+
+def test_tags_mark_only_the_regressor_multi_output():
+    from sklearn.utils import get_tags
+
+    assert get_tags(bonsai.BonsaiRegressor()).target_tags.multi_output
+    assert not get_tags(bonsai.BonsaiClassifier()).target_tags.multi_output
+
+
+def test_sequential_feature_selector_passes_nan_through():
+    from sklearn.feature_selection import SequentialFeatureSelector
+
+    X, y = _regression()
+    X[::10, 1] = np.nan
+    selector = SequentialFeatureSelector(
+        bonsai.BonsaiRegressor(n_iters=5, n_threads=2), n_features_to_select=2, cv=2
+    )
+
+    assert selector.fit(X, y).transform(X).shape == (len(X), 2)

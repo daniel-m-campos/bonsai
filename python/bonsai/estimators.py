@@ -149,7 +149,10 @@ class _BonsaiEstimator:
         ``RegressorMixin``/``ClassifierMixin``/``BaseEstimator`` produce, so
         sklearn stays import-only-in-tests; empirically verified against the
         installed sklearn (see test suite). ``_estimator_type`` is what
-        picks the per-type tag.
+        picks the per-type tag. Both estimators route NaN features as
+        missing, so ``allow_nan`` is set and sklearn's meta-estimators pass
+        NaN through; the regressor fits several targets natively, which is
+        ``MultiOutputMixin``'s ``multi_output``.
 
         Returns
         -------
@@ -165,17 +168,19 @@ class _BonsaiEstimator:
         )
 
         kind = self._estimator_type
+        is_regressor = kind == "regressor"
         per_type = (
             {"regressor_tags": RegressorTags()}
-            if kind == "regressor"
+            if is_regressor
             else {"classifier_tags": ClassifierTags()}
         )
         tags: Any = Tags
         target_tags: Any = TargetTags
+        input_tags: Any = InputTags
         return tags(
             estimator_type=kind,
-            target_tags=target_tags(required=True),
-            input_tags=InputTags(),
+            target_tags=target_tags(required=True, multi_output=is_regressor),
+            input_tags=input_tags(allow_nan=True),
             **per_type,
         )
 
