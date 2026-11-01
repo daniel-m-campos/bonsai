@@ -191,3 +191,34 @@ def test_pickle_written_without_an_eval_history_loads_without_one():
 
     assert loaded.evals_result() == {}
     np.testing.assert_array_equal(loaded.predict(np.zeros((2, 4))), est.predict(np.zeros((2, 4))))
+
+
+def _overrides_fit_passes(monkeypatch, est) -> dict:
+    """The overrides ``fit`` hands the native ``train``, captured before any training."""
+    import bonsai.estimators
+
+    captured: dict = {}
+
+    def capture(overrides, *args, **kwargs):
+        captured.update(overrides)
+        raise RuntimeError("captured")
+
+    monkeypatch.setattr(bonsai.estimators, "train", capture)
+    X, y = _regression(n=50)
+    with pytest.raises(RuntimeError, match="captured"):
+        est.fit(X, y)
+    return captured
+
+
+def test_device_cuda_n_places_the_fit_on_device_n(monkeypatch):
+    overrides = _overrides_fit_passes(monkeypatch, bonsai.BonsaiRegressor(device="cuda:1"))
+
+    assert overrides["parallel.device_id"] == 1
+    assert overrides["dispatch.grower_name"] == "cuda_leafwise"
+
+
+def test_device_refuses_a_malformed_cuda_index():
+    X, y = _regression(n=50)
+    for device in ("cuda:abc", "cuda:", "tpu:0"):
+        with pytest.raises(ValueError, match="device must be 'cpu', 'cuda' or 'cuda:N'"):
+            bonsai.BonsaiRegressor(device=device).fit(X, y)

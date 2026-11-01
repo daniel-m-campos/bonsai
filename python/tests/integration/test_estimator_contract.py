@@ -16,7 +16,7 @@ from typing import Any
 import bonsai
 import numpy as np
 import pytest
-from bonsai.estimators import _grower_for_device
+from bonsai.estimators import _device_pairs
 
 RNG = np.random.default_rng(7)
 
@@ -167,13 +167,16 @@ def test_dart_with_eval_set_raises():
 
 
 def test_device_and_grower_mapping():
-    assert _grower_for_device("leafwise", "cuda") == "cuda_leafwise"
-    assert _grower_for_device("depthwise", "cuda") == "cuda_depthwise"
-    assert _grower_for_device("levelwise", "cuda") == "cuda_levelwise"
-    assert _grower_for_device("cuda_levelwise", "cpu") == "levelwise"
-    assert _grower_for_device("depthwise", "cpu") == "depthwise"
+    def grower(name, device):
+        return _device_pairs(name, device)["dispatch.grower_name"]
+
+    assert grower("leafwise", "cuda") == "cuda_leafwise"
+    assert grower("depthwise", "cuda") == "cuda_depthwise"
+    assert grower("levelwise", "cuda") == "cuda_levelwise"
+    assert grower("cuda_levelwise", "cpu") == "levelwise"
+    assert grower("depthwise", "cpu") == "depthwise"
     with pytest.raises(ValueError):
-        _grower_for_device("leafwise", "tpu")
+        _device_pairs("leafwise", "tpu")
     if not bonsai.cuda_available():
         with np.testing.assert_raises(Exception):
             Xtr, ytr, _, _ = _reg_data(n=100)

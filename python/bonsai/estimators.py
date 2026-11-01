@@ -595,9 +595,7 @@ class _BonsaiEstimator:
             if self.sampler == "all_rows":
                 merged["dispatch.sampler_name"] = "bernoulli"
         if self.device is not None:
-            merged["dispatch.grower_name"] = _grower_for_device(
-                str(merged["dispatch.grower_name"]), self.device
-            )
+            merged.update(_device_pairs(str(merged["dispatch.grower_name"]), self.device))
         merged.update(self._explicit_params())
         return merged
 
@@ -856,7 +854,8 @@ class BonsaiRegressor(_BonsaiEstimator):
     device
         ``"cpu"`` or ``"cuda"`` (or ``"cuda:N"``); ``"cuda"`` picks the CUDA
         grower matching the chosen ``grower``, moving compute without
-        changing the growth strategy. None leaves the grower name as given.
+        changing the growth strategy, and ``"cuda:N"`` also sets
+        ``parallel.device_id`` to ``N``. None leaves the grower name as given.
     quantile_alpha
         The quantile to fit when ``objective="quantile"``.
     params
@@ -1030,7 +1029,8 @@ class BonsaiClassifier(_BonsaiEstimator):
     device
         ``"cpu"`` or ``"cuda"`` (or ``"cuda:N"``); ``"cuda"`` picks the CUDA
         grower matching the chosen ``grower``, moving compute without
-        changing the growth strategy. None leaves the grower name as given.
+        changing the growth strategy, and ``"cuda:N"`` also sets
+        ``parallel.device_id`` to ``N``. None leaves the grower name as given.
     params
         Overrides beyond the first-class kwargs: a ``bonsai.Params`` or a
         dotted config-key dict; the power-user escape hatch, applied after
@@ -1374,18 +1374,40 @@ def _target_count(a: np.ndarray) -> int:
     return 1 if a.ndim == 1 else int(a.shape[1])
 
 
-def _grower_for_device(grower: str, device: str) -> str:
-    """The grower that runs ``grower``'s strategy on ``device``.
+def _device_pairs(grower: str, device: str) -> dict[str, object]:
+    """The config keys ``device`` writes: the grower, and which GPU.
 
-    Every growth strategy has a CUDA grower, so the mapping is a prefix: the
-    device moves compute and never substitutes the structural choice.
+    Every growth strategy has a CUDA grower, so the grower mapping is a
+    prefix: the device moves compute and never substitutes the structural
+    choice. ``"cuda:N"`` also places the fit on device ``N``.
+
+    Parameters
+    ----------
+    grower
+        The grower name before the device is applied.
+    device
+        ``"cpu"``, ``"cuda"`` (or ``"gpu"``), or ``"cuda:N"``.
+
+    Returns
+    -------
+    dict
+        ``dispatch.grower_name``, and ``parallel.device_id`` for ``"cuda:N"``.
+
+    Raises
+    ------
+    ValueError
+        If ``device`` is none of those, ``"cuda:abc"`` included.
     """
     dev = device.lower()
-    if dev in ("cuda", "gpu") or dev.startswith("cuda:"):
-        return grower if grower.startswith("cuda_") else f"cuda_{grower}"
     if dev == "cpu":
-        return grower.removeprefix("cuda_")
-    raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")
+        return {"dispatch.grower_name": grower.removeprefix("cuda_")}
+    cuda_grower = grower if grower.startswith("cuda_") else f"cuda_{grower}"
+    if dev in ("cuda", "gpu"):
+        return {"dispatch.grower_name": cuda_grower}
+    kind, _, index = dev.partition(":")
+    if kind != "cuda" or not index.isdigit():
+        raise ValueError(f"device must be 'cpu', 'cuda' or 'cuda:N', got {device!r}")
+    return {"dispatch.grower_name": cuda_grower, "parallel.device_id": int(index)}
 
 
 def _reject_eval_set_list(eval_set):
