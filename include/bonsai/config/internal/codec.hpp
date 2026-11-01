@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <expected>
+#include <format>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -20,18 +22,36 @@ template <typename T> using ParseResult = std::expected<T, std::string>;
 
 template <typename T> struct FieldCodec;
 
-template <typename U> ParseResult<U> read_uint_from_toml(toml::node const &node)
+template <typename I> ParseResult<I> integer_in_width(int64_t v)
+{
+    if constexpr (std::is_unsigned_v<I>)
+    {
+        if (v < 0)
+        {
+            return std::unexpected("must be non-negative");
+        }
+    }
+    else if (v < std::numeric_limits<I>::min())
+    {
+        return std::unexpected(std::format("must be at least {} (got {})",
+                                           std::numeric_limits<I>::min(), v));
+    }
+    if (v > 0 && static_cast<uint64_t>(v) > std::numeric_limits<I>::max())
+    {
+        return std::unexpected(std::format("must be at most {} (got {})",
+                                           std::numeric_limits<I>::max(), v));
+    }
+    return static_cast<I>(v);
+}
+
+template <typename I> ParseResult<I> read_integer_from_toml(toml::node const &node)
 {
     auto opt = node.value<int64_t>();
     if (!opt)
     {
         return std::unexpected("wrong type (expected integer)");
     }
-    if (*opt < 0)
-    {
-        return std::unexpected("must be non-negative");
-    }
-    return static_cast<U>(*opt);
+    return integer_in_width<I>(*opt);
 }
 
 template <typename I = int> ParseResult<I> read_int_from_string(std::string_view value)
@@ -48,18 +68,14 @@ template <typename I = int> ParseResult<I> read_int_from_string(std::string_view
     return v;
 }
 
-template <typename U> ParseResult<U> read_uint_from_string(std::string_view value)
+template <typename I> ParseResult<I> read_integer_from_string(std::string_view value)
 {
     auto const v = read_int_from_string<int64_t>(value);
     if (!v)
     {
         return std::unexpected(v.error());
     }
-    if (*v < 0)
-    {
-        return std::unexpected("must be non-negative");
-    }
-    return static_cast<U>(*v);
+    return integer_in_width<I>(*v);
 }
 
 inline ParseResult<float> read_float_from_string(std::string_view value)
@@ -108,16 +124,11 @@ template <> struct FieldCodec<int>
 {
     static ParseResult<int> from_toml(toml::node const &node)
     {
-        auto opt = node.value<int64_t>();
-        if (!opt)
-        {
-            return std::unexpected("wrong type (expected integer)");
-        }
-        return static_cast<int>(*opt);
+        return read_integer_from_toml<int>(node);
     }
     static ParseResult<int> from_string(std::string_view value)
     {
-        return read_int_from_string(value);
+        return read_integer_from_string<int>(value);
     }
     static toml::value<int64_t> to_toml(int v)
     {
@@ -131,11 +142,11 @@ struct FieldCodec<U>
 {
     static ParseResult<U> from_toml(toml::node const &node)
     {
-        return read_uint_from_toml<U>(node);
+        return read_integer_from_toml<U>(node);
     }
     static ParseResult<U> from_string(std::string_view value)
     {
-        return read_uint_from_string<U>(value);
+        return read_integer_from_string<U>(value);
     }
     static toml::value<int64_t> to_toml(U v)
     {

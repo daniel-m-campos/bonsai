@@ -152,3 +152,21 @@ def test_train_rejects_the_retired_pairs_form():
 def test_train_accepts_none_params():
     X, y = _reg_data(n=500)
     assert bonsai.train(None, bonsai.Dataset(X, y)).n_iters == 100
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("tree.min_data_in_leaf", 256, r"\[tree\]\.min_data_in_leaf: must be at most 255"),
+        (
+            "booster.random_seed",
+            2**32 + 42,
+            r"\[booster\]\.random_seed: must be at most 4294967295",
+        ),
+    ],
+)
+def test_train_refuses_a_value_outside_its_key_domain(key, value, message):
+    X, y = _reg_data(n=200, f=3)
+    params = {"booster.n_iters": 2, "dispatch.sampler_name": "bernoulli", key: value}
+    with pytest.raises(RuntimeError, match=message):
+        bonsai.train(params, X, y)

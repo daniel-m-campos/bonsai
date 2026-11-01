@@ -150,6 +150,44 @@ TEST_CASE("Overrides: non-dotted key throws ConfigError", "[overrides][edge]")
     REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs), bonsai::ConfigError);
 }
 
+TEST_CASE("Config codec: an integer past its field's width is refused",
+          "[toml][overrides][edge]")
+{
+    using Catch::Matchers::ContainsSubstring;
+    bonsai::Config cfg;
+    SECTION("an override one past a u8 field")
+    {
+        REQUIRE_THROWS_WITH(
+            bonsai::config::apply_overrides(cfg, {{"tree.min_data_in_leaf", "256"}}),
+            ContainsSubstring(
+                "[tree].min_data_in_leaf: must be at most 255 (got 256)"));
+    }
+    SECTION("an override one past a u32 field")
+    {
+        REQUIRE_THROWS_WITH(
+            bonsai::config::apply_overrides(cfg,
+                                            {{"booster.random_seed", "4294967338"}}),
+            ContainsSubstring("[booster].random_seed: must be at most 4294967295"));
+    }
+    SECTION("a TOML value past an int field")
+    {
+        REQUIRE_THROWS_WITH(
+            bonsai::config::parse_toml("[data]\nlabel_column = 2147483648\n"),
+            ContainsSubstring("[data].label_column: must be at most 2147483647"));
+    }
+    SECTION("a TOML value below an int field")
+    {
+        REQUIRE_THROWS_WITH(
+            bonsai::config::parse_toml("[data]\nweight_column = -2147483649\n"),
+            ContainsSubstring("[data].weight_column: must be at least -2147483648"));
+    }
+    SECTION("the widest value a field holds is kept")
+    {
+        bonsai::config::apply_overrides(cfg, {{"tree.max_depth", "255"}});
+        REQUIRE(cfg.tree_config.max_depth == 255);
+    }
+}
+
 TEST_CASE("Toml: [metrics] section populates fit and eval lists", "[toml][metrics]")
 {
     constexpr auto kText = R"(
