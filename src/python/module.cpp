@@ -599,6 +599,25 @@ std::vector<IdT> parse_index_selection(nb::handle selection, size_t n,
     return out;
 }
 
+void require_distinct_columns(std::span<bonsai::feature_id_t const> keep,
+                              std::span<std::string const>          names)
+{
+    std::vector<bool> seen(names.size(), false);
+    for (bonsai::feature_id_t const id : keep)
+    {
+        if (seen[id])
+        {
+            throw nb::value_error(
+                std::format("Dataset.subset(columns=...) names the feature '{}' more "
+                            "than once; feature names must be unique, so each column "
+                            "can be selected once",
+                            names[id])
+                    .c_str());
+        }
+        seen[id] = true;
+    }
+}
+
 class Dataset
 {
   public:
@@ -693,10 +712,12 @@ class Dataset
             Dataset const narrowed =
                 rows.is_none() ? *this : subset(self, rows, nb::none());
             auto const names = narrowed.loaded_->mappers.feature_names();
-            return {narrowed.bins().select_features(
-                        parse_index_selection<bonsai::feature_id_t>(
-                            columns, names.size(), column_axis(names))),
-                    narrowed.bin_cfg_, narrowed.device_id_};
+            std::vector<bonsai::feature_id_t> const keep =
+                parse_index_selection<bonsai::feature_id_t>(columns, names.size(),
+                                                            column_axis(names));
+            require_distinct_columns(keep, names);
+            return {narrowed.bins().select_features(keep), narrowed.bin_cfg_,
+                    narrowed.device_id_};
         }
         std::vector<bonsai::row_id_t> ids =
             parse_index_selection<bonsai::row_id_t>(rows, n_rows(), row_axis());
@@ -2210,8 +2231,9 @@ NB_MODULE(_bonsai, m)
             "wherever the parent's bins were: a device-resident parent is "
             "rewritten on the device and the result reports that device, so a "
             "feature-selection loop never round-trips through the host. "
-            "Out-of-range and negative indices raise, and an unknown name "
-            "raises KeyError.\n"
+            "Out-of-range and negative indices raise, an unknown name raises "
+            "KeyError, and a column named twice raises ValueError: feature "
+            "names are unique.\n"
             "\n"
             "Returns\n"
             "-------\n"

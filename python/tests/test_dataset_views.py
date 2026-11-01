@@ -361,6 +361,20 @@ def test_subset_columns_rejects_abuse():
         ds.subset(columns=not_a_selector)
 
 
+def test_subset_columns_refuses_a_repeated_column():
+    """Feature names are unique, as the constructor demands, so selecting a
+    column twice would hand a name-keyed setting such as a monotone constraint
+    only the first copy. By name or by index, it is refused."""
+    X, y = _blocky_data(n=300, f=3)
+    ds = bonsai.Dataset(X, y, feature_names=["a", "b", "c"])
+    with pytest.raises(ValueError, match="'a' more than once"):
+        ds.subset(columns=["a", "a", "b"])
+    with pytest.raises(ValueError, match="'b' more than once"):
+        ds.subset(columns=[1, 2, 1])
+    with pytest.raises(ValueError, match="more than once"):
+        ds.subset(rows=np.arange(100), columns=[0, 0])
+
+
 def test_a_model_trained_on_a_selection_refuses_the_parent():
     """The parent's cuts describe eight columns and the model's describe two;
     routing the parent through it would read the wrong feature at every node."""
