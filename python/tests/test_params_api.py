@@ -181,3 +181,11 @@ def test_train_refuses_a_value_outside_its_key_domain(key, value, message):
     params = {"booster.n_iters": 2, "dispatch.sampler_name": "bernoulli", key: value}
     with pytest.raises(RuntimeError, match=message):
         bonsai.train(params, X, y)
+
+
+def test_train_refuses_a_bad_positional_monotone_list():
+    X, y = _reg_data(n=200, f=3)
+    with pytest.raises(RuntimeError, match=r"item 0: must be in \[-1, 1\] \(got 2\)"):
+        bonsai.train({"tree.monotone_constraints": [2, 0, 0]}, X, y)
+    with pytest.raises(RuntimeError, match="lists 5 directions but the training data has 3"):
+        bonsai.train({"tree.monotone_constraints": [1, 0, 0, -1, 1]}, X, y)

@@ -79,6 +79,17 @@ void check_label_domain(Config const &cfg, floats_view labels, std::string_view 
     }
 }
 
+void check_monotone_width(Config const &cfg, size_t n_features)
+{
+    size_t const listed = cfg.tree_config.monotone_constraints.size();
+    if (listed > n_features)
+    {
+        throw ConfigError(std::format("tree.monotone_constraints lists {} directions "
+                                      "but the training data has {} features",
+                                      listed, n_features));
+    }
+}
+
 struct ParsedFeatures
 {
     detail::ColumnBatch batch;
@@ -563,6 +574,7 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                     EvalHistoryRef                     eval_history)
 {
     check_label_domain(cfg, train.dataset.labels(), "train");
+    check_monotone_width(cfg, train.dataset.n_features());
     if (validation)
     {
         check_label_domain(cfg, validation->get().labels, "validation");

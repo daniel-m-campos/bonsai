@@ -55,6 +55,21 @@ TEST_CASE("train_with_progress: a train-only fit runs every configured round",
     CHECK(booster->n_iters() == cfg.booster_config.n_iters);
 }
 
+TEST_CASE("train_with_progress: monotone constraints past the feature count are "
+          "refused",
+          "[cli_pipeline][fit][edge]")
+{
+    auto       cfg                       = make_tiny_config();
+    auto const loaded                    = load_train_from_csv(cfg, cfg.data.train);
+    cfg.tree_config.monotone_constraints = {1, 0, 0, -1};
+    REQUIRE_THROWS_WITH(train_with_progress(cfg, loaded.train),
+                        Catch::Matchers::ContainsSubstring(
+                            "tree.monotone_constraints lists 4 directions but the "
+                            "training data has 3 features"));
+    cfg.tree_config.monotone_constraints = {1, 0, -1};
+    CHECK_NOTHROW(train_with_progress(cfg, loaded.train));
+}
+
 TEST_CASE("score_csv: returns one raw score per row", "[cli_pipeline][score]")
 {
     auto const cfg     = make_tiny_config();
