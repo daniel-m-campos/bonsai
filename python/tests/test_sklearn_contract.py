@@ -288,3 +288,38 @@ def test_not_fitted_error_without_sklearn_keeps_its_bases(monkeypatch):
     error = bonsai.estimators._not_fitted_error.__wrapped__()
 
     assert all(issubclass(error, base) for base in (ValueError, AttributeError, RuntimeError))
+
+
+def test_params_subsample_samples_rows_like_the_subsample_argument():
+    X, y = _regression()
+    by_params = bonsai.BonsaiRegressor(
+        n_iters=10, n_threads=2, params={"sampler.subsample": 0.8}
+    ).fit(X, y)
+    by_argument = bonsai.BonsaiRegressor(n_iters=10, n_threads=2, subsample=0.8).fit(X, y)
+    unsampled = bonsai.BonsaiRegressor(n_iters=10, n_threads=2).fit(X, y)
+
+    np.testing.assert_array_equal(by_params.predict(X), by_argument.predict(X))
+    assert not np.array_equal(by_params.predict(X), unsampled.predict(X))
+
+
+def test_params_subsample_keeps_an_explicit_sampler(monkeypatch):
+    goss_by_params = bonsai.BonsaiRegressor(
+        params={"sampler.subsample": 0.8, "dispatch.sampler_name": "goss"}
+    )
+    goss_by_argument = bonsai.BonsaiRegressor(sampler="goss", params={"sampler.subsample": 0.8})
+
+    for est in (goss_by_params, goss_by_argument):
+        assert _overrides_fit_passes(monkeypatch, est)["dispatch.sampler_name"] == "goss"
+
+
+def test_params_subsample_warm_start_meets_the_subsample_argument_rule(tmp_path):
+    X, y = _regression()
+    path = str(tmp_path / "all_rows.msgpack")
+    bonsai.BonsaiRegressor(n_iters=3, n_threads=2).fit(X, y).save(path)
+
+    by_argument = bonsai.BonsaiRegressor(n_iters=3, n_threads=2, subsample=0.8)
+    by_params = bonsai.BonsaiRegressor(n_iters=3, n_threads=2, params={"sampler.subsample": 0.8})
+
+    for est in (by_argument, by_params):
+        with pytest.raises(ValueError, match=r"dispatch\.sampler_name=bernoulli disagrees"):
+            est.fit(X, y, init_model=path)

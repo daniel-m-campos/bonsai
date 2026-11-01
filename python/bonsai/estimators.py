@@ -518,12 +518,18 @@ class _BonsaiEstimator:
             self._model = None
 
     # Every dispatch or objective key a constructor argument writes, with all
-    # the arguments that write it: `device` rewrites the grower for a device,
-    # `subsample` turns the sampler on. A warm start may inherit the model's
-    # value for a key only when all of them are still at their defaults.
+    # the arguments that write it and every params key that does: `device`
+    # rewrites the grower for a device, a subsample fraction turns the
+    # sampler on. A warm start may inherit the model's value for a key only
+    # when all of the arguments are still at their defaults and params names
+    # none of the keys.
     _WARM_START_KNOBS = (
-        ("dispatch.grower_name", ("grower", "device")),
-        ("dispatch.sampler_name", ("sampler", "subsample")),
+        ("dispatch.grower_name", ("grower", "device"), ("dispatch.grower_name",)),
+        (
+            "dispatch.sampler_name",
+            ("sampler", "subsample"),
+            ("dispatch.sampler_name", "sampler.subsample"),
+        ),
     )
 
     def _store(self, arguments: dict):
@@ -593,17 +599,31 @@ class _BonsaiEstimator:
         if self.max_bin is not None:
             merged["bin_mapper.max_bin"] = self.max_bin
         if self.subsample is not None:
-            # A subsample fraction implies row sampling; bonsai makes the
-            # sampler explicit, so setting the fraction turns it on when the
-            # sampler is still at its default (an explicit sampler= choice
-            # keeps its machinery).
             merged["sampler.subsample"] = self.subsample
-            if self.sampler == "all_rows":
-                merged["dispatch.sampler_name"] = "bernoulli"
         if self.device is not None:
             merged.update(_device_pairs(str(merged["dispatch.grower_name"]), self.device))
-        merged.update(self._explicit_params())
+        explicit = self._explicit_params()
+        merged.update(explicit)
+        if self._subsample_implies_bernoulli(explicit):
+            merged["dispatch.sampler_name"] = "bernoulli"
         return merged
+
+    def _subsample_implies_bernoulli(self, explicit: dict[str, object]) -> bool:
+        """Whether a subsample fraction turns row sampling on.
+
+        bonsai makes the sampler explicit, and the default ``all_rows``
+        sampler ignores ``sampler.subsample``. A fraction, from the
+        ``subsample`` argument or from ``params``, therefore switches to
+        ``bernoulli`` while the sampler is still at its default. An explicit
+        ``sampler`` argument or ``dispatch.sampler_name`` keeps its own
+        machinery.
+        """
+        fraction_given = self.subsample is not None or "sampler.subsample" in explicit
+        return (
+            fraction_given
+            and self.sampler == "all_rows"
+            and "dispatch.sampler_name" not in explicit
+        )
 
     def _explicit_params(self) -> dict[str, object]:
         """The ``params`` escape hatch as a dict, whichever form it was given in."""
@@ -625,8 +645,8 @@ class _BonsaiEstimator:
         overrides = self._build_overrides(targets)
         explicit = self._explicit_params()
         defaults = _init_defaults(type(self))
-        for key, args in self._WARM_START_KNOBS:
-            if key in explicit:
+        for key, args, params_keys in self._WARM_START_KNOBS:
+            if any(k in explicit for k in params_keys):
                 continue
             if all(getattr(self, a) == defaults[a] for a in args):
                 overrides.pop(key, None)
@@ -859,7 +879,8 @@ class BonsaiRegressor(_BonsaiEstimator):
         Histogram bin cap; None leaves the native default.
     subsample
         Row-sampling fraction; switches the sampler to ``"bernoulli"`` when
-        ``sampler`` is still at its default. None leaves sampling off.
+        ``sampler`` is still at its default, as ``sampler.subsample`` in
+        ``params`` does. None leaves sampling off.
     device
         ``"cpu"`` or ``"cuda"`` (or ``"cuda:N"``); ``"cuda"`` picks the CUDA
         grower matching the chosen ``grower``, moving compute without
@@ -945,7 +966,7 @@ class BonsaiRegressor(_BonsaiEstimator):
 
     _WARM_START_KNOBS = (
         *_BonsaiEstimator._WARM_START_KNOBS,
-        ("dispatch.objective_name", ("objective", "quantile_alpha")),
+        ("dispatch.objective_name", ("objective", "quantile_alpha"), ("dispatch.objective_name",)),
     )
 
     @classmethod
@@ -1034,7 +1055,8 @@ class BonsaiClassifier(_BonsaiEstimator):
         Histogram bin cap; None leaves the native default.
     subsample
         Row-sampling fraction; switches the sampler to ``"bernoulli"`` when
-        ``sampler`` is still at its default. None leaves sampling off.
+        ``sampler`` is still at its default, as ``sampler.subsample`` in
+        ``params`` does. None leaves sampling off.
     device
         ``"cpu"`` or ``"cuda"`` (or ``"cuda:N"``); ``"cuda"`` picks the CUDA
         grower matching the chosen ``grower``, moving compute without
