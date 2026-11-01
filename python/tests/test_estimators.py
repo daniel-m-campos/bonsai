@@ -800,3 +800,22 @@ def test_model_pickles_like_its_saved_file(tmp_path):
     np.testing.assert_array_equal(m.predict(x), again.predict(x))
     assert again.n_iters == m.n_iters
     assert again.config_toml == m.config_toml
+
+
+def test_nullable_pandas_columns_read_missing_cells_as_nan():
+    """A frame mixing a nullable Int64 column holding pd.NA with a float column
+    converts through an object array, where pd.NA has no float value."""
+    pd = pytest.importorskip("pandas")
+    rng = np.random.default_rng(17)
+    n = 120
+    a = rng.integers(0, 5, n).astype(np.float64)
+    a[::7] = np.nan
+    b = rng.standard_normal(n)
+    y = np.nan_to_num(a) + b
+    nullable = pd.DataFrame(
+        {"a": pd.array([pd.NA if np.isnan(v) else int(v) for v in a], dtype="Int64"), "b": b}
+    )
+    spelled = pd.DataFrame({"a": a, "b": b})
+    want = bonsai.BonsaiRegressor(n_iters=5).fit(spelled, y).predict(spelled)
+    got = bonsai.BonsaiRegressor(n_iters=5).fit(nullable, y).predict(nullable)
+    np.testing.assert_array_equal(got, want)
