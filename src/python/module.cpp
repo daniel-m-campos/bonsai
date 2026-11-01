@@ -786,6 +786,11 @@ class Dataset
         return x_.has_value();
     }
 
+    bonsai::BinMapperConfig const &bin_config() const
+    {
+        return bin_cfg_;
+    }
+
     bonsai::cli::LoadedTrainValidation const &loaded() const
     {
         return *loaded_;
@@ -1811,7 +1816,8 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
             "cuts describes one set of columns, so a warm start needs the "
             "dataset binned with the model's own cuts");
     }
-    cfg = reconcile_init(std::move(cfg), init, items);
+    cfg            = reconcile_init(std::move(cfg), init, items);
+    cfg.bin_mapper = dataset.bin_config();
     nb::gil_scoped_release release;
     return run_fit(std::move(cfg), dataset.train_data(), dataset.loaded().mappers,
                    eval_set, std::move(init));
