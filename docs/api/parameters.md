@@ -106,7 +106,7 @@ Dataset IO for the CLI; the Python API passes arrays instead of paths. Missing v
 
 ## parallel
 
-Compute placement: CPU threads and CUDA device. A fixed `n_threads` gives the same model bits on every run; another thread count can move them within numerical tolerance (u16 bins, `max_bin` above 255, stay bit-identical at any count), and so can `n_threads = 0` on hosts with different core counts.
+Compute placement: CPU threads and CUDA device. A fixed `n_threads` gives the same model bits on every run; another thread count can move them within numerical tolerance (u16 bins, `max_bin` above 256, stay bit-identical at any count), and so can `n_threads = 0` on hosts with different core counts.
 
 | parameter | type | default | effect |
 |---|---|---|---|

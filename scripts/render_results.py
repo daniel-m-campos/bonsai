@@ -591,7 +591,7 @@ PLANE_LABEL: Final = {PLANE_GPU: "The GPU plane is", PLANE_CPU: "The CPU plane i
 
 PENDING: Final = (
     "*Measurement pending the first redesigned refresh "
-    "(decision 103): the axis files land with it and this "
+    "(decision 104): the axis files land with it and this "
     "section fills in unchanged.*"
 )
 AB_AXES: Final = (Axis.GPU_TALL, Axis.CPU_TALL)
@@ -1278,7 +1278,7 @@ def _perf_provenance() -> str:
         "\n"
         + provenance(
             files,
-            "As-run under the redesigned scenario matrix (decision 103), best of "
+            "As-run under the redesigned scenario matrix (decision 104), best of "
             "the session's repeats per arm. Each plane runs on one pod, so the "
             "arms compare within a plane and not across the two. " + stamps,
         )
@@ -1391,7 +1391,7 @@ HEADER = (
 
 # The results ledger
 
-Every results file behind a published claim is rendered across the pages below, generated straight from the data in [`benchmarks/results/`](../../benchmarks/results): `python3 scripts/render_results.py` rewrites them and CI fails on drift. Rows are as-run records under the [benchmark protocol](benchmark-protocol.md): quality division numbers never cite timing, perf division numbers name their timing mode, and superseded files are deleted rather than kept beside their replacements, so what is here is the current evidence, whole.
+This page indexes the evidence behind every published bonsai claim. The pages below are generated from the data in [`benchmarks/results/`](../../benchmarks/results): `python3 scripts/render_results.py` rewrites them and CI fails on drift. Every row follows the [benchmark protocol](benchmark-protocol.md): quality numbers never cite timing, perf numbers name their timing mode, and a superseded file is deleted rather than kept beside its replacement.
 """
 )
 
@@ -1400,13 +1400,13 @@ PAGES: list[tuple[str, str, str, list]] = [
     (
         "perf.md",
         "The scenario panels",
-        "Every grower against its closest rival, both planes, at the redesigned scenarios.",
+        "Each bonsai tree-growing strategy (depthwise, leafwise, levelwise) against the matching XGBoost, LightGBM or CatBoost setting, on CPU and GPU, at the tall, wide and extreme scenarios.",
         [perf_summary_section, perf_panels_section, early_stop_section, shap_section, ab_section],
     ),
     (
         "quality-grinsztajn.md",
         "Grinsztajn standings",
-        "The only citable standings: 55 third-party tasks.",
+        "The only citable standings: 55 third-party tasks, on CPU and GPU, with a leaf-capped head-to-head against LightGBM.",
         [
             grinsztajn_section,
             grinsztajn_gpu_section,
@@ -1450,39 +1450,60 @@ def _division_summaries() -> tuple[str, str]:
     table, _, n = _standings(load_jsonl(standings_file(Axis.GRINSZTAJN)))
     lead_lib, lead_mean, lead_wins = table[0]
     quality = (
-        f"{lead_lib} leads the {n}-task Grinsztajn standings at mean rank "
-        f"{lead_mean:.2f} with {lead_wins} outright wins, and keeps the "
-        f"lead under either reading of the one knob that translates "
-        f"ambiguously between libraries. Every feature declined by "
-        f"measurement is recorded in the archive."
+        f"{lead_lib} leads the {n}-task Grinsztajn standings (a public set "
+        f"of OpenML tabular tasks) at mean rank {lead_mean:.2f} with "
+        f"{lead_wins} outright wins. Every feature declined by measurement "
+        f"is recorded in the archive."
     )
-    return _perf_summary(), quality
+    return _perf_summary("results/perf.md"), quality
 
 
-def _perf_summary() -> str:
-    """The perf paragraph, read off the summary matrix the panels publish."""
+def _perf_summary(panels_link: str) -> str:
+    """The perf paragraph, read off the summary matrix the panels publish.
+
+    Parameters
+    ----------
+    panels_link : str
+        The scenario panels page's URL as the embedding page reaches it.
+
+    Returns
+    -------
+    str
+        One paragraph of fit totals at the tall scenario on each plane.
+    """
     gpu = _headline_clauses(Axis.GPU_TALL, PLANE_GPU)
     cpu = _headline_clauses(Axis.CPU_TALL, PLANE_CPU)
     if not gpu and not cpu:
         return (
             "The perf standings are being re-measured on the redesigned "
-            "scenario matrix (decision 103): tall and wide scenarios at "
+            "scenario matrix (decision 104): tall and wide scenarios at "
             "constant cell count plus a memory-maxout extreme, on both "
             "planes, with early stopping as its own axis. The panels "
             "page fills in with the first refresh; the campaigns that "
             "led here are in the archive."
         )
-    parts = []
+    parts = ["A fit total is ingest plus train time."]
     if gpu:
-        parts.append("On GPU at the tall scenario, fit totals run " + "; ".join(gpu) + ".")
+        parts.append(
+            f"On GPU at the tall scenario ({_axis_cell(Axis.GPU_TALL)}), fit totals run "
+            + "; ".join(gpu)
+            + "."
+        )
     if cpu:
-        parts.append("On CPU at the tall scenario: " + "; ".join(cpu) + ".")
+        parts.append(
+            f"On CPU at the tall scenario ({_axis_cell(Axis.CPU_TALL)}): " + "; ".join(cpu) + "."
+        )
     parts.append(
-        "The wide and extreme scenarios, the host and device memory "
-        "columns, and the early-stopping axis are on the panels "
-        "page."
+        "The wide and extreme scenarios, memory use on the host and the "
+        f"device, and early stopping are on [the scenario panels]({panels_link})."
     )
     return " ".join(parts)
+
+
+def _axis_cell(axis: str) -> str:
+    """`16M rows x 128 features`, the one cell a scenario axis measures."""
+    cell = axis_rows(axis)[0]["cell"]
+    return f"{human(cell['rows'])} rows x {cell['cols']} features"
 
 
 def _headline_clauses(axis: str, plane: str) -> list[str]:
@@ -1530,11 +1551,11 @@ def landing_page() -> str:
 
 ## The code division
 
-Self-measurement of the bonsai tree, no comparative claim: [code metrics](results/code-metrics.md).
+[Code metrics](results/code-metrics.md) counts lines, functions and complexity in the bonsai code, tests and tooling. It compares bonsai with no other library.
 
 ## The archive
 
-Closed campaigns and probes, deleted from `benchmarks/results/` once their decisions froze: [the archive](results/archive.md) names what each one found and the git ref where its data still reads.
+[The archive](results/archive.md) lists finished experiments. For each one, it gives the result and the last git commit that holds its data files, which are deleted from `benchmarks/results/` once the experiment's decisions are final.
 """
 
 
@@ -1549,7 +1570,7 @@ _LIB_NAMES = {"lgbm": "lightgbm", "xgb": "xgboost"}
 def readme_standings_block() -> str:
     """The README's digit surface, generated so it cannot drift (decision
     92): division summaries plus the quality table."""
-    perf = _perf_summary()
+    perf = _perf_summary(f"{_SITE}/results/results/perf/")
 
     cpu, n_tasks = _readme_quality_table(_ranked(load_jsonl(standings_file(Axis.GRINSZTAJN))))
     gpu_rows = axis_rows(Axis.GRINSZTAJN_GPU)

@@ -364,7 +364,7 @@ Multiclass softmax uses the true diagonal Hessian p(1-p), not the factor-2 conve
 
 ### host-determinism
 
-Model bytes are identical across runs, across thread counts (outside one documented relaxation), and across CPU architectures; CI trains on arm64 and x86-64 and compares file hashes per commit. Host builds compile with contraction off, which is what makes the claim hold across compilers. A host fit and a device fit of one dataset agree to 1e-4 in predictions, never byte for byte: the host accumulates histogram cells in float and the device in int64 fixed point, and the device fit's own byte identity is the enforced `cuda-training-bit-reproducible`.
+Model bytes are a function of the input, the config and the configured thread count. At a fixed thread count they are identical across runs and across CPU architectures; CI trains a reference model serially and at eight threads on arm64 and x86-64 and compares file hashes per commit. With u16 bins (a feature with more than 256 bins, which needs `max_bin` above 256) they are also identical at any thread count; with u8 bins the sparse nodes deeper in the tree reduce partial histograms in an order set by the thread count. Host builds compile with contraction off, which is what makes the claim hold across compilers. A host fit and a device fit of one dataset never agree byte for byte, because the host accumulates histogram cells in float and the device in int64 fixed point: one tree grown on each from the same gradients gives every row a value within an absolute 1e-4 of the other (`tests/unit/test_cuda_grower.cpp`), and the release check on a 30-tree fit allows 1e-3 on predictions and 0.005 on R-squared (`scripts/wheel_smoke_cuda.py`). The device fit's own byte identity is the enforced `cuda-training-bit-reproducible`.
 
 - code: `include/bonsai/parallel.hpp` : `for_each_index`
 - code: `scripts/model_hash.py` : `sha256`
@@ -396,7 +396,7 @@ A stored split threshold is turned back into a bin by exactly one function. The 
 
 ### max-bin-default
 
-`bin_mapper.max_bin` defaults to 255, which is what keeps the default bin plane u8; a wider setting switches storage to u16 and costs the device SHAP plane (8-bit intervals).
+`bin_mapper.max_bin` defaults to 255, which is what keeps the default bin plane u8; a setting above 256 switches storage to u16 and costs the device SHAP plane (8-bit intervals).
 
 - code: `include/bonsai/config/bin_mapper_config.hpp` : `max_bin`
 - code: `include/bonsai/bin_store.hpp` : `BinColumns`

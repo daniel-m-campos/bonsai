@@ -133,7 +133,7 @@ $SSH 'cd /root/bonsai && spec="{\"variant\":\"bonsai_cuda_depthwise\",\"cell\":{
   grep -o "RESULT .*" /tmp/run.out; grep -E "grow-profile|fit-profile|ingest-profile|cuda-upload-decomp" /tmp/run.err | tail -4'
 ```
 
-Other variants for same-pod ladders: `xgb_cuda`, `lgbm_cpu`, `catboost_gpu`, `bonsai_cuda_levelwise`, etc. (the `VARIANTS` table in `python/bonsai/bench/variants.py`). Full sweeps go through `make bench-scaling ARGS="--axis rows"` instead of raw worker calls; only the make target writes the results JSONL.
+Other variants for same-pod ladders: `xgb_cuda`, `lgbm_cpu`, `catboost_gpu`, `bonsai_cuda_levelwise`, etc. (the `VARIANTS` table in `python/bonsai/bench/variants.py`). Full sweeps go through `make bench-scaling ARGS='run --spec scaling-rows'` (the same as `python -m bonsai.bench run --spec scaling-rows`) instead of raw worker calls; the `run` subcommand writes the results JSONL and a raw worker call does not.
 
 For anything longer than a few minutes, detach it so an SSH drop doesn't kill the run, and poll:
 
@@ -215,7 +215,7 @@ The pod proves which commit it is measuring before it builds: it fetches every b
 
 A `finally` block deletes the pod and sweeps any stray `bonsai-standings-*` pods regardless of how the run ends. Verify the fleet is empty afterward (same check as section 7): zero pods listed means zero billing. `--keep-pod` skips teardown for debugging; delete it yourself if you use it. Results land in a dated directory printed at the end (`--out-dir` to choose one).
 
-The six axes are the scenario matrix of decision 103: `gpu-tall`, `gpu-wide`, `gpu-extreme`, `cpu-tall`, `cpu-wide`, `gpu-early-stop`, each one bundled spec of the same name writing `<axis>-YYYY-MM.jsonl`. `--axes` selects a subset; `--only-stale` intersects that subset with `python3 scripts/check_standings.py --stale`, which lists the axes whose plane digest has moved since their last refresh, so a CUDA-only change measures the gpu axes and leaves the cpu ones alone. Run without `--only-stale` for a release refresh, which re-measures everything on one host.
+The six axes are the scenario matrix of decision 104: `gpu-tall`, `gpu-wide`, `gpu-extreme`, `cpu-tall`, `cpu-wide`, `gpu-early-stop`, each one bundled spec of the same name writing `<axis>-YYYY-MM.jsonl`. `--axes` selects a subset; `--only-stale` intersects that subset with `python3 scripts/check_standings.py --stale`, which lists the axes whose plane digest has moved since their last refresh, so a CUDA-only change measures the gpu axes and leaves the cpu ones alone. Run without `--only-stale` for a release refresh, which re-measures everything on one host.
 
 `gpu-extreme` is the VRAM-maxout scenario: 16,777,216 x 1,024 is 2^34 cells, so its float32 input needs about 68.7GB of RAM on the host that generates it. The pod script checks the container's ceiling first, `/sys/fs/cgroup/memory.max` where one is set and the machine's RAM otherwise, and prints a `SKIP gpu-extreme:` line if the rental is thinner, so a degraded session is loud rather than silent; pick a higher-RAM machine and rerun that axis alone. Reading `free` alone would be worse than no check at all, since it reports the machine and passes inside any container.
 

@@ -12,10 +12,10 @@ git show <ref>:benchmarks/results/<file>
 
 | record | what it found | decisions | data files | last present at |
 |---|---|---|---|---|
-| The retired row and width standings | The last measurement on the rows and width axes the scenario redesign replaced: 16M x 100 and the column sweep to 65k features, both planes, on one pod. | 103 | `rebaseline-2026-08.jsonl`, `cols-rebaseline-2026-08.jsonl` | `9221cf7` |
-| The retired shape and frontier standings | The iso-volume aspect sweep at 2^31 cells and the 16M accuracy-versus-time frontier, both replaced by the tall, wide, and extreme scenarios. | 91, 103 | `iso-volume-2026-08.jsonl`, `gpu-pareto-16M-2026-08.jsonl` | `a32eccf` |
-| The retired airline standings | The one real-data perf axis, removed with the redesign: its 10M-row CSV bake answered a protocol question that no longer has a scenario. | 103 | `airline-2026-08.jsonl` | `9221cf7` |
-| The retired early-stop axis | Early stopping measured at 4M rows, superseded by the gpu-early-stop axis at the tall cell. | 103 | `early-stop-4M-2026-08.jsonl` | `89814a0` |
+| The retired row and width standings | The last measurement on the rows and width axes the scenario redesign replaced: 16M x 100 and the column sweep to 65k features, both planes, on one pod. | 104 | `rebaseline-2026-08.jsonl`, `cols-rebaseline-2026-08.jsonl` | `9221cf7` |
+| The retired shape and frontier standings | The iso-volume aspect sweep at 2^31 cells and the 16M accuracy-versus-time frontier, both replaced by the tall, wide, and extreme scenarios. | 91, 104 | `iso-volume-2026-08.jsonl`, `gpu-pareto-16M-2026-08.jsonl` | `a32eccf` (iso-volume), `9221cf7` (gpu-pareto) |
+| The retired airline standings | The one real-data perf axis, removed with the redesign: its 10M-row CSV bake answered a protocol question that no longer has a scenario. | 104 | `airline-2026-08.jsonl` | `9221cf7` |
+| The retired early-stop axis | Early stopping measured at 4M rows, superseded by the gpu-early-stop axis at the tall cell. | 104 | `early-stop-4M-2026-08.jsonl` | `89814a0` |
 | The XGBoost 3.3 recheck | 3.3 matched 3.2 at every GPU cell and did not move host RSS; its one real gain was wide-CPU histogram time at 1M x 4096, and no published cell flipped. | 87 | `xgb33-recheck-2026-07.jsonl` | `563879a` |
 | The CPU 16M round | Software prefetch closed the 16M CPU gap to XGBoost-hist on that pod. | 61 | `cpu-prefetch-round-2026-07.jsonl` | `4b40fd9` |
 | Ordered boosting at scale (the CatBoost door) | CatBoost's Ordered and Plain modes against bonsai levelwise as rows grow: the door that closed the small-data-edge question. | 62 to 64 | `catboost-scale-edge-2026-07.jsonl` | `7b0e1ac` |

@@ -2,26 +2,13 @@
 
 ## The idea
 
-Chapters 2–3 explain how to split *one* node. A grower decides **which
-node to split next**, and that scheduling choice is most of what
-distinguishes the three reference libraries:
+Chapters 2–3 explain how to split *one* node. A grower decides **which node to split next**, and that scheduling choice is most of what distinguishes the three reference libraries:
 
-- **Depth-wise** (XGBoost's default): split every node at depth `d`
-  before touching depth `d+1`. Balanced trees, capped by `max_depth`.
-- **Leaf-wise / best-first** (LightGBM's default): always split the single
-  leaf (anywhere in the tree) whose best split has the highest gain.
-  Deliberately *unbalanced*: for a fixed leaf budget (`max_leaves`), it
-  drives training loss down fastest, at higher overfitting risk.
-- **Level-wise / symmetric** (CatBoost): every node at a level shares *one*
-  split. The tree is a perfect table (2^depth leaves indexed by a
-  bitstring) which makes predict extremely fast and acts as a strong
-  regularizer. CatBoost calls the shape an *oblivious* tree; bonsai names
-  the grower after the growth order, `levelwise`, and keeps *oblivious*
-  for the tree it emits.
+- **Depth-wise** (XGBoost's default): split every node at depth `d` before touching depth `d+1`. Balanced trees, capped by `max_depth`.
+- **Leaf-wise / best-first** (LightGBM's default): always split the single leaf (anywhere in the tree) whose best split has the highest gain. Deliberately *unbalanced*: it spends each split where the gain is largest, so a fixed leaf budget (`max_leaves`) goes to the highest-gain splits, and it can grow deep, narrow branches that fit small datasets closely; bound that with `min_data_in_leaf`.
+- **Level-wise / symmetric** (CatBoost): every node at a level shares *one* split. The tree is a table of 2^depth leaves indexed by a bitstring, so predict is a branchless gather that reads one leaf per row. Sharing one split per level limits the tree to depth-many distinct splits, which regularizes it. CatBoost calls the shape an *oblivious* tree; bonsai names the grower after the growth order, `levelwise`, and keeps *oblivious* for the tree it emits.
 
-The growth order is the whole difference. Depth-wise fills a level before
-the next; leaf-wise always expands the highest-gain leaf. The nodes below
-carry their growth order, on the same split budget:
+The diagrams below number the nodes in growth order, on the same split budget.
 
 ```mermaid
 graph TD
@@ -43,9 +30,7 @@ graph TD
   end
 ```
 
-An oblivious tree spends one split per level, shared by every node on it.
-The leaves become a flat table indexed by the path bits, which is why
-predict is a branchless bit-gather:
+An oblivious tree spends one split per level, shared by every node on it. The leaves become a flat table indexed by the path bits (each level's split test gives one bit), so predict reads one leaf from the table with no branches:
 
 ```mermaid
 graph TD
@@ -55,82 +40,40 @@ graph TD
   B -->|b1=1| T
 ```
 
-A shared split can route every row of some node one way, so an oblivious frontier carries empty nodes, and an empty node's whole subtree stays empty down to the last level. Such a node carries no histograms: the level fill gives it no arena and the level finder skips it, which is where a fifth of the deepest level's fills went on the wide CPU cell (decision 159).
+A shared split can send every row of a node to one child, which leaves the other child empty. Its whole subtree stays empty down to the last level. An empty node gets no histograms: the level fill allocates no histogram arena (the block of per-feature bin counts) for it, and the level finder skips it. On the wide CPU cell, a fifth of the deepest level's smaller children held no rows, and skipping them cut the levelwise train time by 21% on one pod ([decision 159](../decisions.md)).
 
 ## The math
 
-There's no new math, only a queue discipline over the same gain scores:
+There's no new math, only a different order of choosing nodes over the same gain scores. Depth-wise takes nodes in the order they were created (first in, first out, a plain queue). Leaf-wise always takes the node with the highest gain, kept in a max-heap (a structure that returns its largest item first). Level-wise picks one shared split for the whole level by summing every node's gain for each candidate (feature, bin).
 
 ```
-depth-wise:  FIFO by level          — frontier is a vector, loop per depth
-leaf-wise:   max-heap keyed on gain — pop best, split, push two children
+depth-wise:  queue, oldest node first     (one vector of nodes per depth, one loop per depth)
+leaf-wise:   max-heap, highest gain first (pop best, split, push two children)
 level-wise:  argmax over the SUM of per-parent gains for one shared (feature, bin)
 ```
 
-Leaf-wise's property worth internalizing: each expansion converts one leaf
-into two (net +1), so `max_leaves` bounds the tree exactly, and the tree
-is the greedy-optimal sequence of the first `max_leaves - 1` splits. A
-depth-wise tree spends its budget evenly; a leaf-wise tree spends it where
-gain lives.
+Each leaf-wise expansion turns one leaf into two (net +1 leaf), so `max_leaves` bounds the tree exactly. The tree is the greedy sequence of the first `max_leaves - 1` highest-gain splits. A depth-wise tree spends its splits level by level, and a leaf-wise tree spends them on the highest-gain leaves.
 
 ## In bonsai
 
-All three share every mechanism from chapters 2–3 (`make_root`,
-`split_node`, `finalize_as_leaf`, the same split finders) and differ only
-in their grow loop ([`src/grower.cpp`](../../src/grower.cpp)):
+All three share every mechanism from chapters 2–3 (`make_root`, `split_node`, `finalize_as_leaf`, the same split finders) and differ only in their grow loop ([`src/grower_impl.hpp`](../../src/grower_impl.hpp)):
 
-- `DepthwiseGrower::grow`: `current` / `next` frontier vectors,
-  `update_nodes` splits or finalizes each node of a level, swap, repeat
-  until `max_depth`.
-- `LeafwiseGrower::grow`: a `std::vector<Candidate>` maintained with
-  `std::push_heap`/`std::pop_heap` (chosen over `std::priority_queue`
-  because `top()` returns const& and fights moving the histogram-heavy
-  payload out). Gain is the key; ties break on lower node id so growth is
-  deterministic. Stops at `max_leaves`, `max_depth`, or a drained heap.
-  The design record, including why the heap is a `std::vector` and what
-  `max_leaves = 0` means, is [decision 31](../decisions.md).
-- `ObliviousGrower::grow`: one shared split per level via the *level*
-  finder (gain = sum of per-parent gains, see decision 30 for the
-  fold-then-score mistake that summing per-parent fixes), children by
-  index arithmetic, leaves in a $2^{\text{depth}}$ table.
+- `DepthwiseGrower::grow`: `current` / `next` frontier vectors (the open nodes of this level and of the next), `plan_level` splits or finalizes each node of a level (the `LevelStep` methods fill and find on the level), `commit_children` gathers the children and swaps `current` and `next`, repeat until `max_depth`.
+- `LeafwiseGrower::grow_leaves` (called by `LeafwiseGrower::grow` unless the budget cannot bind and the node arena is under 2 MiB, see the gotcha below) keeps a `std::vector<Candidate>` ordered with `std::push_heap` and `std::pop_heap`. It avoids `std::priority_queue` because `top()` returns a const reference, which stops the grower from moving the candidate's histograms out of the queue. Ties in gain break on the lower node id, so growth is deterministic. Stops at `max_leaves`, `max_depth`, or a drained heap. The design record, including why the heap is a `std::vector` and what `max_leaves = 0` means, is [decision 31](../decisions.md).
+- `ObliviousGrower::grow`: one shared split per level via the *level* finder (gain = sum of per-parent gains, see decision 30 for the fold-then-score mistake that summing per-parent fixes), children by index arithmetic, leaves in a $2^{\text{depth}}$ table.
 
-Both node-splitting growers emit a `DenseTree` (flat node array); the
-levelwise grower emits an `ObliviousTree` (level splits + leaf table),
-[`include/bonsai/tree.hpp`](../../include/bonsai/tree.hpp). Selection is a
-config string: `dispatch.grower_name = depthwise | leafwise | levelwise`.
+Both node-splitting growers emit a `DenseTree` (flat node array); the levelwise grower emits an `ObliviousTree` (level splits + leaf table), [`include/bonsai/tree.hpp`](../../include/bonsai/tree.hpp). Selection is a config string: `dispatch.grower_name = depthwise | leafwise | levelwise`.
 
 ## A second, orthogonal axis: the boosting scheme
 
-Growth structure (*where splits go*) is only one of two axes. The other is
-the **boosting scheme** (*how each row's gradient is computed*):
+Growth structure (*where splits go*) is only one of two axes. The other is the **boosting scheme** (*how each row's gradient is computed*):
 
-- **Plain** (every library's default at scale, and bonsai's only mode): row
-  $i$'s gradient comes from the full current ensemble's prediction for row
-  $i$, an ensemble that was trained on all rows, including $i$ itself.
-- **Ordered** (CatBoost's small-data mode): row $i$'s gradient comes from a
-  model trained only on the rows *before* $i$ in a random permutation, so
-  the gradient never sees $i$'s own label. This removes a subtle bias
-  CatBoost calls **prediction shift**, the same self-referential leak that
-  [ordered target statistics](13-categorical-features.md) fix for
-  categorical encodings, one level up.
+- **Plain** (every library's default at scale, and bonsai's only mode): row $i$'s gradient comes from the full current ensemble's prediction for row $i$, an ensemble that was trained on all rows, including $i$ itself.
+- **Ordered** (CatBoost's small-data mode): row $i$'s gradient comes from a model trained only on the rows *before* $i$ in a random permutation, so the gradient never sees $i$'s own label. This removes a subtle bias CatBoost calls **prediction shift**, the same self-referential leak that [ordered target statistics](13-categorical-features.md) fix for categorical encodings, one level up.
 
-The two axes are independent: any structure composes with any scheme.
-CatBoost *bundles* oblivious trees with ordered boosting, but that is a
-packaging choice, not a dependency: you can grow depth-wise trees with
-ordered gradients, or oblivious trees with plain ones.
+The two axes are independent: any structure composes with any scheme. CatBoost *bundles* oblivious trees with ordered boosting, but that is a packaging choice, not a dependency: you can grow depth-wise trees with ordered gradients, or oblivious trees with plain ones.
 
-Seen this way, bonsai already spans the **structure** axis more widely than
-either reference library, three growth disciplines to XGBoost's two
-(depth/leaf) and CatBoost's one (level-wise). What it does not offer is the
-ordered *scheme*. That was a measured decision, not an oversight: toggling
-CatBoost's own `boosting_type` shows ordered boosting buys essentially zero
-test r² on high-signal numeric data (0.8722 vs 0.8720 plain at 200k rows)
-while costing ~7× the fit time, and CatBoost itself falls back to plain past
-~50k rows. Prediction shift is real, but it bites on small, noisy, or
-categorical problems: exactly where the target-statistics *encoder* already
-applies the ordered fix without a core change. The full ladder that priced
-this out is [decision 62–63](../decisions.md); the evidence is
-[benchmarks/catboost-scale-edge-2026-07.md](../../benchmarks/catboost-scale-edge-2026-07.md).
+Seen this way, bonsai spans the **structure** axis as widely as CatBoost, with three growth disciplines (CatBoost's SymmetricTree, Depthwise and Lossguide), and more widely than XGBoost's two (depth/leaf). What it does not offer is the ordered *scheme*, and that was a measured decision. Toggling CatBoost's own `boosting_type` at 200k rows gave test r² 0.8722 for ordered and 0.8720 for plain, at about 7x the fit time. CatBoost itself defaults to plain boosting past ~50k rows. The same toggle also measured at zero or below on a 12-dataset small numeric pool (decision 81). The one place a gap remains is categorical-heavy data, where the target-statistics *encoder* applies the ordered idea in preprocessing without a core change. CatBoost's native per-split machinery is 68% of its remaining lead there (decision 80), and averaging permutations in the encoder does not close it (decision 82). The cost ladder is in [decisions 63 and 81](../decisions.md), and the measurements are in [benchmarks/catboost-scale-edge-2026-07.md](../../benchmarks/catboost-scale-edge-2026-07.md).
 
 ## Try it
 
@@ -148,23 +91,11 @@ for grower in ("depthwise", "leafwise", "levelwise"):
     print(f"{grower:10s}  train RMSE={rmse:.4f}")
 ```
 
-Expect the ordering the benchmarks reproduce every time: leaf-wise is the
-best accuracy-per-second (31 leaves ≈ depthwise-8's RMSE at half the
-time), depth-wise squeezes out the last fraction of RMSE with 16× more
-nodes, levelwise trades a little RMSE for the fastest predict.
+On this toy problem, depthwise and leafwise land close together (about 0.63 train RMSE), and levelwise lands lower (about 0.49). Train RMSE is not a held-out measure, and the ordering depends on the data. The [scenario panels](../results/results/perf.md) compare the growers on fit time and held-out accuracy.
 
 ## Gotchas & war stories
 
-- **`max_leaves` vs `max_depth` govern different growers.** A leafwise
-  config that only sets `max_depth=8` still stops at the default 31
-  leaves: the budget, not the cap, is usually what binds.
-- **A budget that cannot bind is the depthwise tree, and the plane that grows it follows the histogram's size.** A depth-$D$ tree has at most $2^D$ leaves, so `max_leaves = 0` or `max_leaves >= 2^max_depth` never stops an expansion and the leafwise tree is the depthwise tree grown one leaf at a time. On the device the registry routes such a config to `cuda_depthwise`: same tree to float rounding, level rounds instead of one round per leaf (decision 132). On the host the leafwise grower picks per fit: while one node's histogram arena is under 2 MiB (1024 features at 255 bins) it hands the tree to its level plane, whose eight rounds beat one round per leaf; above that it grows the tree itself, filling and reading one histogram while it is cache-resident where a level round streams every node's (decision 147). The config and the saved model keep `leafwise` as written; `BONSAI_GROW_PROFILE=1` prints which plane took the tree.
-- **Heap ties are a determinism hazard.** Equal gains happen (symmetric
-  data produces them exactly); without the node-id tie-break, two runs
-  could grow different trees and both look "correct".
-- **The levelwise gain is a sum of per-parent gains, not the gain of
-  summed histograms.** The score is quadratic in $G$, so folding histograms
-  first computes the wrong thing. The original implementation did, and
-  produced degenerate trees whose failure mode looked plausible enough to
-  get rationalized (decision 30). The re-implementation matches CatBoost's
-  per-leaf aggregation.
+- **`max_leaves` vs `max_depth` govern different growers.** A leafwise config that only sets `max_depth=8` still stops at the default 31 leaves: the budget, not the cap, is usually what binds.
+- **A `max_leaves` that cannot bind gives the depthwise tree.** A depth-$D$ tree has at most $2^D$ leaves, so `max_leaves = 0` or `max_leaves >= 2^max_depth` never stops an expansion. The leafwise tree is then the depthwise tree, grown one leaf at a time. On the device the registry routes such a config to `cuda_depthwise`. The tree is the same to float rounding, and it grows in one round per level instead of one round per leaf (decision 132). On the host the leafwise grower picks per fit, by the size of one node's histogram arena (one 8-byte cell per bin of every feature). Under 2 MiB (1024 features at 255 bins), it hands the tree to the level plane, the depthwise grower that fills every node of a level together. That takes at most `max_depth` rounds (8 at depth 8) where one round per leaf takes 255, and the whole level stays in cache. Above 2 MiB, the leaf plane grows the tree itself. It fills and reads one histogram while it is cache-resident, where a level round streams every node's (decision 147). The config and the saved model keep `leafwise` as written. `BONSAI_GROW_PROFILE=1` prints which plane took the tree.
+- **Heap ties are a determinism hazard.** Equal gains happen (symmetric data produces them exactly); without the node-id tie-break, two runs could grow different trees and both look "correct".
+- **The levelwise gain is a sum of per-parent gains, not the gain of summed histograms.** The score is quadratic in $G$, so folding histograms first computes the wrong thing. The original implementation did, and produced degenerate trees whose failure mode looked plausible enough to get rationalized (decision 30). The re-implementation matches CatBoost's per-leaf aggregation.

@@ -2,28 +2,28 @@
 
 # The results ledger
 
-Every results file behind a published claim is rendered across the pages below, generated straight from the data in [`benchmarks/results/`](../../benchmarks/results): `python3 scripts/render_results.py` rewrites them and CI fails on drift. Rows are as-run records under the [benchmark protocol](benchmark-protocol.md): quality division numbers never cite timing, perf division numbers name their timing mode, and superseded files are deleted rather than kept beside their replacements, so what is here is the current evidence, whole.
+This page indexes the evidence behind every published bonsai claim. The pages below are generated from the data in [`benchmarks/results/`](../../benchmarks/results): `python3 scripts/render_results.py` rewrites them and CI fails on drift. Every row follows the [benchmark protocol](benchmark-protocol.md): quality numbers never cite timing, perf numbers name their timing mode, and a superseded file is deleted rather than kept beside its replacement.
 
 ## Perf division
 
-On GPU at the tall scenario, fit totals run depthwise 3.3s vs XGBoost 27.7s; leafwise 3.3s vs LightGBM 29.0s; levelwise 3.1s vs CatBoost 19.3s. On CPU at the tall scenario: depthwise 9.5s vs XGBoost 18.3s; leafwise 10.4s vs LightGBM 23.4s; levelwise 9.0s vs CatBoost 17.1s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
+A fit total is ingest plus train time. On GPU at the tall scenario (16M rows x 128 features), fit totals run depthwise 3.3s vs XGBoost 27.7s; leafwise 3.3s vs LightGBM 29.0s; levelwise 3.1s vs CatBoost 19.3s. On CPU at the tall scenario (2M rows x 128 features): depthwise 9.5s vs XGBoost 18.3s; leafwise 10.4s vs LightGBM 23.4s; levelwise 9.0s vs CatBoost 17.1s. The wide and extreme scenarios, memory use on the host and the device, and early stopping are on [the scenario panels](results/perf.md).
 
 | page | what it holds |
 |---|---|
-| [The scenario panels](results/perf.md) | Every grower against its closest rival, both planes, at the redesigned scenarios. |
+| [The scenario panels](results/perf.md) | Each bonsai tree-growing strategy (depthwise, leafwise, levelwise) against the matching XGBoost, LightGBM or CatBoost setting, on CPU and GPU, at the tall, wide and extreme scenarios. |
 
 ## Quality division
 
-bonsai leads the 55-task Grinsztajn standings at mean rank 1.49 with 35 outright wins, and keeps the lead under either reading of the one knob that translates ambiguously between libraries. Every feature declined by measurement is recorded in the archive.
+bonsai leads the 55-task Grinsztajn standings (a public set of OpenML tabular tasks) at mean rank 1.49 with 35 outright wins. Every feature declined by measurement is recorded in the archive.
 
 | page | what it holds |
 |---|---|
-| [Grinsztajn standings](results/quality-grinsztajn.md) | The only citable standings: 55 third-party tasks. |
+| [Grinsztajn standings](results/quality-grinsztajn.md) | The only citable standings: 55 third-party tasks, on CPU and GPU, with a leaf-capped head-to-head against LightGBM. |
 
 ## The code division
 
-Self-measurement of the bonsai tree, no comparative claim: [code metrics](results/code-metrics.md).
+[Code metrics](results/code-metrics.md) counts lines, functions and complexity in the bonsai code, tests and tooling. It compares bonsai with no other library.
 
 ## The archive
 
-Closed campaigns and probes, deleted from `benchmarks/results/` once their decisions froze: [the archive](results/archive.md) names what each one found and the git ref where its data still reads.
+[The archive](results/archive.md) lists finished experiments. For each one, it gives the result and the last git commit that holds its data files, which are deleted from `benchmarks/results/` once the experiment's decisions are final.
