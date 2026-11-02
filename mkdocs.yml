@@ -67,6 +67,7 @@ copyright: 'bonsai · <a href="https://github.com/daniel-m-campos/bonsai">GitHub
 
 hooks:
   - docs/hooks/repo_links.py
+  - docs/hooks/home_readout.py
 plugins:
   - search
   - mkdocstrings:

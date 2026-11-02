@@ -1,12 +1,60 @@
+---
+template: home.html
+hide:
+  - navigation
+  - toc
+---
+
 # bonsai
 
 **Histogram gradient-boosted trees with a C++23 core.**
 
-```
-pip install bonsai-gbt
-```
+=== "pip"
+
+    ```bash
+    pip install bonsai-gbt
+    ```
+
+=== "uv"
+
+    ```bash
+    uv add bonsai-gbt
+    ```
+
+=== "source"
+
+    ```bash
+    git clone https://github.com/daniel-m-campos/bonsai && cd bonsai && pip install .
+    ```
 
 Linux and macOS arm64, Python 3.9 to 3.13, no toolchain; on linux x86_64 the wheel trains on GPU out of the box. Details, docker, and extras: [Install](api/install.md).
+
+## Three doors
+
+<div class="grid cards" markdown>
+
+-   <span class="bz-count" data-bz-count="learn"></span>
+    **[Learn](guide/README.md)**
+
+    ---
+
+    One concept per chapter: intuition, the mathematics, the ~50 real lines that implement it, then an experiment against the reference libraries. Start with [a tree traced by hand on eight rows](guide/0-a-tree-by-hand.md); the engine track and [how we got here](learn/timeline.md) sit behind the same door.
+
+-   <span class="bz-count" data-bz-count="api"></span>
+    **[API](api/install.md)**
+
+    ---
+
+    [Install in one command](api/install.md), then [the quickstart](api/quickstart.md): sklearn-shaped estimators and an explicit `train(params, ...)` layer, dotted config keys shared with the CLI, one `.msgpack` model that round-trips everywhere.
+
+-   <span class="bz-count" data-bz-count="results"></span>
+    **[Results](results/README.md)**
+
+    ---
+
+    Every speed and accuracy claim as a committed run on named hardware. [The results ledger](results/results.md) opens with the division summaries and links one generated page per study; the rules are [the benchmark protocol](results/benchmark-protocol.md). [The invariants](invariants.md) are the contracts the engine holds, generated from the tests that prove them, and the [decisions log](decisions.md) is the archive of every measurement and refutation behind the numbers.
+
+</div>
 
 bonsai began as a learning project: rebuild gradient-boosted trees from first principles to understand how the production libraries actually work, in a small codebase that takes modern C++23 and software design as seriously as the algorithms.
 
@@ -25,30 +73,6 @@ The ambition grew with the milestones: assimilate the defining ideas of XGBoost,
 Here is where that landed, measured on shared hardware at matched settings, with the digits on [the scenario panels](results/results/perf.md), where a check keeps them current. On GPU every bonsai plane finishes the tall scenario ahead of the reference trainer it is paired with, in less peak host memory than any of them, and at the extreme scenario XGBoost and CatBoost run out of memory where bonsai finishes. LightGBM takes the better test r2 on the GPU scenarios. On CPU bonsai leads every wide row and ties XGBoost on the tall one.
 
 One property none of the reference libraries offer: models are bit-identical across CPU architectures and thread counts, enforced per-commit in CI.
-
-## Three doors
-
-<div class="grid cards" markdown>
-
--   **[Learn](guide/README.md)**
-
-    ---
-
-    One concept per chapter: intuition, the mathematics, the ~50 real lines that implement it, then an experiment against the reference libraries. Start with [a tree traced by hand on eight rows](guide/0-a-tree-by-hand.md); the engine track and [how we got here](learn/timeline.md) sit behind the same door.
-
--   **[API](api/install.md)**
-
-    ---
-
-    [Install in one command](api/install.md), then [the quickstart](api/quickstart.md): sklearn-shaped estimators and an explicit `train(params, ...)` layer, dotted config keys shared with the CLI, one `.msgpack` model that round-trips everywhere.
-
--   **[Results](results/README.md)**
-
-    ---
-
-    Every speed and accuracy claim as a committed run on named hardware. [The results ledger](results/results.md) opens with the division summaries and links one generated page per study; the rules are [the benchmark protocol](results/benchmark-protocol.md). [The invariants](invariants.md) are the contracts the engine holds, generated from the tests that prove them, and the [decisions log](decisions.md) is the archive of every measurement and refutation behind the numbers.
-
-</div>
 
 ## Built with Claude
 
