@@ -162,15 +162,30 @@ def provenance(files: list[str], note: str) -> str:
 # Text and grid in mid-grays so the site's light and dark themes both read.
 
 LIB_COLOR = {
-    "bonsai": "#2e7d32",
     "xgboost": "#1f77b4",
     "lightgbm": "#8e6bbf",
     "catboost": "#e08f1a",
 }
 LIB_COLOR["xgb"] = LIB_COLOR["xgboost"]
 LIB_COLOR["lgbm"] = LIB_COLOR["lightgbm"]
-TEXT = "#8a8a8a"
-FONT = "font-family='system-ui,sans-serif'"
+FONT = "font-family='IBM Plex Sans,system-ui,sans-serif'"
+
+
+@dataclasses.dataclass(frozen=True)
+class ChartScheme:
+    """The site colour scheme one chart variant is drawn for; the values
+    mirror the role tokens in docs/stylesheets/bonsai.css."""
+
+    suffix: str
+    text: str
+    muted: str
+    bonsai: str
+
+
+CHART_SCHEMES: Final = (
+    ChartScheme("light", "#18201c", "#4d5b53", "#19704a"),
+    ChartScheme("dark", "#d5ddd8", "#acb9b1", "#74c49a"),
+)
 
 
 def _svg(width: int, height: int, body: list[str]) -> str:
@@ -185,9 +200,9 @@ def _text(
     x: float,
     y: float,
     s: str,
+    color: str,
     size: int = 11,
     anchor: str = "start",
-    color: str = TEXT,
     weight: str = "normal",
 ) -> str:
     return (
@@ -197,28 +212,52 @@ def _text(
 
 
 def bar_chart(fname: str, title: str, rows: list[tuple[str, float, str]], x_max: float, note: str):
-    """Horizontal bars: rows = (label, value, annotation); lower is better."""
+    """Horizontal bars: rows = (label, value, annotation); lower is better.
+
+    One file per site colour scheme, `<stem>-light.svg` and `<stem>-dark.svg`,
+    referenced together by `chart_pair` so the page shows the one that matches.
+    """
+    stem = fname.removesuffix(".svg")
+    for scheme in CHART_SCHEMES:
+        charts[f"{stem}-{scheme.suffix}.svg"] = _bar_chart_svg(scheme, title, rows, x_max, note)
+
+
+def chart_pair(fname: str, alt: str) -> str:
+    """The two image references for one chart, each shown in its scheme."""
+    stem = fname.removesuffix(".svg")
+    return "\n".join(
+        f"![{alt}](assets/{stem}-{scheme.suffix}.svg#only-{scheme.suffix})"
+        for scheme in CHART_SCHEMES
+    )
+
+
+def _bar_color(scheme: ChartScheme, label: str) -> str:
+    """The library's colour, by name or by variant prefix."""
+    if label.startswith("bonsai"):
+        return scheme.bonsai
+    for lib, color in LIB_COLOR.items():
+        if label.startswith(lib):
+            return color
+    return scheme.muted
+
+
+def _bar_chart_svg(
+    scheme: ChartScheme, title: str, rows: list[tuple[str, float, str]], x_max: float, note: str
+) -> str:
     w, h, left, top = 720, 60 + 34 * len(rows) + 30, 110, 42
     plot_w = w - left - 150
-    body = [_text(left, 22, title, size=13, weight="bold")]
+    body = [_text(left, 22, title, scheme.text, size=13, weight="bold")]
     for i, (label, value, note_txt) in enumerate(rows):
         y = top + i * 34
         bw = round(plot_w * value / x_max, 1)
-        color = LIB_COLOR.get(label)
-        if color is None:  # variant names: color by library prefix
-            for lib in ("bonsai", "xgb", "lgbm", "catboost"):
-                if label.startswith(lib):
-                    color = LIB_COLOR[lib]
-                    break
-            color = color or TEXT
-        body.append(_text(left - 8, y + 14, label, anchor="end"))
+        body.append(_text(left - 8, y + 14, label, scheme.text, anchor="end"))
         body.append(
             f"<rect x='{left}' y='{y}' width='{bw}' height='20' "
-            f"rx='3' fill='{color}' fill-opacity='0.85'/>"
+            f"rx='3' fill='{_bar_color(scheme, label)}' fill-opacity='0.9'/>"
         )
-        body.append(_text(left + bw + 8, y + 14, f"{value:.2f}&#160;&#160;{note_txt}"))
-    body.append(_text(left, top + len(rows) * 34 + 18, note, size=10))
-    charts[fname] = _svg(w, h, body)
+        body.append(_text(left + bw + 8, y + 14, f"{value:.2f}&#160;&#160;{note_txt}", scheme.text))
+    body.append(_text(left, top + len(rows) * 34 + 18, note, scheme.muted, size=10))
+    return _svg(w, h, body)
 
 
 # Quality: Grinsztajn standings ====================================================================
@@ -325,6 +364,7 @@ def _standings_tables(
     overall = md_table(
         ["library", "mean rank", "outright wins"],
         [[lib, fmt(mean, 2), str(w)] for lib, mean, w in table],
+        numeric=("mean rank", "outright wins"),
     )
     bar_chart(
         chart,
@@ -337,7 +377,8 @@ def _standings_tables(
     suites = sorted({s for s, _ in suite_ranks})
     per_suite = md_table(
         ["library", *suites],
-        [
+        numeric=suites,
+        rows=[
             [
                 lib,
                 *[
@@ -361,7 +402,7 @@ def grinsztajn_section() -> str:
 
 The [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) at the paper-medium protocol: {n} OpenML tasks, three seeds, campaign knobs for every library (decision 68). Best variant per library, average rank across tasks, lower is better.
 
-![Grinsztajn mean rank by library](assets/grinsztajn-rank.svg)
+{chart_pair("grinsztajn-rank.svg", "Grinsztajn mean rank by library")}
 
 {campaign}
 
@@ -388,7 +429,7 @@ def grinsztajn_gpu_section() -> str:
 
 The same {n} tasks, seeds, and campaign knobs, with every library on its GPU build: bonsai's three CUDA growers against XGBoost `device=cuda`, LightGBM `device_type=cuda`, and CatBoost `task_type=GPU`, ranked by the same rule as the CPU table (best variant per library, average rank across tasks, lower is better). Each table ranks one plane against its own peers; the drift table below is where a device arm is read against its CPU rows.
 
-![Grinsztajn mean rank by library on the GPU](assets/grinsztajn-rank-gpu.svg)
+{chart_pair("grinsztajn-rank-gpu.svg", "Grinsztajn mean rank by library on the GPU")}
 
 {campaign}
 
@@ -421,7 +462,7 @@ def grinsztajn_leaf_capped_section() -> str:
 
 LightGBM's CUDA learner caps a tree by its leaf count alone, which is why the device table above ranks every library but it. This regime meets it there: the campaign's 63 leaves under a depth cap of 62, the deepest a 63-leaf tree can reach, so the leaf count is the only cap on both sides. That is one parameter change on bonsai's leafwise grower (`max_depth=62` in place of 6), and LightGBM's own `max_depth=-1` fits the same trees as the cap. Everything else is the campaign: the same {n} tasks, three seeds, and knobs (decision 68), both learners on the GPU. Only the learners a leaf count alone can cap run here; a depthwise or symmetric tree at depth 62 would be a different experiment, so bonsai's other growers, XGBoost, and CatBoost are absent by design.
 
-![Grinsztajn mean rank, leaf-capped regime on the GPU](assets/grinsztajn-rank-leaf-capped-gpu.svg)
+{chart_pair("grinsztajn-rank-leaf-capped-gpu.svg", "Grinsztajn mean rank, leaf-capped regime on the GPU")}
 
 {standings}
 
@@ -569,6 +610,7 @@ class Col:
     RSS: Final = "peak RSS"
     VRAM: Final = "peak VRAM"
     METRIC: Final = "test r2"
+    FIT: Final = "fit"
 
 
 GPU_COLUMNS: Final = (Col.INGEST, Col.TRAIN, Col.RSS, Col.VRAM, Col.METRIC)
@@ -722,15 +764,66 @@ def vram_gb(r: dict) -> float | None:
     return dev.get("peak_gb_pid")
 
 
+@dataclasses.dataclass(frozen=True)
+class SummaryCell:
+    """One grower's fit totals at the tall cell of one plane, both arms."""
+
+    bonsai_text: str
+    rival_text: str
+    bonsai_s: float | None
+    rival_s: float | None
+    tied: bool
+    present: bool
+
+    @property
+    def bonsai_wins(self) -> bool:
+        """Whether bonsai's total clears the tie floor against the rival."""
+        return not self.tied and _wins(Col.FIT, self.bonsai_s, self.rival_s)
+
+    @property
+    def rival_wins(self) -> bool:
+        """Whether the rival's total clears the tie floor against bonsai."""
+        return not self.tied and _wins(Col.FIT, self.rival_s, self.bonsai_s)
+
+
+@dataclasses.dataclass(frozen=True)
+class SummaryRow:
+    """One grower's headline cells, keyed by plane."""
+
+    grower: str
+    rival: str
+    cells: dict[str, SummaryCell]
+
+
+SUMMARY_AXES: Final = ((PLANE_GPU, Axis.GPU_TALL), (PLANE_CPU, Axis.CPU_TALL))
+
+
+def summary_rows() -> list[SummaryRow]:
+    """The headline data: fit totals at the tall scenario, grower by plane.
+
+    The scenario panel's headline table and the landing page's readout both
+    render from this one function, so the two cannot disagree.
+    """
+    return [
+        SummaryRow(
+            panel.grower,
+            panel.rival,
+            {plane: _summary_cell_data(panel, axis, plane) for plane, axis in SUMMARY_AXES},
+        )
+        for panel in PANELS
+    ]
+
+
+def standings_meta(axis: str) -> dict:
+    """The registry entry of one axis: file, host, sha, refreshed_for."""
+    return _STANDINGS_REG[axis]
+
+
 def summary_matrix() -> str:
     """The headline: fit totals at the tall scenario, grower by plane."""
     body = [
-        [
-            panel.grower,
-            _summary_cell(panel, Axis.GPU_TALL, PLANE_GPU),
-            _summary_cell(panel, Axis.CPU_TALL, PLANE_CPU),
-        ]
-        for panel in PANELS
+        [row.grower, *[_summary_cell(row.cells[plane], row.rival) for plane, _ in SUMMARY_AXES]]
+        for row in summary_rows()
     ]
     if all(cell == "-" for row in body for cell in row[1:]):
         return PENDING
@@ -770,7 +863,7 @@ def panel_table(panel: Panel, axes: tuple[str, ...], plane: str) -> str:
             )
     if not body:
         return ""
-    return md_table(["scenario", "arm", *columns], body)
+    return md_table(["scenario", "arm", *columns], body, numeric=columns)
 
 
 def fused_anchor_line() -> str:
@@ -860,7 +953,11 @@ def early_stop_section() -> str:
                 ]
             )
     table = (
-        md_table(["grower", "arm", "eval overhead", "stop-arm fit", "stopped at"], body)
+        md_table(
+            ["grower", "arm", "eval overhead", "stop-arm fit", "stopped at"],
+            body,
+            numeric=("eval overhead", "stop-arm fit", "stopped at"),
+        )
         if rows
         else PENDING
     )
@@ -912,7 +1009,13 @@ def shap_section() -> str:
         )
     headers = ["cell"] + [label for _, label in arms]
     tables = (
-        (md_table(headers, time_body) + "\n\n" + md_table(headers, fid_body)) if rows else PENDING
+        (
+            md_table(headers, time_body, numeric=headers[1:])
+            + "\n\n"
+            + md_table(headers, fid_body, numeric=headers[1:])
+        )
+        if rows
+        else PENDING
     )
     return f"""## TreeSHAP throughput (gpu-shap)
 
@@ -1054,18 +1157,29 @@ def _fit_arms(axis: str, panel: Panel, plane: str) -> tuple[dict | None, dict | 
     return bonsai, rival, tied
 
 
-def _summary_cell(panel: Panel, axis: str, plane: str) -> str:
-    """`bonsai 6.9s vs XGBoost 8.1s` for one grower on one plane."""
+def _summary_cell_data(panel: Panel, axis: str, plane: str) -> SummaryCell:
+    """One grower's two arms at the tall cell of one plane."""
     bonsai, rival, tied = _fit_arms(axis, panel, plane)
-    if bonsai is None or rival is None:
+    return SummaryCell(
+        _fit_text(bonsai),
+        _fit_text(rival),
+        _ok_value(bonsai, K.FIT_S),
+        _ok_value(rival, K.FIT_S),
+        tied,
+        bonsai is not None and rival is not None,
+    )
+
+
+def _summary_cell(cell: SummaryCell, rival: str) -> str:
+    """`bonsai 6.9s vs XGBoost 8.1s` for one grower on one plane."""
+    if not cell.present:
         return "-"
-    if tied:
-        return f"bonsai {_fit_text(bonsai)} vs {panel.rival} {_fit_text(rival)} {TIE_NOTE}"
-    ours, theirs = (_ok_value(r, K.FIT_S) for r in (bonsai, rival))
+    if cell.tied:
+        return f"bonsai {cell.bonsai_text} vs {rival} {cell.rival_text} {TIE_NOTE}"
     return (
-        f"{_bold('bonsai ' + _fit_text(bonsai), _wins('fit', ours, theirs))}"
+        f"{_bold('bonsai ' + cell.bonsai_text, cell.bonsai_wins)}"
         f" vs "
-        f"{_bold(panel.rival + ' ' + _fit_text(rival), _wins('fit', theirs, ours))}"
+        f"{_bold(rival + ' ' + cell.rival_text, cell.rival_wins)}"
     )
 
 
@@ -1214,7 +1328,8 @@ def _plane_table(planes: list[dict]) -> str:
     """Per-plane line and complexity counts, with a totals row."""
     return md_table(
         ["plane", "files", "LOC", "NLOC", "functions", "mean CCN", "max CCN"],
-        [
+        numeric=("files", "LOC", "NLOC", "functions", "mean CCN", "max CCN"),
+        rows=[
             [
                 p["plane"],
                 str(p["files"]),
@@ -1245,6 +1360,7 @@ def _offender_table(offenders: list[dict]) -> str:
             [f"`{o['function']}`", f"`{o['file']}`", str(o["ccn"]), str(o["nloc"])]
             for o in offenders
         ],
+        numeric=("CCN", "NLOC"),
     )
 
 

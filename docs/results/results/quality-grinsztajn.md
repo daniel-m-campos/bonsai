@@ -6,10 +6,11 @@
 
 The [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) at the paper-medium protocol: 55 OpenML tasks, three seeds, campaign knobs for every library (decision 68). Best variant per library, average rank across tasks, lower is better.
 
-![Grinsztajn mean rank by library](../assets/grinsztajn-rank.svg)
+![Grinsztajn mean rank by library](../assets/grinsztajn-rank-light.svg#only-light)
+![Grinsztajn mean rank by library](../assets/grinsztajn-rank-dark.svg#only-dark)
 
 | library | mean rank | outright wins |
-|---|---|---|
+|---|--:|--:|
 | bonsai | 1.49 | 35 |
 | lgbm | 2.40 | 6 |
 | xgb | 2.93 | 5 |
@@ -18,7 +19,7 @@ The [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) at t
 Per-suite mean rank:
 
 | library | cat_clf | cat_reg | num_clf | num_reg |
-|---|---|---|---|---|
+|---|--:|--:|--:|--:|
 | bonsai | 1.43 | 1.46 | 1.80 | 1.30 |
 | lgbm | 2.00 | 2.69 | 2.53 | 2.25 |
 | xgb | 3.86 | 2.62 | 2.73 | 2.95 |
@@ -34,10 +35,11 @@ Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinszt
 
 The same 55 tasks, seeds, and campaign knobs, with every library on its GPU build: bonsai's three CUDA growers against XGBoost `device=cuda`, LightGBM `device_type=cuda`, and CatBoost `task_type=GPU`, ranked by the same rule as the CPU table (best variant per library, average rank across tasks, lower is better). Each table ranks one plane against its own peers; the drift table below is where a device arm is read against its CPU rows.
 
-![Grinsztajn mean rank by library on the GPU](../assets/grinsztajn-rank-gpu.svg)
+![Grinsztajn mean rank by library on the GPU](../assets/grinsztajn-rank-gpu-light.svg#only-light)
+![Grinsztajn mean rank by library on the GPU](../assets/grinsztajn-rank-gpu-dark.svg#only-dark)
 
 | library | mean rank | outright wins |
-|---|---|---|
+|---|--:|--:|
 | bonsai | 1.24 | 42 |
 | xgb | 2.29 | 7 |
 | catboost | 2.47 | 6 |
@@ -47,7 +49,7 @@ The same 55 tasks, seeds, and campaign knobs, with every library on its GPU buil
 Per-suite mean rank:
 
 | library | cat_clf | cat_reg | num_clf | num_reg |
-|---|---|---|---|---|
+|---|--:|--:|--:|--:|
 | bonsai | 1.00 | 1.31 | 1.33 | 1.20 |
 | xgb | 2.86 | 2.23 | 2.33 | 2.10 |
 | catboost | 2.14 | 2.46 | 2.33 | 2.70 |
@@ -75,17 +77,18 @@ Every arm of the device sweep read against the CPU row of the same suite, datase
 
 LightGBM's CUDA learner caps a tree by its leaf count alone, which is why the device table above ranks every library but it. This regime meets it there: the campaign's 63 leaves under a depth cap of 62, the deepest a 63-leaf tree can reach, so the leaf count is the only cap on both sides. That is one parameter change on bonsai's leafwise grower (`max_depth=62` in place of 6), and LightGBM's own `max_depth=-1` fits the same trees as the cap. Everything else is the campaign: the same 55 tasks, three seeds, and knobs (decision 68), both learners on the GPU. Only the learners a leaf count alone can cap run here; a depthwise or symmetric tree at depth 62 would be a different experiment, so bonsai's other growers, XGBoost, and CatBoost are absent by design.
 
-![Grinsztajn mean rank, leaf-capped regime on the GPU](../assets/grinsztajn-rank-leaf-capped-gpu.svg)
+![Grinsztajn mean rank, leaf-capped regime on the GPU](../assets/grinsztajn-rank-leaf-capped-gpu-light.svg#only-light)
+![Grinsztajn mean rank, leaf-capped regime on the GPU](../assets/grinsztajn-rank-leaf-capped-gpu-dark.svg#only-dark)
 
 | library | mean rank | outright wins |
-|---|---|---|
+|---|--:|--:|
 | bonsai | 1.42 | 32 |
 | lgbm | 1.58 | 23 |
 
 Per-suite mean rank:
 
 | library | cat_clf | cat_reg | num_clf | num_reg |
-|---|---|---|---|---|
+|---|--:|--:|--:|--:|
 | bonsai | 1.29 | 1.62 | 1.40 | 1.35 |
 | lgbm | 1.71 | 1.38 | 1.60 | 1.65 |
 

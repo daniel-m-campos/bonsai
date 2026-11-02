@@ -23,7 +23,7 @@ Fit totals (ingest plus train) at the tall cell of each plane, bold to the faste
 ### GPU
 
 | scenario | arm | ingest_s | train_s | peak RSS | peak VRAM | test r2 |
-|---|---|---|---|---|---|---|
+|---|---|--:|--:|--:|--:|--:|
 | gpu-tall (16M x 128) | bonsai depthwise | **1.0s** | **2.3s** | **9.0GB (+0.8)** | **10.8GB** | 0.880 (tie) |
 | gpu-tall (16M x 128) | XGBoost | 22.3s | 5.4s | 29.6GB (+21.4) | 18.9GB | 0.880 (tie) |
 | gpu-wide (131k x 16384) | bonsai depthwise | **0.8s** | **3.7s** | **9.8GB (+0.2)** | **16.7GB** | 0.860 (tie) |
@@ -36,7 +36,7 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 ### CPU
 
 | scenario | arm | ingest_s | train_s | peak RSS | test r2 |
-|---|---|---|---|---|---|
+|---|---|--:|--:|--:|--:|
 | cpu-tall (2M x 128) | bonsai depthwise | **1.1s** | **8.4s** | **2.0GB (+0.8)** | 0.877 (tie) |
 | cpu-tall (2M x 128) | XGBoost | 3.1s | 15.2s | 2.3GB (+1.1) | 0.877 (tie) |
 | cpu-wide (16k x 16384) | bonsai depthwise | **1.5s** | **38.2s** | **7.7GB (+6.5)** | 0.761 (tie) |
@@ -47,7 +47,7 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 ### GPU
 
 | scenario | arm | ingest_s | train_s | peak RSS | peak VRAM | test r2 |
-|---|---|---|---|---|---|---|
+|---|---|--:|--:|--:|--:|--:|
 | gpu-tall (16M x 128) | bonsai leafwise | **0.9s** | **2.3s** | **9.0GB (+0.7)** | 10.8GB | 0.880 |
 | gpu-tall (16M x 128) | LightGBM | 15.2s | 13.8s | 15.3GB (+7.0) | **5.4GB** | **0.886** |
 | gpu-wide (131k x 16384) | bonsai leafwise | **0.8s** | **3.7s** | **9.8GB (+0.2)** | **16.7GB** | 0.860 |
@@ -58,7 +58,7 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 ### CPU
 
 | scenario | arm | ingest_s | train_s | peak RSS | test r2 |
-|---|---|---|---|---|---|
+|---|---|--:|--:|--:|--:|
 | cpu-tall (2M x 128) | bonsai leafwise | **1.1s** | **9.3s** | **2.0GB (+0.8)** | 0.877 (tie) |
 | cpu-tall (2M x 128) | LightGBM | 3.1s | 20.4s | 2.1GB (+0.9) | 0.878 (tie) |
 | cpu-wide (16k x 16384) | bonsai leafwise | **1.5s** | **30.0s** | **5.9GB (+4.7)** | 0.761 |
@@ -69,7 +69,7 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 ### GPU
 
 | scenario | arm | ingest_s | train_s | peak RSS | peak VRAM | test r2 |
-|---|---|---|---|---|---|---|
+|---|---|--:|--:|--:|--:|--:|
 | gpu-tall (16M x 128) | bonsai levelwise | **0.9s** | **2.2s** | **9.0GB (+0.7)** | **10.8GB** | **0.877** |
 | gpu-tall (16M x 128) | CatBoost | 3.8s | 15.5s | 25.7GB (+17.5) | 90.2GB | 0.876 |
 | gpu-wide (131k x 16384) | bonsai levelwise | **0.8s** | **8.2s** | **9.9GB (+0.3)** | **16.6GB** | **0.874** |
@@ -80,7 +80,7 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 ### CPU
 
 | scenario | arm | ingest_s | train_s | peak RSS | test r2 |
-|---|---|---|---|---|---|
+|---|---|--:|--:|--:|--:|
 | cpu-tall (2M x 128) | bonsai levelwise | 1.1s | **7.9s** | **2.0GB (+0.8)** | **0.877** |
 | cpu-tall (2M x 128) | CatBoost | **0.4s** | 16.7s | 4.1GB (+2.9) | 0.875 |
 | cpu-wide (16k x 16384) | bonsai levelwise | 1.6s | **48.1s** | **7.8GB (+6.6)** | **0.858** |
@@ -93,7 +93,7 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 Three arms at the tall cell: `off` fits the round budget blind, `eval` scores a held-out split every round without acting on it, and `stop` acts on it (patience 50, cap 2000 rounds, learning rate 0.05). The overhead column is what watching costs against not watching, on train time; the last two columns are what watching buys, in fit time and the round the arm actually stopped at. A blank stop column means the arm ran to the cap without triggering.
 
 | grower | arm | eval overhead | stop-arm fit | stopped at |
-|---|---|---|---|---|
+|---|---|--:|--:|--:|
 | depthwise | bonsai depthwise | +41.7% | 25.4s | 1278 |
 | depthwise | XGBoost | -3.9% | 70.9s | 1216 |
 | leafwise | bonsai leafwise | +41.2% | 25.3s | 1278 |
@@ -106,14 +106,14 @@ Three arms at the tall cell: `off` fits the round budget blind, `eval` scores a 
 One `pred_contribs` call over the full matrix, seconds, best repeat, bold best per cell. bonsai explains from the resident binned Dataset; XGBoost runs its GPU engine; LightGBM and CatBoost compute SHAP on the CPU whatever the training device, which is why they stand as context arms. The second table is the fidelity column: each arm's additivity residual against its own raw margins (max over rows and repeats, relative).
 
 | cell | bonsai depthwise (GPU) | XGBoost (GPU) | LightGBM (CPU SHAP) | CatBoost (CPU SHAP) |
-|---|---|---|---|---|
+|---|--:|--:|--:|--:|
 | 1,048,576 x 128, depth 6 | **0.74** | 2.28 | 142.98 | 4.48 |
 | 1,048,576 x 128, depth 8 | **2.43** | 7.52 | - | 5.16 |
 | 1,048,576 x 512, depth 6 | **1.19** | 2.67 | 148.91 | 13.27 |
 | 4,194,304 x 128, depth 6 | **1.51** | 5.59 | 299.07 | 11.64 |
 
 | cell | bonsai depthwise (GPU) | XGBoost (GPU) | LightGBM (CPU SHAP) | CatBoost (CPU SHAP) |
-|---|---|---|---|---|
+|---|--:|--:|--:|--:|
 | 1,048,576 x 128, depth 6 | 3.3e-06 | 3.4e-06 | 0.0e+00 | 0.0e+00 |
 | 1,048,576 x 128, depth 8 | 7.2e-06 | 4.9e-06 | - | 0.0e+00 |
 | 1,048,576 x 512, depth 6 | 5.1e-06 | 2.8e-06 | 0.0e+00 | 0.0e+00 |
