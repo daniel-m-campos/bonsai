@@ -18,7 +18,7 @@ A bit-exact contract turns "did this change alter behavior?" from a judgment cal
 
 **Features that provably cost nothing when off.** New per-row weighting leaves the unweighted path's arithmetic unchanged: most boosters skip the weight multiply when there are no weights, and the multiclass booster multiplies by 1.0, which is exact in IEEE arithmetic. Every existing model stays byte-identical and the hash gate verifies it. The pattern generalizes: design the off-state of a feature to be arithmetically inert, then let the gate prove it.
 
-**AI-assisted development without trust.** bonsai is built by a human maintainer working with Claude ([built with Claude](../index.md#built-with-claude)). The reason that works is precisely this contract: CI trains the reference model on arm64 and x86-64 for every code change and fails the build if the two hashes differ, and a change that claims to preserve behavior must leave the `scripts/model_hash.py` hash unchanged. The reviewer checks the diff for intent, and the hash checks the numbers.
+**AI-assisted development without trust.** bonsai is built by a human maintainer working with Claude. The reason that works is precisely this contract: CI trains the reference model on arm64 and x86-64 for every code change and fails the build if the two hashes differ, and a change that claims to preserve behavior must leave the `scripts/model_hash.py` hash unchanged. The reviewer checks the diff for intent, and the hash checks the numbers.
 
 ## Transferring it
 
