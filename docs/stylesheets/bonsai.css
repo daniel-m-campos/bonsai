@@ -1081,7 +1081,8 @@ body:has(.bz-hero) .md-typeset > h1:first-of-type + p {
 
 .bz-hero__meta,
 .bz-readout__prov,
-.bz-readout figcaption {
+.bz-readout__switch,
+.bz-readout__cap {
   margin: 0 0 .8rem;
   font: 500 .65rem/1.5 var(--md-code-font-family);
   letter-spacing: .02em;
@@ -1123,6 +1124,7 @@ body:has(.bz-hero) .md-typeset > h1:first-of-type + p {
 }
 
 .bz-readout {
+  position: relative;
   margin: 0;
   padding: 1rem 1.2rem 1rem;
   border: 1px solid var(--bz-rule);
@@ -1191,6 +1193,11 @@ body:has(.bz-hero) .md-typeset > h1:first-of-type + p {
   background: var(--bz-well);
 }
 
+.bz-track--none {
+  border: 1px dashed var(--bz-rule-strong);
+  background: transparent;
+}
+
 .bz-fill {
   display: block;
   height: 100%;
@@ -1220,12 +1227,71 @@ body:has(.bz-hero) .md-typeset > h1:first-of-type + p {
 }
 
 .bz-readout__prov {
+  margin: .9rem 0 0;
+}
+
+.bz-readout > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.bz-scn {
+  display: none;
+}
+
+#bz-scn-tall:checked ~ .bz-scn[data-scn=tall],
+#bz-scn-wide:checked ~ .bz-scn[data-scn=wide],
+#bz-scn-extreme:checked ~ .bz-scn[data-scn=extreme] {
+  display: block;
+}
+
+.bz-readout__switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  align-items: center;
   margin: 1rem 0 0;
-  padding-top: .7rem;
+  padding-top: .8rem;
   border-top: 1px solid var(--bz-rule);
 }
 
-.bz-readout__prov a {
+.bz-readout__switch-label {
+  margin-right: .2rem;
+}
+
+.bz-readout__switch label {
+  padding: .15rem .6rem;
+  border: 1px solid var(--bz-rule-strong);
+  border-radius: 3px;
+  color: var(--bz-ink);
+  cursor: pointer;
+  transition: border-color 120ms, background-color 120ms;
+}
+
+.bz-readout__switch label:hover {
+  border-color: var(--bz-signal);
+}
+
+#bz-scn-tall:checked ~ .bz-readout__switch label[for=bz-scn-tall],
+#bz-scn-wide:checked ~ .bz-readout__switch label[for=bz-scn-wide],
+#bz-scn-extreme:checked ~ .bz-readout__switch label[for=bz-scn-extreme] {
+  border-color: var(--bz-signal);
+  background: var(--bz-signal-wash);
+  color: var(--bz-signal);
+}
+
+#bz-scn-tall:focus-visible ~ .bz-readout__switch label[for=bz-scn-tall],
+#bz-scn-wide:focus-visible ~ .bz-readout__switch label[for=bz-scn-wide],
+#bz-scn-extreme:focus-visible ~ .bz-readout__switch label[for=bz-scn-extreme] {
+  outline: 2px solid var(--bz-signal);
+  outline-offset: 2px;
+}
+
+.bz-readout__switch a {
+  margin-left: auto;
   color: var(--bz-link);
 }
 

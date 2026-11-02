@@ -798,17 +798,18 @@ class SummaryRow:
 SUMMARY_AXES: Final = ((PLANE_GPU, Axis.GPU_TALL), (PLANE_CPU, Axis.CPU_TALL))
 
 
-def summary_rows() -> list[SummaryRow]:
-    """The headline data: fit totals at the tall scenario, grower by plane.
+def summary_rows(axes: tuple[tuple[str, str], ...] = SUMMARY_AXES) -> list[SummaryRow]:
+    """The headline data: fit totals at one scenario per plane, grower by plane.
 
     The scenario panel's headline table and the landing page's readout both
-    render from this one function, so the two cannot disagree.
+    render from this one function, so the two cannot disagree. `axes` pairs
+    each plane with the axis to read; the default is the tall scenario.
     """
     return [
         SummaryRow(
             panel.grower,
             panel.rival,
-            {plane: _summary_cell_data(panel, axis, plane) for plane, axis in SUMMARY_AXES},
+            {plane: _summary_cell_data(panel, axis, plane) for plane, axis in axes},
         )
         for panel in PANELS
     ]

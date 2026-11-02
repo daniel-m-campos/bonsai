@@ -1,0 +1,62 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+  {{ super() }}
+  {% set r = page.meta.readout %}
+  <section class="bz-hero">
+    <div class="md-grid bz-hero__grid">
+      <div class="bz-hero__copy">
+        <p class="bz-hero__meta">{{ r.meta }}</p>
+        <p class="bz-hero__name" aria-hidden="true">bonsai</p>
+        <p class="bz-hero__lede">{{ config.site_description }}</p>
+        <p class="bz-hero__claim">{{ r.claim }}</p>
+        <p class="bz-hero__actions">
+          <a class="md-button md-button--primary" href="{{ 'api/quickstart/' | url }}">Quickstart</a>
+          <a class="md-button" href="{{ 'results/results/perf/' | url }}">Scenario panels</a>
+        </p>
+      </div>
+      <figure class="bz-readout">
+        {% for s in r.scenarios %}
+          <input type="radio" name="bz-scn" id="bz-scn-{{ s.key }}"{% if loop.first %} checked{% endif %}>
+        {% endfor %}
+        {% for s in r.scenarios %}
+          <div class="bz-scn" data-scn="{{ s.key }}">
+            <p class="bz-readout__cap">{{ s.caption }}</p>
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">grower</th>
+                  {% for plane in s.planes %}<th scope="col">{{ plane.label }}</th>{% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in s.rows %}
+                  <tr>
+                    <th scope="row">{{ row.grower }}</th>
+                    {% for cell in row.cells %}
+                      <td data-plane="{{ s.planes[loop.index0].label }}">
+                        {% for arm in cell.arms %}
+                          <div class="bz-pair">
+                            <span class="bz-who">{{ arm.who }}</span>
+                            <span class="bz-track{% if not arm.finished %} bz-track--none{% endif %}"><span class="bz-fill" style="--w: {{ arm.w }}"></span></span>
+                            <span class="bz-val">{% if arm.wins %}<strong>{{ arm.text }}</strong>{% else %}{{ arm.text }}{% endif %}{% if cell.tied and loop.last %} <small>(tie)</small>{% endif %}</span>
+                          </div>
+                        {% endfor %}
+                      </td>
+                    {% endfor %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            <p class="bz-readout__prov">{{ s.provenance }}</p>
+          </div>
+        {% endfor %}
+        <figcaption class="bz-readout__switch">
+          <span class="bz-readout__switch-label">scenario</span>
+          {% for s in r.scenarios %}<label for="bz-scn-{{ s.key }}">{{ s.key }}</label>{% endfor %}
+          <a href="{{ 'results/results/perf/' | url }}">full panels</a>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+{% endblock %}
