@@ -428,3 +428,51 @@ def test_dataset_takes_a_2d_y_as_a_block_of_targets():
     with pytest.raises(ValueError, match="no columns"):
         bonsai.Dataset(X, Y[:, :0])
     assert bonsai.Dataset(X, Y.astype(np.float64)).n_targets == 3
+
+
+def _fit_dataset(X, y, weight=None):
+    return bonsai.train({"booster.n_iters": 1}, bonsai.Dataset(X, y, weight=weight))
+
+
+def _fit_arrays(X, y, weight=None):
+    return bonsai.train({"booster.n_iters": 1}, X, y, sample_weight=weight)
+
+
+@pytest.mark.parametrize("fit", [_fit_dataset, _fit_arrays])
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+def test_training_input_refuses_a_non_finite_label(fit, bad):
+    X, y = _reg_data(n=64, f=3)
+    y[7] = bad
+    with pytest.raises(ValueError, match="y must be finite; entry 7 is"):
+        fit(X, y)
+    Y = np.stack([y, y], axis=1)
+    with pytest.raises(ValueError, match="y must be finite; entry 14 is"):
+        fit(X, Y)
+
+
+@pytest.mark.parametrize("fit", [_fit_dataset, _fit_arrays])
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -1.0])
+def test_training_input_refuses_a_non_finite_or_negative_weight(fit, bad):
+    X, y = _reg_data(n=64, f=3)
+    w = np.ones(64, np.float32)
+    w[5] = bad
+    with pytest.raises(ValueError, match="must be finite and non-negative; entry 5 is"):
+        fit(X, y, w)
+    w[5] = 0.0
+    assert fit(X, y, w).n_iters == 1
+
+
+def _fit_estimator(X, y):
+    return bonsai.BonsaiRegressor(n_iters=1).fit(X, y)
+
+
+@pytest.mark.parametrize("fit", [_fit_dataset, _fit_arrays, _fit_estimator])
+def test_training_input_refuses_a_matrix_with_no_rows(fit):
+    with pytest.raises(ValueError, match="X has no rows; an empty training set"):
+        fit(np.zeros((0, 3), np.float32), np.zeros(0, np.float32))
+
+
+@pytest.mark.parametrize("fit", [_fit_dataset, _fit_arrays, _fit_estimator])
+def test_training_input_refuses_a_matrix_with_no_columns(fit):
+    with pytest.raises(ValueError, match="X has no columns; a dataset with no columns"):
+        fit(np.zeros((12, 0), np.float32), np.zeros(12, np.float32))
