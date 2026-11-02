@@ -337,6 +337,35 @@ TEST_CASE(
     CHECK(s.gain == 0.0);
 }
 
+// INVARIANT: level-finder-skips-empty-slots
+// A feature the tree's sample left out is an empty histogram slot on every
+// frontier node. The level finder skips it on both its paths, the lane group
+// and the scalar scan, the way the node finder does; reading it as a
+// histogram with zero cuts walked past its storage.
+TEST_CASE("HistogramLevelSplitFinder: a feature's empty slot is skipped, not read",
+          "[split][level][colsample][invariant]")
+{
+    auto with_empty_first_slot = []
+    {
+        SplitInput node{.hists = {}, .rows = {}};
+        node.hists.push_back(Histogram{});
+        node.hists.push_back(obvious_cut_histogram());
+        return node;
+    };
+    auto const frontier_arr =
+        std::array{with_empty_first_slot(), with_empty_first_slot()};
+    FrontierInput const span = frontier_arr;
+    TreeConfig cfg{.min_child_hess = 0.0F, .lambda_l2 = 1.0F, .min_data_in_leaf = 0};
+
+    SplitOutput const s    = HistogramLevelSplitFinder::find(span, cfg);
+    auto const        full = std::array{obvious_cut_node(), obvious_cut_node()};
+    SplitOutput const r    = HistogramLevelSplitFinder::find(FrontierInput{full}, cfg);
+    REQUIRE(s.valid);
+    CHECK(s.feature_id == feature_id_t{1});
+    CHECK(s.bin_id == r.bin_id);
+    CHECK(s.gain == r.gain);
+}
+
 TEST_CASE("HistogramLevelSplitFinder: empty frontier returns invalid",
           "[split][level][edge]")
 {

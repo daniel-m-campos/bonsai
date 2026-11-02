@@ -13,6 +13,7 @@
 #include "fill/plan.hpp"
 #include "level_step.hpp"
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -94,6 +95,32 @@ void project_monotone_leaves(std::vector<SplitInputT> const   &frontier,
 
 using interaction_groups = std::vector<std::vector<feature_id_t>>;
 
+inline feature_id_t feature_index_of(std::string_view token)
+{
+    feature_id_t fid = 0;
+    auto const [end, ec] =
+        std::from_chars(token.data(), token.data() + token.size(), fid);
+    if (ec != std::errc{} || end != token.data() + token.size())
+    {
+        throw ConfigError("tree.interaction_constraints: '" + std::string{token} +
+                          "' is not a feature index");
+    }
+    return fid;
+}
+
+inline void require_groups_within(interaction_groups const &groups, size_t n_features)
+{
+    for (auto const &group : groups)
+    {
+        if (group.back() >= n_features)
+        {
+            throw ConfigError("tree.interaction_constraints names feature " +
+                              std::to_string(group.back()) + " but the data has " +
+                              std::to_string(n_features) + " features");
+        }
+    }
+}
+
 inline interaction_groups parse_interaction_groups(TreeConfig const &config)
 {
     interaction_groups groups;
@@ -107,8 +134,8 @@ inline interaction_groups parse_interaction_groups(TreeConfig const &config)
             size_t const end = sep == std::string::npos ? entry.size() : sep;
             if (end > start)
             {
-                group.push_back(static_cast<feature_id_t>(
-                    std::stoul(entry.substr(start, end - start))));
+                group.push_back(feature_index_of(
+                    std::string_view{entry}.substr(start, end - start)));
             }
             start = end + 1;
         }
@@ -519,6 +546,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     std::vector<SplitInput> next;
     gd::LevelOutputs        level_out;
     auto const              selected = feature_sample(ds.n_features());
+    gd::require_groups_within(interaction_groups_, ds.n_features());
 
     gd::LevelStep<EngineT, SplitterT> step(seam().engine(), ds, config(), grad, hess,
                                            selected);
@@ -753,6 +781,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow_leaves(Dataset const &ds,
     std::vector<gd::Candidate> pending;
 
     auto const selected = feature_sample(ds.n_features());
+    gd::require_groups_within(interaction_groups_, ds.n_features());
 
     gd::LeafStep<EngineT, SplitterT> step(seam().engine(), ds, config(), grad, hess,
                                           selected);
