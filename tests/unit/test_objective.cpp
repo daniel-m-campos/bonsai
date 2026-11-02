@@ -254,6 +254,32 @@ TEST_CASE("LogLossObjective: eval is finite for extreme scores",
     CHECK(loss == Catch::Approx(0.0F).margin(1e-3));
 }
 
+TEST_CASE("LogLossObjective: init_score stays finite on a single-class label set",
+          "[objective][logloss][edge]")
+{
+    SECTION("every label 0")
+    {
+        std::vector<float> const y(8, 0.0F);
+        float const              init = LogLossObjective::init_score(y);
+        CHECK(std::isfinite(init));
+        CHECK(init < 0.0F);
+    }
+    SECTION("every label 1")
+    {
+        std::vector<float> const y(8, 1.0F);
+        float const              init = LogLossObjective::init_score(y);
+        CHECK(std::isfinite(init));
+        CHECK(init > 0.0F);
+    }
+}
+
+TEST_CASE("LogLossObjective: init_score is the log-odds of a two-class label set",
+          "[objective][logloss]")
+{
+    std::vector<float> const y{0.0F, 0.0F, 0.0F, 1.0F};
+    CHECK(LogLossObjective::init_score(y) == Catch::Approx(std::log(1.0F / 3.0F)));
+}
+
 TEST_CASE("MAEObjective: sign gradients, unit hessians, median init",
           "[objective][mae]")
 {

@@ -840,3 +840,110 @@ def test_classifier_refuses_a_continuous_target():
         with pytest.raises(ValueError, match="Unknown label type: continuous"):
             bonsai.BonsaiClassifier(n_iters=1).fit(X, target)
     assert bonsai.BonsaiClassifier(n_iters=1).fit(X, y.astype(np.float64)).n_classes_ == 3
+
+
+def test_nullable_pandas_columns_read_missing_cells_as_nan():
+    """A frame mixing a nullable Int64 column holding pd.NA with a float column
+    converts through an object array, where pd.NA has no float value."""
+    pd = pytest.importorskip("pandas")
+    rng = np.random.default_rng(17)
+    n = 120
+    a = rng.integers(0, 5, n).astype(np.float64)
+    a[::7] = np.nan
+    b = rng.standard_normal(n)
+    y = np.nan_to_num(a) + b
+    nullable = pd.DataFrame(
+        {"a": pd.array([pd.NA if np.isnan(v) else int(v) for v in a], dtype="Int64"), "b": b}
+    )
+    spelled = pd.DataFrame({"a": a, "b": b})
+    want = bonsai.BonsaiRegressor(n_iters=5).fit(spelled, y).predict(spelled)
+    got = bonsai.BonsaiRegressor(n_iters=5).fit(nullable, y).predict(nullable)
+    np.testing.assert_array_equal(got, want)
+
+
+@pytest.mark.parametrize(
+    "key,names,objective",
+    [
+        ("metrics.fit", ["no_such_metric"], "mse"),
+        ("metrics.eval", ["no_such_metric"], "mse"),
+        ("metrics.fit", ["auc"], "mse"),
+    ],
+)
+def test_train_refuses_a_metric_the_task_cannot_report(key, names, objective):
+    """bonsai.train resolves metric names against the registry the CLI uses,
+    so an unknown or task-mismatched name is refused instead of stored."""
+    rng = np.random.default_rng(18)
+    x = rng.standard_normal((60, 3)).astype(np.float32)
+    y = x[:, 0].astype(np.float32)
+    with pytest.raises(ValueError, match=key):
+        bonsai.train({"dispatch.objective_name": objective, "booster.n_iters": 1, key: names}, x, y)
+
+
+def test_train_accepts_built_in_metric_names():
+    rng = np.random.default_rng(19)
+    x = rng.standard_normal((60, 3)).astype(np.float32)
+    y = x[:, 0].astype(np.float32)
+    m = bonsai.train(
+        {"booster.n_iters": 1, "metrics.fit": ["rmse", "mae"], "metrics.eval": ["r2"]}, x, y
+    )
+    assert m.n_iters == 1
+
+
+def test_logloss_on_one_class_keeps_a_finite_margin():
+    """A training set with no positives (a rare-event fold) gets a clamped base
+    rate, so its predictions and contributions stay finite."""
+    rng = np.random.default_rng(20)
+    x = rng.standard_normal((80, 3)).astype(np.float32)
+    y = np.zeros(80, dtype=np.float32)
+    m = bonsai.train({"dispatch.objective_name": "logloss", "booster.n_iters": 3}, x, y)
+    assert np.isfinite(np.asarray(m.pred_contribs(x))).all()
+    proba = np.asarray(m.predict(x))
+    assert ((proba > 0.0) & (proba < 0.5)).all()
+
+
+def test_dump_prints_thresholds_that_route_like_the_model():
+    """A feature on a 1e-7 scale dumped as 0.000000 under six fixed decimals,
+    so the printed split sent rows elsewhere than the tree did."""
+    rng = np.random.default_rng(21)
+    x = (rng.standard_normal((500, 1)) * 1e-7).astype(np.float32)
+    y = (x[:, 0] > 2e-8).astype(np.float32)
+    m = bonsai.train({"booster.n_iters": 1, "tree.max_depth": 1, "tree.min_data_in_leaf": 1}, x, y)
+    root, left = m.dump().splitlines()[1:3]
+    threshold = float(root.split(" <= ")[1].split()[0])
+    left_cover = int(left.split("cover=")[1])
+    assert threshold != 0.0
+    assert int((x[:, 0] <= threshold).sum()) == left_cover
+
+
+_SAVE_UNDER_A_FILE_SIZE_LIMIT = """
+import resource
+import signal
+import sys
+
+import numpy as np
+
+import bonsai
+
+rng = np.random.default_rng(0)
+x = rng.standard_normal((500, 4)).astype(np.float32)
+m = bonsai.train({"booster.n_iters": 20}, x, x[:, 0].copy())
+signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+resource.setrlimit(resource.RLIMIT_FSIZE, (4096, resource.RLIM_INFINITY))
+try:
+    m.save(sys.argv[1])
+except RuntimeError as e:
+    assert sys.argv[1] in str(e), e
+    sys.exit(0)
+sys.exit("save reported success on a truncated file")
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="RLIMIT_FSIZE is POSIX")
+def test_save_raises_when_the_bytes_cannot_all_be_written(tmp_path):
+    """A full disk or quota (a 4 KiB file-size limit here) must fail the save,
+    not leave a truncated file that only load discovers."""
+    done = subprocess.run(
+        [sys.executable, "-c", _SAVE_UNDER_A_FILE_SIZE_LIMIT, str(tmp_path / "m.bonsai")],
+        capture_output=True,
+    )
+    assert done.returncode == 0, done.stderr.decode()

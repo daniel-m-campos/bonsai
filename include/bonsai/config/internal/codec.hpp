@@ -1,6 +1,7 @@
 #pragma once
 
 #include <charconv>
+#include <clocale>
 #include <cstdint>
 #include <cstdlib>
 #include <expected>
@@ -80,11 +81,12 @@ template <typename I> ParseResult<I> read_integer_from_string(std::string_view v
 
 inline ParseResult<float> read_float_from_string(std::string_view value)
 {
+    static locale_t const c_numeric =
+        newlocale(LC_NUMERIC_MASK, "C", static_cast<locale_t>(nullptr));
     std::string const owned{value};
     char             *end = nullptr;
-    float const       v   = std::strtof(owned.c_str(), &end);
-    auto const used = static_cast<size_t>(end != nullptr ? end - owned.c_str() : 0);
-    if (used != owned.size())
+    float const       v   = strtof_l(owned.c_str(), &end, c_numeric);
+    if (owned.empty() || end != owned.c_str() + owned.size())
     {
         return std::unexpected("cannot parse float from '" + owned + "'");
     }

@@ -1,6 +1,9 @@
 #include <algorithm>
+#include <clocale>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -10,6 +13,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "bonsai/config/errors.hpp"
+#include "bonsai/config/internal/codec.hpp"
 #include "bonsai/config/toml.hpp"
 
 TEST_CASE("Toml: parse_toml populates known sections with defaults preserved",
@@ -127,6 +131,94 @@ TEST_CASE("Overrides: apply dotted keys updates the right fields", "[overrides][
                  Catch::Matchers::WithinAbs(0.25F, 1e-6F));
     REQUIRE(cfg.dispatch.objective_name == "logloss");
     REQUIRE_FALSE(cfg.data.header);
+}
+
+namespace
+{
+char const *set_comma_decimal_locale()
+{
+    for (char const *name : {"de_DE.UTF-8", "de_DE.utf8", "fr_FR.UTF-8", "fr_FR.utf8"})
+    {
+        if (std::setlocale(LC_NUMERIC, name) != nullptr)
+        {
+            return name;
+        }
+    }
+    return nullptr;
+}
+} // namespace
+
+TEST_CASE("Overrides: a float parses the same under a comma-decimal locale",
+          "[overrides][edge]")
+{
+    std::string const previous = std::setlocale(LC_NUMERIC, nullptr);
+    if (set_comma_decimal_locale() == nullptr)
+    {
+        SKIP("no comma-decimal locale installed");
+    }
+    bonsai::Config                              cfg;
+    std::vector<bonsai::config::Override> const ovs = {
+        {"booster.learning_rate", "0.25"}};
+    auto const apply = [&] { bonsai::config::apply_overrides(cfg, ovs); };
+    CHECK_NOTHROW(apply());
+    std::setlocale(LC_NUMERIC, previous.c_str());
+    CHECK(cfg.booster_config.learning_rate == 0.25F);
+}
+
+namespace
+{
+float min_gain_from(std::string const &spelling)
+{
+    bonsai::Config cfg;
+    bonsai::config::apply_overrides(cfg, {{"tree.min_gain_to_split", spelling}});
+    return cfg.tree_config.min_gain_to_split;
+}
+} // namespace
+
+TEST_CASE("Overrides: a float beyond the float range reads as strtof reads it",
+          "[overrides][edge]")
+{
+    constexpr float kInf = std::numeric_limits<float>::infinity();
+    SECTION("underflow keeps the sign of zero")
+    {
+        CHECK(min_gain_from("1e-50") == 0.0F);
+        CHECK_FALSE(std::signbit(min_gain_from("1e-50")));
+        CHECK(std::signbit(min_gain_from("-1e-50")));
+        CHECK(min_gain_from("1e-400") == 0.0F);
+    }
+    SECTION("overflow keeps the sign of infinity, which a finite key refuses")
+    {
+        using bonsai::config::internal::read_float_from_string;
+        CHECK(read_float_from_string("1e+40").value() == kInf);
+        CHECK(read_float_from_string("-1e+40").value() == -kInf);
+        CHECK(read_float_from_string("1e+400").value() == kInf);
+        REQUIRE_THROWS_WITH(min_gain_from("1e+40"), Catch::Matchers::ContainsSubstring(
+                                                        "must be finite (got inf)"));
+    }
+    SECTION("a subnormal stays subnormal")
+    {
+        CHECK(min_gain_from("1e-45") == std::numeric_limits<float>::denorm_min());
+    }
+}
+
+TEST_CASE("Overrides: a float accepts a leading sign, leading space and hex",
+          "[overrides][edge]")
+{
+    SECTION("accepted spellings")
+    {
+        CHECK(min_gain_from("+0.1") == 0.1F);
+        CHECK(min_gain_from(" \t0.1") == 0.1F);
+        CHECK(min_gain_from("0x1p-3") == 0.125F);
+        CHECK(min_gain_from("-0X1p-3") == -0.125F);
+    }
+    SECTION("refused spellings")
+    {
+        for (std::string const spelling : {"+-1", "--1", "0x-1", "0.1 ", "0x", "+"})
+        {
+            CAPTURE(spelling);
+            CHECK_THROWS_AS(min_gain_from(spelling), bonsai::ConfigError);
+        }
+    }
 }
 
 TEST_CASE("Overrides: malformed value throws ConfigError", "[overrides][edge]")
