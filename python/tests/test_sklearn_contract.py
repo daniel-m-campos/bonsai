@@ -226,21 +226,24 @@ def test_device_refuses_a_malformed_cuda_index():
 
 
 def test_tags_allow_nan_features():
-    from sklearn.utils import get_tags
+    utils = pytest.importorskip("sklearn.utils")
+    get_tags = utils.get_tags
 
     for est in (bonsai.BonsaiRegressor(), bonsai.BonsaiClassifier()):
         assert get_tags(est).input_tags.allow_nan
 
 
 def test_tags_mark_only_the_regressor_multi_output():
-    from sklearn.utils import get_tags
+    utils = pytest.importorskip("sklearn.utils")
+    get_tags = utils.get_tags
 
     assert get_tags(bonsai.BonsaiRegressor()).target_tags.multi_output
     assert not get_tags(bonsai.BonsaiClassifier()).target_tags.multi_output
 
 
 def test_sequential_feature_selector_passes_nan_through():
-    from sklearn.feature_selection import SequentialFeatureSelector
+    feature_selection = pytest.importorskip("sklearn.feature_selection")
+    SequentialFeatureSelector = feature_selection.SequentialFeatureSelector
 
     X, y = _regression()
     X[::10, 1] = np.nan
@@ -252,7 +255,8 @@ def test_sequential_feature_selector_passes_nan_through():
 
 
 def test_unfitted_estimator_raises_not_fitted_error():
-    from sklearn.exceptions import NotFittedError
+    exceptions = pytest.importorskip("sklearn.exceptions")
+    NotFittedError = exceptions.NotFittedError
 
     X = np.zeros((3, 2), dtype=np.float32)
     for est in (bonsai.BonsaiRegressor(), bonsai.BonsaiClassifier()):
@@ -275,7 +279,8 @@ def test_not_fitted_error_pickles():
 
 
 def test_unfitted_estimator_passes_sklearn_check():
-    from sklearn.utils.estimator_checks import check_estimators_unfitted
+    estimator_checks = pytest.importorskip("sklearn.utils.estimator_checks")
+    check_estimators_unfitted = estimator_checks.check_estimators_unfitted
 
     for est in (bonsai.BonsaiRegressor(n_iters=2), bonsai.BonsaiClassifier(n_iters=2)):
         check_estimators_unfitted(type(est).__name__, est)
@@ -326,7 +331,8 @@ def test_params_subsample_warm_start_meets_the_subsample_argument_rule(tmp_path)
 
 
 def test_from_file_parameters_describe_the_loaded_model(tmp_path):
-    from sklearn.base import clone
+    base = pytest.importorskip("sklearn.base")
+    clone = base.clone
 
     X, y = _regression()
     original = bonsai.BonsaiRegressor(
@@ -348,7 +354,8 @@ def test_from_file_parameters_describe_the_loaded_model(tmp_path):
 
 
 def test_classifier_from_file_refits_the_loaded_configuration(tmp_path):
-    from sklearn.base import clone
+    base = pytest.importorskip("sklearn.base")
+    clone = base.clone
 
     X, _ = _binary()
     y = np.digitize(X[:, 0], [-0.5, 0.5])

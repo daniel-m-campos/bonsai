@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 import numpy as np
+import pytest
 from bonsai.bench import metrics
 
 
@@ -14,12 +15,11 @@ def test_metrics_against_sklearn():
     pred = y + rng.normal(0, 0.1, 500)
     yb = (rng.random(500) > 0.5).astype(float)
     scores = yb * 0.6 + rng.random(500) * 0.4
-    from sklearn.metrics import (
-        mean_absolute_error,
-        mean_squared_error,
-        r2_score,
-        roc_auc_score,
-    )
+    sk_metrics = pytest.importorskip("sklearn.metrics")
+    mean_absolute_error = sk_metrics.mean_absolute_error
+    mean_squared_error = sk_metrics.mean_squared_error
+    r2_score = sk_metrics.r2_score
+    roc_auc_score = sk_metrics.roc_auc_score
 
     assert abs(metrics.r2(y, pred) - r2_score(y, pred)) < 1e-12
     assert abs(metrics.rmse(y, pred) - mean_squared_error(y, pred) ** 0.5) < 1e-12

@@ -336,7 +336,8 @@ def test_estimator_params_accepts_a_typed_params():
 
     est = bonsai.BonsaiRegressor(params=typed)
     assert est.get_params()["params"] is typed
-    from sklearn.base import clone
+    base = pytest.importorskip("sklearn.base")
+    clone = base.clone
 
     assert clone(est).params == typed
 
