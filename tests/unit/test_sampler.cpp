@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -324,6 +325,55 @@ TEST_CASE("GossSampler: ranks and amplifies the candidate rows",
         {
             CHECK(grad[r] == 100.0F);
             CHECK(hess[r] == 1.0F);
+        }
+    }
+}
+
+TEST_CASE("GossSampler: a repeated candidate weighs like its materialized copies",
+          "[sampler][goss][candidates]")
+{
+    Config cfg{};
+    cfg.sampler.top_rate   = 0.2F;
+    cfg.sampler.other_rate = 0.5F;
+    GossSampler s{cfg};
+
+    std::vector<row_id_t> const candidates{0, 0, 0, 1, 1, 1, 2, 2, 3, 3};
+    std::vector<float> const    row_grad{5.0F, -0.5F, 0.3F, -0.2F};
+    auto const                  kept_mass = [&](std::vector<float> const    &grad,
+                               std::vector<row_id_t> const &out, bool by_position)
+    {
+        std::vector<double> mass(row_grad.size(), 0.0);
+        for (row_id_t const id : out)
+        {
+            row_id_t const r = by_position ? candidates[id] : id;
+            mass[r] += grad[id];
+        }
+        return mass;
+    };
+
+    for (unsigned seed = 0; seed < 32; ++seed)
+    {
+        std::vector<float>    view_grad = row_grad;
+        std::vector<float>    view_hess(row_grad.size(), 1.0F);
+        std::vector<row_id_t> view_out(candidates.size());
+        std::mt19937          view_rng(seed);
+        view_out.resize(s.sample(view_grad, view_hess, view_rng, candidates, view_out));
+
+        std::vector<float> copy_grad(candidates.size());
+        std::ranges::transform(candidates, copy_grad.begin(),
+                               [&](row_id_t r) { return row_grad[r]; });
+        std::vector<float>    copy_hess(candidates.size(), 1.0F);
+        std::vector<row_id_t> copy_out(candidates.size());
+        std::mt19937          copy_rng(seed);
+        copy_out.resize(s.sample(copy_grad, copy_hess, copy_rng,
+                                 identity(candidates.size()), copy_out));
+
+        REQUIRE(view_out.size() == copy_out.size());
+        auto const view_mass = kept_mass(view_grad, view_out, false);
+        auto const copy_mass = kept_mass(copy_grad, copy_out, true);
+        for (size_t r = 0; r < row_grad.size(); ++r)
+        {
+            CHECK_THAT(view_mass[r], Catch::Matchers::WithinRel(copy_mass[r], 1e-6));
         }
     }
 }

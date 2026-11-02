@@ -293,6 +293,20 @@ def test_dataset_reference_inherits_the_binning_settings():
         bonsai.Dataset(Xv, yv, reference=coarse, max_bin=255)
 
 
+def test_dataset_fit_records_the_datasets_binning():
+    """A model trained on a prebuilt Dataset was binned with that Dataset's
+    settings, so its config states them and Params.from_model reproduces the
+    model from the arrays, the way it does for an arrays fit."""
+    X, y = _reg_data(n=1500, f=4)
+    pairs = {"booster.n_iters": "5"}
+    model = bonsai.train(pairs, bonsai.Dataset(X, y, max_bin=8, n_samples=500, seed=5))
+    binning = bonsai.Params.from_model(model).bin_mapper
+    assert binning is not None
+    assert (binning.max_bin, binning.n_samples, binning.seed) == (8, 500, 5)
+    again = bonsai.train(bonsai.Params.from_model(model), X, y)
+    np.testing.assert_array_equal(model.predict(X), again.predict(X))
+
+
 def test_dataset_eval_set_refuses_sample_weights():
     """The validation loss is the unweighted metric, so weights on an eval-set
     Dataset would be silently dropped. Say so instead."""

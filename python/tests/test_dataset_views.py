@@ -370,6 +370,20 @@ def test_subset_columns_rejects_abuse():
         ds.subset(columns=not_a_selector)
 
 
+def test_subset_columns_refuses_a_repeated_column():
+    """Feature names are unique, as the constructor demands, so selecting a
+    column twice would hand a name-keyed setting such as a monotone constraint
+    only the first copy. By name or by index, it is refused."""
+    X, y = _blocky_data(n=300, f=3)
+    ds = bonsai.Dataset(X, y, feature_names=["a", "b", "c"])
+    with pytest.raises(ValueError, match="'a' twice"):
+        ds.subset(columns=["a", "a", "b"])
+    with pytest.raises(ValueError, match="'b' twice"):
+        ds.subset(columns=[1, 2, 1])
+    with pytest.raises(ValueError, match="twice"):
+        ds.subset(rows=np.arange(100), columns=[0, 0])
+
+
 def test_a_model_trained_on_a_selection_refuses_the_parent():
     """The parent's cuts describe eight columns and the model's describe two;
     routing the parent through it would read the wrong feature at every node."""
@@ -928,6 +942,35 @@ def test_reorder_outlives_its_parent():
     expected = _model_bytes(_PAIRS, laid)
     del ds
     assert _model_bytes(_PAIRS, laid) == expected
+
+
+def test_a_rewritten_dataset_keeps_the_host_matrix_of_its_rows():
+    """reorder() and subset(columns=) rewrite the plane, and the raw rows come
+    with it: an eval set above 255 bins and a model of other cuts read those
+    rows, so the rewrite answers the way the matrix it stands for would."""
+    rng = np.random.default_rng(6)
+    X = rng.normal(size=(1200, 3)).astype(np.float32)
+    y = (X[:, 0] + X[:, 1] ** 2 + rng.normal(0, 0.3, len(X))).astype(np.float32)
+    ds = bonsai.Dataset(X, y, max_bin=400)
+    order = rng.permutation(len(X))
+    picked = np.arange(200, 900)
+    rewrites = {
+        "reorder": (ds.reorder(rows=order), X[order], y[order]),
+        "columns": (ds.subset(columns=[2, 0]), X[:, [2, 0]], y),
+        "rows and columns": (
+            ds.subset(rows=picked, columns=[1]),
+            X[np.ix_(picked, [1])],
+            y[picked],
+        ),
+    }
+    foreign = bonsai.train(_READ_PAIRS, X[:100], y[:100])
+    for name, (rewrite, X_same, y_same) in rewrites.items():
+        X_same = np.ascontiguousarray(X_same)
+        fit = bonsai.train(_READ_PAIRS, rewrite, eval_set=rewrite)
+        direct = bonsai.train(_READ_PAIRS, rewrite, eval_set=(X_same, y_same))
+        assert fit.eval_history == direct.eval_history, name
+        if X_same.shape[1] == X.shape[1]:
+            np.testing.assert_array_equal(foreign.predict(rewrite), foreign.predict(X_same))
 
 
 @pytest.mark.parametrize(
