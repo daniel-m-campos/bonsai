@@ -71,7 +71,3 @@ After that, the goals kept moving. Each target was met and replaced by a harder 
 GPU support started when a promotional window with Anthropic's newest model made the work affordable. I learned to rent GPU nodes from RunPod and gave the agent the rental API as a tool. From then on the agent measured, changed code, and measured again on real hardware, following the [perf-round](https://github.com/daniel-m-campos/bonsai/blob/main/.claude/skills/perf-round/SKILL.md) procedure for optimization work and the [feature-admission](https://github.com/daniel-m-campos/bonsai/blob/main/.claude/skills/feature-admission/SKILL.md) procedure for deciding whether a new feature enters the core.
 
 The ambition grew with the milestones: assimilate the defining ideas of XGBoost, LightGBM, and CatBoost into one library, match or beat their performance, and keep the code readable enough that reading it is still the point ([code metrics](results/results/code-metrics.md) counts its lines and complexity).
-
-## Built with Claude
-
-bonsai is built by a human maintainer working with Claude. What makes that trustworthy is verification, not trust. Models are bit-identical per commit in CI, performance claims come from committed same-pod runs, and every feature passes an admission gate with pre-registered kill criteria. Refuted hypotheses are recorded next to the adopted ones in the [decisions log](decisions.md). Commits before 2026-07-29 carry a session trailer linking the session that produced them.
