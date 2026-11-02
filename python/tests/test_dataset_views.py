@@ -544,6 +544,27 @@ def test_eval_set_view_drives_early_stopping():
     assert len(model.eval_history) >= 1
 
 
+@pytest.mark.parametrize(
+    ("objective", "outside", "pairs"),
+    [
+        ("logloss", -1.0, {}),
+        ("softmax", 3.0, {"objective.n_classes": "3"}),
+    ],
+)
+def test_a_view_checks_the_label_domain_on_its_own_rows(objective, outside, pairs):
+    """A placeholder label on a row no view selects blocks neither the fit nor
+    the eval set over a view."""
+    X, _ = _blocky_data(n=400)
+    y = (X[:, 0] > 9).astype(np.float32)
+    y[-1] = outside
+    ds = bonsai.Dataset(X, y)
+    params = {**_READ_PAIRS, "dispatch.objective_name": objective, **pairs}
+    bonsai.train(params, ds.subset(rows=np.arange(0, 300)))
+    copy = bonsai.Dataset(X[:300], y[:300], reference=ds)
+    model = bonsai.train(params, copy, eval_set=ds.subset(rows=np.arange(300, 380)))
+    assert len(model.eval_history) == int(_READ_PAIRS["booster.n_iters"])
+
+
 def test_the_five_fold_walk_forward_loop_runs():
     """The loop the whole feature exists for: five folds trained and scored
     off one plane, no copy anywhere."""

@@ -166,6 +166,14 @@ def test_dart_with_eval_set_raises():
     assert est.n_iters_ == 10
 
 
+def test_train_with_dart_refuses_an_eval_set():
+    Xtr, ytr, Xva, yva = _reg_data()
+    params = {"booster.n_iters": 10, "booster.dart_drop_rate": 0.1}
+    with pytest.raises(ValueError, match="eval_set is unsupported with dart_drop_rate"):
+        bonsai.train(params, Xtr, ytr, eval_set=(Xva, yva))
+    assert bonsai.train(params, Xtr, ytr).n_iters == 10
+
+
 def test_device_and_grower_mapping():
     assert _grower_for_device("leafwise", "cuda") == "cuda_leafwise"
     assert _grower_for_device("depthwise", "cuda") == "cuda_depthwise"

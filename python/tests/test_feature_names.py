@@ -379,6 +379,17 @@ def test_predict_names_the_disagreement_it_found():
     assert str(reordered.value) == prefix + " The same names arrived in a different order."
 
 
+def test_eval_set_names_are_checked_against_the_fit():
+    X, y = _reg_data()
+    est = bonsai.BonsaiRegressor(n_iters=5, max_depth=4)
+    with pytest.raises(ValueError, match="different order"):
+        est.fit(_Frame(X, NAMES), y, eval_set=(_Frame(X, list(reversed(NAMES))), y))
+    with pytest.warns(UserWarning, match="X does not have valid feature names"):
+        est.fit(_Frame(X, NAMES), y, eval_set=(X, y))
+    est.fit(_Frame(X, NAMES), y, eval_set=(_Frame(X, NAMES), y))
+    assert len(est.evals_result()["valid"]["mse"]) == 5
+
+
 def test_predict_on_a_dataset_reads_its_names(recwarn):
     """A Dataset names every column, so it must not read as unnamed; its
     synthesized f0..fN must not read as named either."""
