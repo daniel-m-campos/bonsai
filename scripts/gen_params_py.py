@@ -44,7 +44,7 @@ PARAMS_DOC = '''    """Typed overrides over the library defaults, one field per 
 
     Unset (``None``) fields leave the library default, so a section names
     only what it changes. Renders to the same dotted-key pairs ``train()``
-    always accepted; a TOML ``config=`` base composes underneath unchanged.
+    always accepted.
 
     Examples
     --------

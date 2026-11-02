@@ -809,7 +809,7 @@ _CATBOOST: Final = _Library(
 
 # Docstrings =======================================================================================
 
-_FROM_DOC = """Translate {title} parameters into bonsai config pairs.
+_FROM_DOC = """Translate {title} parameters into a bonsai ``Params``.
 {notes}
 Parameters
 ----------
@@ -843,7 +843,7 @@ Examples
 {result}
 """
 
-_TO_DOC = """Translate bonsai config pairs into {title} parameters.
+_TO_DOC = """Translate bonsai parameters, a ``Params`` or dotted-key pairs, into {title}'s.
 {notes}
 Parameters
 ----------

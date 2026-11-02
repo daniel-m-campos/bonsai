@@ -1,8 +1,8 @@
 """The single implementation of every benchmark metric.
 
 Primary metric per task (the protocol's rule): r2 for regression, AUC for
-binary, accuracy for multiclass, NDCG@10 for ranking. rmse/mae are recorded
-as secondaries and never headline a claim.
+binary, accuracy for multiclass. rmse/mae are recorded as secondaries and
+never headline a claim.
 """
 
 from __future__ import annotations

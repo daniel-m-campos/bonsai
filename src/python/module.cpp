@@ -2065,7 +2065,7 @@ NB_MODULE(_bonsai, m)
 {
     m.doc() = "bonsai gradient-boosted trees (native module)";
 
-    nb::class_<Model>(m, "Model")
+    nb::class_<Model>(m, "Model", "A trained booster: predict, explain, save.")
         .def("predict",
              nb::overload_cast<array_2d const &, size_t>(&Model::predict, nb::const_),
              nb::arg("X"), nb::arg("num_iteration") = 0,
@@ -2085,8 +2085,10 @@ NB_MODULE(_bonsai, m)
              "\n"
              "Returns\n"
              "-------\n"
-             "float32 array, shape (n_rows,)\n"
-             "    One prediction per row.")
+             "float32 array, shape (n_rows,) or (n_rows, n_targets)\n"
+             "    One prediction per row; a multi-target model returns one "
+             "column per target. A softmax model returns the argmax class id "
+             "of each row; ``predict_proba`` gives the probabilities.")
         .def("predict",
              nb::overload_cast<Dataset const &, size_t>(&Model::predict, nb::const_),
              nb::arg("X"), nb::arg("num_iteration") = 0)
@@ -2130,8 +2132,10 @@ NB_MODULE(_bonsai, m)
              "\n"
              "Returns\n"
              "-------\n"
-             "float32 array, shape (n_iters, n_rows)\n"
-             "    Row t is the response-scale prediction using rounds 0..t.")
+             "float32 array, shape (n_iters, n_rows) or (n_iters, n_rows, n_targets)\n"
+             "    Entry t is the response-scale prediction using rounds 0..t, "
+             "shaped as ``predict`` returns it (argmax class ids for a softmax "
+             "model).")
         .def("staged_predict",
              nb::overload_cast<Dataset const &>(&Model::staged_predict, nb::const_),
              nb::arg("X"))
@@ -2182,7 +2186,8 @@ NB_MODULE(_bonsai, m)
              "-------\n"
              "float64 array\n"
              "    ``(n_rows, n_features + 1)``; multiclass models return "
-             "``(n_rows, n_classes, n_features + 1)``.")
+             "``(n_rows, n_classes, n_features + 1)`` and multi-target models "
+             "``(n_rows, n_targets, n_features + 1)``.")
         .def("pred_contribs",
              nb::overload_cast<Dataset const &>(&Model::pred_contribs, nb::const_),
              nb::arg("X"))
@@ -2260,7 +2265,7 @@ NB_MODULE(_bonsai, m)
              });
 
     constexpr bonsai::ParallelConfig k_parallel_defaults{};
-    nb::class_<Dataset>(m, "Dataset")
+    nb::class_<Dataset>(m, "Dataset", "A pre-binned dataset, reusable across fits.")
         .def(
             nb::init<nb::handle, nb::handle, nb::handle, std::optional<int>,
                      std::optional<size_t>, std::optional<uint64_t>, std::optional<int>,
@@ -2494,10 +2499,10 @@ NB_MODULE(_bonsai, m)
           "dataset : Dataset\n"
           "    The pre-binned training data.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
-          "    Enables per-iteration eval and early stopping. Arrays are "
-          "binned by the fit itself once the rounds it has run have paid for "
-          "the pass; a Dataset built with ``reference=`` this one is binned "
-          "once and routed in bin space by every fit.\n"
+          "    Enables per-iteration eval and early stopping; ``yv`` is 1-D (a "
+          "K-target fit flattens its (n_rows, K) labels row-major). Arrays are "
+          "binned by the fit itself once its rounds have paid for the pass; a "
+          "Dataset built with ``reference=`` this one is binned once.\n"
           "init_model : str, optional\n"
           "    Continue training from this saved model (warm start).\n"
           "\n"
@@ -2537,8 +2542,9 @@ NB_MODULE(_bonsai, m)
           "device-resident y is downloaded once.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
           "    Host arrays, or a Dataset binned with this fit's cut points. "
-          "Stays host-side either way, because the per-iteration eval "
-          "predicts on the host.\n"
+          "``yv`` is 1-D (a K-target fit flattens its (n_rows, K) labels "
+          "row-major). A ``cuda_`` grower scores it on the device when the "
+          "objective has a device form; otherwise the host scores it.\n"
           "init_model : str, optional\n"
           "    Continue training from this saved model (warm start).\n"
           "sample_weight : float32 array, shape (n_rows,), optional\n"
