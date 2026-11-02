@@ -109,6 +109,11 @@ void place_device_array(Array const &arr, uint32_t device_id, char const *what)
     }
 }
 
+constexpr std::string_view k_no_rows_consequence =
+    "an empty training set has no gradients to boost on";
+constexpr std::string_view k_no_columns_consequence =
+    "a dataset with no columns has nothing to split on";
+
 struct MatrixArg
 {
     std::optional<array_2d> host;
@@ -233,6 +238,46 @@ VectorArg resolve_targets(nb::handle y, uint32_t device_id)
     return resolve_vector(y, device_id, "y");
 }
 
+void require_rows_and_columns(MatrixArg const &x, std::string_view where)
+{
+    if (x.n_rows == 0)
+    {
+        throw std::invalid_argument(
+            std::format("{}X has no rows; {}", where, k_no_rows_consequence));
+    }
+    if (x.n_features == 0)
+    {
+        throw std::invalid_argument(
+            std::format("{}X has no columns; {}", where, k_no_columns_consequence));
+    }
+}
+
+template <typename Accept>
+void require_each(VectorArg const &v, std::string_view where, std::string_view what,
+                  std::string_view rule, Accept accept)
+{
+    bonsai::floats_view const values = v.view();
+    auto const                bad    = std::ranges::find_if_not(values, accept);
+    if (bad != values.end())
+    {
+        throw std::invalid_argument(
+            std::format("{}{} must be {}; entry {} is {}", where, what, rule,
+                        std::distance(values.begin(), bad), *bad));
+    }
+}
+
+void require_finite_labels(VectorArg const &y, std::string_view where)
+{
+    require_each(y, where, "y", "finite", [](float v) { return std::isfinite(v); });
+}
+
+void require_usable_weights(VectorArg const &w, std::string_view name,
+                            std::string_view where)
+{
+    require_each(w, where, name, "finite and non-negative",
+                 [](float v) { return std::isfinite(v) && v >= 0.0F; });
+}
+
 struct Inputs
 {
     MatrixArg                xarg;
@@ -246,6 +291,7 @@ Inputs resolve_inputs(nb::handle X, nb::handle y, nb::handle weight, uint32_t de
     Inputs in{.xarg = resolve_matrix(X, device_id),
               .yarg = resolve_targets(y, device_id),
               .warg = std::nullopt};
+    require_rows_and_columns(in.xarg, where);
     if (!weight.is_none())
     {
         in.warg = resolve_vector(weight, device_id, weight_name);
@@ -259,6 +305,11 @@ Inputs resolve_inputs(nb::handle X, nb::handle y, nb::handle weight, uint32_t de
     {
         throw std::invalid_argument(
             std::format("{}len({}) must equal the row count", where, weight_name));
+    }
+    require_finite_labels(in.yarg, where);
+    if (in.warg)
+    {
+        require_usable_weights(*in.warg, weight_name, where);
     }
     return in;
 }
@@ -462,7 +513,7 @@ IndexAxis row_axis()
     return {.keyword           = "rows",
             .one               = "row",
             .many              = "rows",
-            .empty_consequence = "an empty training set has no gradients to boost on",
+            .empty_consequence = k_no_rows_consequence,
             .names             = std::nullopt};
 }
 
@@ -471,7 +522,7 @@ IndexAxis column_axis(std::span<std::string const> names)
     return {.keyword           = "columns",
             .one               = "feature",
             .many              = "features",
-            .empty_consequence = "a dataset with no columns has nothing to split on",
+            .empty_consequence = k_no_columns_consequence,
             .names             = names};
 }
 
@@ -504,6 +555,11 @@ nb::object selection_as_array(nb::object const &np, nb::handle selection, size_t
     }
     auto const [start, stop, step, len] = nb::cast<nb::slice>(selection).compute(n);
     return np.attr("arange")(start, stop, step);
+}
+
+bool is_empty(nb::object const &arr)
+{
+    return nb::cast<size_t>(arr.attr("size")) == 0;
 }
 
 nb::object mask_positions(nb::object const &np, nb::object const &mask, size_t n,
@@ -569,17 +625,17 @@ template <typename IdT>
 std::vector<IdT> parse_index_selection(nb::handle selection, size_t n,
                                        IndexAxis const &axis)
 {
-    nb::object const np  = nb::module_::import_("numpy");
-    nb::object const arr = selection_as_array(np, selection, n);
-    if (nb::cast<size_t>(arr.attr("size")) == 0)
+    nb::object const np        = nb::module_::import_("numpy");
+    nb::object const arr       = selection_as_array(np, selection, n);
+    nb::object const positions = np.attr("ascontiguousarray")(
+        is_empty(arr) ? arr : integer_positions(np, arr, n, axis), np.attr("int64"));
+    if (is_empty(positions))
     {
         throw nb::value_error(std::format("Dataset.subset({}=...) selected no {}; {}",
                                           axis.keyword, axis.many,
                                           axis.empty_consequence)
                                   .c_str());
     }
-    nb::object const positions = np.attr("ascontiguousarray")(
-        integer_positions(np, arr, n, axis), np.attr("int64"));
     if (nb::cast<size_t>(positions.attr("ndim")) != 1)
     {
         throw nb::value_error(
@@ -2126,14 +2182,14 @@ NB_MODULE(_bonsai, m)
             "Parameters\n"
             "----------\n"
             "X : float32 array, shape (n_rows, n_features)\n"
-            "    Row-major features; any DLPack producer. A device-resident X "
-            "(cupy, torch, jax) is binned on the GPU in place, with no host "
-            "round trip.\n"
+            "    Row-major features, at least one row and one column; any DLPack "
+            "producer. A device-resident X (cupy, torch, jax) is binned on the GPU in "
+            "place, with no host round trip.\n"
             "y : float32 array, shape (n_rows,) or (n_rows, n_targets)\n"
-            "    Labels, one per row or a row of targets per row. May be "
-            "device-resident; downloaded once, labels stay on the host.\n"
+            "    Labels, one per row or a row of targets per row, all finite. "
+            "May be device-resident; downloaded once, labels stay on the host.\n"
             "weight : float32 array, shape (n_rows,), optional\n"
-            "    Per-row weights; the same device rules as ``y``.\n"
+            "    Per-row weights, finite and >= 0; the same device rules as ``y``.\n"
             "max_bin, n_samples, seed, min_data_in_bin : optional\n"
             "    Bin-mapper settings, fixed at construction. Unset means the "
             "library default, or the reference's value in the ``reference=`` "
@@ -2369,13 +2425,13 @@ NB_MODULE(_bonsai, m)
           "data's feature names. Features the mapping leaves out are free "
           "(0); a name the data does not carry raises.\n"
           "X : float32 array, shape (n_rows, n_features)\n"
-          "    Row-major features. May be a CUDA array supporting DLPack "
-          "(cupy, torch, jax): X is then binned on the GPU in place, with no "
-          "host round trip. The columns are named by ``feature_names``, or "
-          "``f0``..``fN`` when it is unset.\n"
+          "    Row-major features, at least one row and one column. May be a CUDA "
+          "array supporting DLPack (cupy, torch, jax): X is then binned on the GPU in "
+          "place, with no host round trip. The columns are named by ``feature_names``, "
+          "or ``f0``..``fN`` when it is unset.\n"
           "y : float32 array, shape (n_rows,) or (n_rows, n_targets)\n"
-          "    Labels, or one row of regression targets per row; a device-resident "
-          "y is downloaded once.\n"
+          "    Labels, or one row of regression targets per row, all finite; a "
+          "device-resident y is downloaded once.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
           "    Host arrays, or a Dataset binned with this fit's cut points. "
           "Stays host-side either way, because the per-iteration eval "
@@ -2383,8 +2439,8 @@ NB_MODULE(_bonsai, m)
           "init_model : str, optional\n"
           "    Continue training from this saved model (warm start).\n"
           "sample_weight : float32 array, shape (n_rows,), optional\n"
-          "    Per-row weights; scales each row's gradient and hessian. A "
-          "device-resident vector is downloaded once.\n"
+          "    Per-row weights, finite and non-negative; scales each row's "
+          "gradient and hessian. A device-resident vector is downloaded once.\n"
           "feature_names : sequence of str, optional\n"
           "    One name per column, carried into the model: ``dump`` prints "
           "them and ``tree.monotone_constraints`` may be keyed by them. Unset, "
