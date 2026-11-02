@@ -49,8 +49,9 @@ def gen_data(rows: int, cols: int, seed: int, n_test: int, informative: int):
 
     k informative features in blocks of 5, decaying block weights, noise
     sized for a best-achievable R^2 of ~0.9. Deterministic in (rows, cols,
-    seed, n_test) only, so bins/threads sweeps reuse identical data, and
-    invariant to how many threads draw it. The exact operation order is
+    seed, n_test, informative) only, so bins/threads sweeps reuse identical
+    data, and invariant to how many threads draw it. The exact operation
+    order is
     pinned by golden hashes in test_synth.py: any change here severs
     comparability with every committed perf row and needs a DATA_RECIPE
     bump beside it.
