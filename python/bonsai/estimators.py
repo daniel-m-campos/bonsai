@@ -14,25 +14,50 @@ differ.
 
 from __future__ import annotations
 
+import dataclasses
+import functools
 import inspect
 import tempfile
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import numpy as np
 import numpy.typing as npt
 from typing_extensions import Self
 
-from bonsai._bonsai import Dataset, Model, load, train
+from bonsai._bonsai import Dataset, Model, _params_from_toml, default_config_toml, load, train
 from bonsai._coerce import _as_f32, _as_targets
+from bonsai._params import Params
 from bonsai._params_ops import ParamsOps
 
 __all__ = ["BonsaiClassifier", "BonsaiRegressor"]
 
 
 # Shared Base ======================================================================================
+
+
+@dataclasses.dataclass(frozen=True)
+class _FittedTargets:
+    """The fitted attributes a ``y`` determines, set on the estimator only
+    once ``train`` has returned, so a fit that raises leaves the previous
+    fit's attributes paired with the previous fit's model."""
+
+    def attributes(self) -> dict[str, object]:
+        """The attributes by their sklearn names, ``classes_`` and the like."""
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
+
+
+@dataclasses.dataclass(frozen=True)
+class _RegressionTargets(_FittedTargets):
+    n_outputs_: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _ClassTargets(_FittedTargets):
+    classes_: np.ndarray
+    n_classes_: int
 
 
 class _BonsaiEstimator:
@@ -66,6 +91,8 @@ class _BonsaiEstimator:
     subsample: float | None
     device: str | None
     params: dict | ParamsOps | None
+    _fit_eval_history: list[float]
+    _fit_early_stopping_rounds: int
 
     def __repr__(self) -> str:
         """sklearn-style: class name plus the non-default parameters."""
@@ -147,7 +174,10 @@ class _BonsaiEstimator:
         ``RegressorMixin``/``ClassifierMixin``/``BaseEstimator`` produce, so
         sklearn stays import-only-in-tests; empirically verified against the
         installed sklearn (see test suite). ``_estimator_type`` is what
-        picks the per-type tag.
+        picks the per-type tag. Both estimators route NaN features as
+        missing, so ``allow_nan`` is set and sklearn's meta-estimators pass
+        NaN through; the regressor fits several targets natively, which is
+        ``MultiOutputMixin``'s ``multi_output``.
 
         Returns
         -------
@@ -163,17 +193,19 @@ class _BonsaiEstimator:
         )
 
         kind = self._estimator_type
+        is_regressor = kind == "regressor"
         per_type = (
             {"regressor_tags": RegressorTags()}
-            if kind == "regressor"
+            if is_regressor
             else {"classifier_tags": ClassifierTags()}
         )
         tags: Any = Tags
         target_tags: Any = TargetTags
+        input_tags: Any = InputTags
         return tags(
             estimator_type=kind,
-            target_tags=target_tags(required=True),
-            input_tags=InputTags(),
+            target_tags=target_tags(required=True, multi_output=is_regressor),
+            input_tags=input_tags(allow_nan=True),
             **per_type,
         )
 
@@ -245,19 +277,21 @@ class _BonsaiEstimator:
             or an eval-set label was not seen in the training classes.
         """
         _reject_eval_set_list(eval_set)
-        y_enc = self._encode_targets(y)
+        y_enc, targets = self._encode_targets(y)
         overrides = (
-            self._warm_start_overrides() if init_model is not None else self._build_overrides()
+            self._warm_start_overrides(targets)
+            if init_model is not None
+            else self._build_overrides(targets)
         )
         names = self._fit_names(X, feature_names, init_model)
         ev = None
         if eval_set is not None:
             if init_model is None:
                 self._check_names_against(names, _eval_set_features(eval_set))
-            ev = self._encode_eval_set(eval_set)
+            ev = self._encode_eval_set(eval_set, targets)
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
         Xa = _as_f32(X, 2, "X")
-        self._model = train(
+        model = train(
             overrides,
             Xa,
             y_enc,
@@ -266,7 +300,10 @@ class _BonsaiEstimator:
             sample_weight=sw,
             feature_names=names,
         )
+        self.__dict__.update(targets.attributes())
+        self._model = model
         self._record_fit_inputs(Xa)
+        self._record_eval(model, overrides)
         return self
 
     def predict(self, X: npt.ArrayLike | Dataset, num_iteration: int = 0) -> np.ndarray:
@@ -307,9 +344,11 @@ class _BonsaiEstimator:
         numpy.ndarray
             Shape ``(n_iters, n_rows)``, or ``(n_iters, n_rows, n_targets)`` for
             a multi-target regressor: predictions after each boosting
-            iteration.
+            iteration, each stage what ``predict`` would return for that
+            prefix (class labels for ``BonsaiClassifier``).
         """
-        return np.asarray(self._fitted().staged_predict(self._predict_input(X)))
+        raw = np.asarray(self._fitted().staged_predict(self._predict_input(X)))
+        return self._decode_predictions(raw)
 
     def predict_leaf(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
         """Predict per-tree leaf indices, for feature engineering / embedding.
@@ -395,7 +434,10 @@ class _BonsaiEstimator:
         """Load a fitted model from a saved ``.msgpack`` file.
 
         The loaded model carries its feature count and its column names, so
-        ``n_features_in_`` and ``feature_names_in_`` come back with it.
+        ``n_features_in_`` and ``feature_names_in_`` come back with it. Its
+        resolved config becomes the estimator's parameters, so
+        ``get_params`` describes the model and ``clone(...).fit`` trains the
+        same configuration.
 
         Parameters
         ----------
@@ -407,8 +449,9 @@ class _BonsaiEstimator:
         _BonsaiEstimator
             A fresh estimator instance wrapping the loaded model.
         """
-        out = cls()
-        out._model = load(path)
+        model = load(path)
+        out = cls(**cls._arguments_from_model(model))
+        out._model = model
         names = _model_feature_names(out._model)
         out.n_features_in_ = len(out._fitted().feature_names)
         out._set_feature_names(names)
@@ -439,7 +482,7 @@ class _BonsaiEstimator:
         """
         self._check_fitted()
         name = self._fitted().objective_name
-        hist = [float(v) for v in self._fitted().eval_history]
+        hist = self._fit_eval_history
         start = next((i for i, v in enumerate(hist) if not np.isnan(v)), len(hist))
         hist = hist[start:]
         if not hist:
@@ -489,8 +532,14 @@ class _BonsaiEstimator:
         return state
 
     def __setstate__(self, state: dict):
-        """Pickle support: restore the native model from its msgpack bytes."""
+        """Pickle support: restore the native model from its msgpack bytes.
+
+        The eval history rides in the state beside the bytes, since the
+        saved model carries none; a pickle written before the history was
+        kept comes back without one.
+        """
         model_bytes = state.pop("_model_bytes", None)
+        self._forget_eval()
         self.__dict__.update(state)
         if model_bytes is not None:
             with tempfile.TemporaryDirectory() as td:
@@ -501,13 +550,91 @@ class _BonsaiEstimator:
             self._model = None
 
     # Every dispatch or objective key a constructor argument writes, with all
-    # the arguments that write it: `device` rewrites the grower for a device,
-    # `subsample` turns the sampler on. A warm start may inherit the model's
-    # value for a key only when all of them are still at their defaults.
+    # the arguments that write it and every params key that does: `device`
+    # rewrites the grower for a device, a subsample fraction turns the
+    # sampler on. A warm start may inherit the model's value for a key only
+    # when all of the arguments are still at their defaults and params names
+    # none of the keys.
     _WARM_START_KNOBS = (
-        ("dispatch.grower_name", ("grower", "device")),
-        ("dispatch.sampler_name", ("sampler", "subsample")),
+        ("dispatch.grower_name", ("grower", "device"), ("dispatch.grower_name",)),
+        (
+            "dispatch.sampler_name",
+            ("sampler", "subsample"),
+            ("dispatch.sampler_name", "sampler.subsample"),
+        ),
     )
+
+    # Each constructor argument with the config key it writes: fit writes
+    # the key from the argument, and from_file reads the argument back from
+    # a model's resolved config. Keys a fit derives from its data, or never
+    # stores, stay out of the loaded estimator's params.
+    _MODEL_ARGUMENTS: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("n_iters", "booster.n_iters"),
+        ("learning_rate", "booster.learning_rate"),
+        ("max_depth", "tree.max_depth"),
+        ("max_leaves", "tree.max_leaves"),
+        ("grower", "dispatch.grower_name"),
+        ("sampler", "dispatch.sampler_name"),
+        ("early_stopping_rounds", "booster.early_stopping_rounds"),
+        ("n_threads", "parallel.n_threads"),
+        ("random_seed", "booster.random_seed"),
+        ("max_bin", "bin_mapper.max_bin"),
+    )
+    _DERIVED_KEYS: ClassVar[tuple[str, ...]] = ("parallel.device_id",)
+
+    @classmethod
+    def _arguments_from_model(cls, model: Model) -> dict[str, object]:
+        """Constructor arguments that reproduce ``model``'s resolved config.
+
+        An argument whose default is a value takes the model's value, since
+        the estimator's defaults are not the library's. An argument whose
+        default is None (leave the library default) is set only where the
+        model differs from the library. Every other key that differs goes to
+        ``params``, except the ``data`` section, which names input files,
+        and the keys a fit derives from ``y``.
+
+        Parameters
+        ----------
+        model
+            A loaded model.
+
+        Returns
+        -------
+        dict
+            Keyword arguments for ``cls``.
+        """
+        resolved = _shortest_spellings(Params.from_model(model).to_dict())
+        library = _shortest_spellings(_params_from_toml(default_config_toml()))
+        defaults = _init_defaults(cls)
+        changed = {k: v for k, v in resolved.items() if v != library.get(k)}
+        arguments: dict[str, object] = {}
+        for name, key in cls._MODEL_ARGUMENTS:
+            if defaults[name] is not None:
+                arguments[name] = resolved[key]
+            elif key in changed:
+                arguments[name] = changed[key]
+        params = cls._params_from_model(changed, resolved)
+        if params:
+            arguments["params"] = params
+        return arguments
+
+    @classmethod
+    def _params_from_model(
+        cls, changed: dict[str, object], resolved: dict[str, object]
+    ) -> dict[str, object]:
+        """The ``params`` of a loaded estimator: the changed keys no
+        constructor argument carries. A ``sampler.subsample`` brings the
+        model's sampler with it, so a fraction the ``all_rows`` sampler
+        ignored does not turn on ``bernoulli`` at refit."""
+        mapped = {key for _, key in cls._MODEL_ARGUMENTS}
+        params = {
+            k: v
+            for k, v in changed.items()
+            if k not in mapped and k not in cls._DERIVED_KEYS and not k.startswith("data.")
+        }
+        if "sampler.subsample" in params:
+            params["dispatch.sampler_name"] = resolved["dispatch.sampler_name"]
+        return params
 
     def _store(self, arguments: dict):
         """Keep every constructor argument raw; ``get_params``/``clone`` read
@@ -517,20 +644,20 @@ class _BonsaiEstimator:
         for name in _constructor_names(type(self)):
             setattr(self, name, arguments[name])
         self._model: Model | None = None
+        self._forget_eval()
 
-    def _objective_pairs(self) -> dict[str, object]:
-        """Config keys the objective needs. ``BonsaiRegressor`` exposes a
-        fixed ``objective`` kwarg; ``BonsaiClassifier`` derives it from
-        ``classes_`` at fit time."""
+    def _objective_pairs(self, targets: _FittedTargets) -> dict[str, object]:
+        """Config keys the objective derives from ``targets``, beyond the
+        constructor arguments: ``BonsaiClassifier`` chooses its objective
+        by the class count, ``BonsaiRegressor`` adds its target count."""
         raise NotImplementedError
 
-    def _encode_targets(self, y: npt.ArrayLike) -> np.ndarray:
-        """The training targets as the native booster takes them; a
-        classifier also records ``classes_`` here, before the overrides that
-        need the class count are built."""
+    def _encode_targets(self, y: npt.ArrayLike) -> tuple[np.ndarray, _FittedTargets]:
+        """The training targets as the native booster takes them, and the
+        fitted attributes they determine."""
         raise NotImplementedError
 
-    def _encode_eval_targets(self, y: npt.ArrayLike) -> np.ndarray:
+    def _encode_eval_targets(self, y: npt.ArrayLike, targets: _FittedTargets) -> np.ndarray:
         """Eval-set targets, encoded against what ``_encode_targets`` saw."""
         raise NotImplementedError
 
@@ -538,7 +665,9 @@ class _BonsaiEstimator:
         """What ``predict`` returns for the native booster's output."""
         return raw
 
-    def _encode_eval_set(self, eval_set) -> tuple[np.ndarray, np.ndarray] | Dataset:
+    def _encode_eval_set(
+        self, eval_set, targets: _FittedTargets
+    ) -> tuple[np.ndarray, np.ndarray] | Dataset:
         """A pre-binned ``Dataset`` passes through: it was built before
         ``fit`` saw any class, so a classifier's labels there are already the
         encoded ids and the native layer range-checks them."""
@@ -551,9 +680,9 @@ class _BonsaiEstimator:
                 f"eval_set y has {y_shape[0]} rows and eval_set X has {X_eval.shape[0]}; "
                 "a 2-D y is n_rows x n_targets"
             )
-        return (X_eval, self._encode_eval_targets(eval_set[1]))
+        return (X_eval, self._encode_eval_targets(eval_set[1], targets))
 
-    def _build_overrides(self) -> dict[str, object]:
+    def _build_overrides(self, targets: _FittedTargets) -> dict[str, object]:
         """Translate the first-class kwargs and ``params`` into the dotted
         config keys the native ``train()`` expects. Kept out of ``__init__``
         so constructor args stay raw attributes (required for
@@ -563,34 +692,38 @@ class _BonsaiEstimator:
         optional ones that carry a ``None`` "leave it alone" default, then
         ``params`` (the power-user escape hatch always has the final
         word)."""
-        merged = {
-            "booster.n_iters": self.n_iters,
-            "booster.learning_rate": self.learning_rate,
-            "booster.early_stopping_rounds": self.early_stopping_rounds,
-            "booster.random_seed": self.random_seed,
-            "tree.max_depth": self.max_depth,
-            "tree.max_leaves": self.max_leaves,
-            "dispatch.grower_name": self.grower,
-            "dispatch.sampler_name": self.sampler,
-            "parallel.n_threads": self.n_threads,
-            **self._objective_pairs(),
-        }
-        if self.max_bin is not None:
-            merged["bin_mapper.max_bin"] = self.max_bin
+        merged: dict[str, object] = {}
+        for name, key in self._MODEL_ARGUMENTS:
+            value = getattr(self, name)
+            if value is not None:
+                merged[key] = value
+        merged.update(self._objective_pairs(targets))
         if self.subsample is not None:
-            # A subsample fraction implies row sampling; bonsai makes the
-            # sampler explicit, so setting the fraction turns it on when the
-            # sampler is still at its default (an explicit sampler= choice
-            # keeps its machinery).
             merged["sampler.subsample"] = self.subsample
-            if self.sampler == "all_rows":
-                merged["dispatch.sampler_name"] = "bernoulli"
         if self.device is not None:
-            merged["dispatch.grower_name"] = _grower_for_device(
-                str(merged["dispatch.grower_name"]), self.device
-            )
-        merged.update(self._explicit_params())
+            merged.update(_device_pairs(str(merged["dispatch.grower_name"]), self.device))
+        explicit = self._explicit_params()
+        merged.update(explicit)
+        if self._subsample_implies_bernoulli(explicit):
+            merged["dispatch.sampler_name"] = "bernoulli"
         return merged
+
+    def _subsample_implies_bernoulli(self, explicit: dict[str, object]) -> bool:
+        """Whether a subsample fraction turns row sampling on.
+
+        bonsai makes the sampler explicit, and the default ``all_rows``
+        sampler ignores ``sampler.subsample``. A fraction, from the
+        ``subsample`` argument or from ``params``, therefore switches to
+        ``bernoulli`` while the sampler is still at its default. An explicit
+        ``sampler`` argument or ``dispatch.sampler_name`` keeps its own
+        machinery.
+        """
+        fraction_given = self.subsample is not None or "sampler.subsample" in explicit
+        return (
+            fraction_given
+            and self.sampler == "all_rows"
+            and "dispatch.sampler_name" not in explicit
+        )
 
     def _explicit_params(self) -> dict[str, object]:
         """The ``params`` escape hatch as a dict, whichever form it was given in."""
@@ -598,7 +731,7 @@ class _BonsaiEstimator:
             return self.params.to_dict()
         return self.params or {}
 
-    def _warm_start_overrides(self) -> dict[str, object]:
+    def _warm_start_overrides(self, targets: _FittedTargets) -> dict[str, object]:
         """Overrides for a warm start, with the untouched knobs dropped.
 
         The native reconcile reads any key it is handed as user-chosen, so
@@ -609,11 +742,11 @@ class _BonsaiEstimator:
         data (``BonsaiClassifier`` derives its objective from ``y``, which
         a warm start should still be checked against).
         """
-        overrides = self._build_overrides()
+        overrides = self._build_overrides(targets)
         explicit = self._explicit_params()
         defaults = _init_defaults(type(self))
-        for key, args in self._WARM_START_KNOBS:
-            if key in explicit:
+        for key, args, params_keys in self._WARM_START_KNOBS:
+            if any(k in explicit for k in params_keys):
                 continue
             if all(getattr(self, a) == defaults[a] for a in args):
                 overrides.pop(key, None)
@@ -627,7 +760,10 @@ class _BonsaiEstimator:
     def _fitted(self) -> Model:
         """The native model, once ``fit`` or ``from_file`` has set it."""
         if self._model is None:
-            raise RuntimeError("fit() or from_file() first")
+            raise _not_fitted_error()(
+                f"This {type(self).__name__} instance is not fitted yet: "
+                "call fit() or from_file() first"
+            )
         return self._model
 
     def _predict_input(self, X: npt.ArrayLike | Dataset) -> np.ndarray | Dataset:
@@ -643,8 +779,8 @@ class _BonsaiEstimator:
         """The eval history, when fit ran with early stopping; ``what`` names
         the property asking, for the error."""
         self._check_fitted()
-        hist = self._fitted().eval_history
-        if not self.early_stopping_rounds or not len(hist):
+        hist = self._fit_eval_history
+        if not self._fit_early_stopping_rounds or not hist:
             raise AttributeError(f"{what} needs fit(eval_set=...) with early_stopping_rounds set")
         return hist
 
@@ -756,6 +892,24 @@ class _BonsaiEstimator:
         self.n_features_in_ = Xa.shape[1]
         self._set_feature_names(_model_feature_names(self._fitted()))
 
+    def _forget_eval(self):
+        """The eval record of an estimator no fit has run on."""
+        self._fit_eval_history = []
+        self._fit_early_stopping_rounds = 0
+
+    def _record_eval(self, model: Model, overrides: dict[str, object]):
+        """Keep the fit's eval history and the early stopping it ran under.
+
+        The rounds come from the overrides the fit resolved, where
+        ``params`` has the last word over the ``early_stopping_rounds``
+        argument. The history is copied off the model because a saved or
+        pickled model carries none.
+        """
+        self._fit_eval_history = [float(v) for v in model.eval_history]
+        self._fit_early_stopping_rounds = int(
+            cast("int", overrides["booster.early_stopping_rounds"])
+        )
+
     def _set_feature_names(self, names: list[str] | None):
         """Set ``feature_names_in_``, or remove it when there are no names."""
         if names is None:
@@ -814,11 +968,13 @@ class BonsaiRegressor(_BonsaiEstimator):
         Histogram bin cap; None leaves the native default.
     subsample
         Row-sampling fraction; switches the sampler to ``"bernoulli"`` when
-        ``sampler`` is still at its default. None leaves sampling off.
+        ``sampler`` is still at its default, as ``sampler.subsample`` in
+        ``params`` does. None leaves sampling off.
     device
         ``"cpu"`` or ``"cuda"`` (or ``"cuda:N"``); ``"cuda"`` picks the CUDA
         grower matching the chosen ``grower``, moving compute without
-        changing the growth strategy. None leaves the grower name as given.
+        changing the growth strategy, and ``"cuda:N"`` also sets
+        ``parallel.device_id`` to ``N``. None leaves the grower name as given.
     quantile_alpha
         The quantile to fit when ``objective="quantile"``.
     params
@@ -877,14 +1033,21 @@ class BonsaiRegressor(_BonsaiEstimator):
         -------
         float
             The R² score.
+
+        Raises
+        ------
+        ValueError
+            If ``y`` or ``sample_weight`` disagrees with the predictions in
+            row count, or ``y`` in target count.
         """
-        y_true = _as_targets(y, "y").astype(np.float64)
+        y_true = _as_targets(y, "y", np.float64)
         y_pred = np.asarray(self.predict(X), dtype=np.float64)
         w = (
             None
             if sample_weight is None
             else _as_f32(sample_weight, 1, "sample_weight").astype(np.float64)
         )
+        _check_scored_shapes(y_true, y_pred, w)
         if y_true.ndim == 1:
             return _r2(y_true, y_pred, w)
         per_target = [_r2(y_true[:, k], y_pred[:, k], w) for k in range(y_true.shape[1])]
@@ -892,8 +1055,15 @@ class BonsaiRegressor(_BonsaiEstimator):
 
     _WARM_START_KNOBS = (
         *_BonsaiEstimator._WARM_START_KNOBS,
-        ("dispatch.objective_name", ("objective", "quantile_alpha")),
+        ("dispatch.objective_name", ("objective", "quantile_alpha"), ("dispatch.objective_name",)),
     )
+
+    _MODEL_ARGUMENTS = (
+        *_BonsaiEstimator._MODEL_ARGUMENTS,
+        ("objective", "dispatch.objective_name"),
+        ("quantile_alpha", "objective.quantile_alpha"),
+    )
+    _DERIVED_KEYS = (*_BonsaiEstimator._DERIVED_KEYS, "objective.n_targets")
 
     @classmethod
     def from_file(cls, path: str) -> BonsaiRegressor:
@@ -902,20 +1072,16 @@ class BonsaiRegressor(_BonsaiEstimator):
         out.n_outputs_ = int(out._fitted().n_targets)
         return out
 
-    def _objective_pairs(self) -> dict[str, object]:
-        pairs: dict[str, object] = {"dispatch.objective_name": self.objective}
-        if self.quantile_alpha is not None:
-            pairs["objective.quantile_alpha"] = self.quantile_alpha
-        if getattr(self, "n_outputs_", 1) > 1:
-            pairs["objective.n_targets"] = self.n_outputs_
-        return pairs
+    def _objective_pairs(self, targets: _FittedTargets) -> dict[str, object]:
+        if isinstance(targets, _RegressionTargets) and targets.n_outputs_ > 1:
+            return {"objective.n_targets": targets.n_outputs_}
+        return {}
 
-    def _encode_targets(self, y: npt.ArrayLike) -> np.ndarray:
+    def _encode_targets(self, y: npt.ArrayLike) -> tuple[np.ndarray, _FittedTargets]:
         arr = _as_targets(y, "y")
-        self.n_outputs_ = int(arr.shape[1]) if arr.ndim == 2 else 1
-        return arr
+        return arr, _RegressionTargets(n_outputs_=int(arr.shape[1]) if arr.ndim == 2 else 1)
 
-    def _encode_eval_targets(self, y: npt.ArrayLike) -> np.ndarray:
+    def _encode_eval_targets(self, y: npt.ArrayLike, targets: _FittedTargets) -> np.ndarray:
         return _as_targets(y, "y").reshape(-1)
 
 
@@ -981,11 +1147,13 @@ class BonsaiClassifier(_BonsaiEstimator):
         Histogram bin cap; None leaves the native default.
     subsample
         Row-sampling fraction; switches the sampler to ``"bernoulli"`` when
-        ``sampler`` is still at its default. None leaves sampling off.
+        ``sampler`` is still at its default, as ``sampler.subsample`` in
+        ``params`` does. None leaves sampling off.
     device
         ``"cpu"`` or ``"cuda"`` (or ``"cuda:N"``); ``"cuda"`` picks the CUDA
         grower matching the chosen ``grower``, moving compute without
-        changing the growth strategy. None leaves the grower name as given.
+        changing the growth strategy, and ``"cuda:N"`` also sets
+        ``parallel.device_id`` to ``N``. None leaves the grower name as given.
     params
         Overrides beyond the first-class kwargs: a ``bonsai.Params`` or a
         dotted config-key dict; the power-user escape hatch, applied after
@@ -1017,8 +1185,8 @@ class BonsaiClassifier(_BonsaiEstimator):
     def predict_proba(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
         """Predict class probabilities with the fitted model.
 
-        Binary uses the ``logloss`` objective's P(class 1) directly
-        (``[1 - p, p]``); multiclass uses the ``softmax`` booster's per-class
+        A ``logloss`` model's P(class 1) becomes ``[1 - p, p]``; a
+        ``softmax`` model, two classes included, gives its per-class
         probabilities (a row-wise softmax of the class logits).
 
         Parameters
@@ -1032,7 +1200,7 @@ class BonsaiClassifier(_BonsaiEstimator):
             Shape ``(n_rows, n_classes)``, columns in ``classes_`` order.
         """
         X = self._predict_input(X)
-        if self.n_classes_ == 2:
+        if self._is_logloss():
             p = np.asarray(self._fitted().predict(X), dtype=np.float64)
             return np.column_stack([1.0 - p, p])
         return np.asarray(self._fitted().predict_proba(X), dtype=np.float64)
@@ -1066,18 +1234,29 @@ class BonsaiClassifier(_BonsaiEstimator):
         Raises
         ------
         ValueError
-            If ``sample_weight`` sums to zero.
+            If ``sample_weight`` sums to zero, or ``y`` or ``sample_weight``
+            disagrees with the predictions in row count.
         """
-        y_true = np.asarray(y)
+        y_true = _as_labels(y, "y")
         y_pred = np.asarray(self.predict(X))
+        w = (
+            None
+            if sample_weight is None
+            else _as_f32(sample_weight, 1, "sample_weight").astype(np.float64)
+        )
+        _check_scored_shapes(y_true, y_pred, w)
         correct = (y_true == y_pred).astype(np.float64)
-
-        if sample_weight is None:
+        if w is None:
             return float(correct.mean())
-        w = _as_f32(sample_weight, 1, "sample_weight").astype(np.float64)
         if w.sum() == 0.0:
             raise ValueError("sample_weight sums to zero; accuracy is undefined")
         return float(np.average(correct, weights=w))
+
+    _DERIVED_KEYS = (
+        *_BonsaiEstimator._DERIVED_KEYS,
+        "dispatch.objective_name",
+        "objective.n_classes",
+    )
 
     @classmethod
     def from_file(cls, path: str) -> BonsaiClassifier:
@@ -1107,49 +1286,89 @@ class BonsaiClassifier(_BonsaiEstimator):
         out.classes_ = np.arange(out.n_classes_)
         return out
 
-    def _objective_pairs(self) -> dict[str, object]:
-        if self.n_classes_ == 2:
+    def _objective_pairs(self, targets: _FittedTargets) -> dict[str, object]:
+        n_classes = _class_targets(targets).n_classes_
+        if n_classes == 2:
             return {"dispatch.objective_name": "logloss"}
         return {
             "dispatch.objective_name": "softmax",
-            "objective.n_classes": self.n_classes_,
+            "objective.n_classes": n_classes,
         }
 
-    def _encode_targets(self, y: npt.ArrayLike) -> np.ndarray:
-        y_arr = np.asarray(y)
+    def _encode_targets(self, y: npt.ArrayLike) -> tuple[np.ndarray, _FittedTargets]:
+        y_arr = _as_labels(y, "y")
         if _has_nan_label(y_arr):
             raise ValueError("Input y contains NaN.")
         _reject_continuous_labels(y_arr)
-        self.classes_ = np.unique(y_arr)
-        self.n_classes_ = len(self.classes_)
-        if self.n_classes_ < 2:
+        classes = np.unique(y_arr)
+        if len(classes) < 2:
             raise ValueError(
-                f"BonsaiClassifier needs at least 2 classes, got {self.n_classes_} "
-                f"({self.classes_!r})"
+                f"BonsaiClassifier needs at least 2 classes, got {len(classes)} ({classes!r})"
             )
-        return np.searchsorted(self.classes_, y_arr).astype(np.float32)
+        encoded = np.searchsorted(classes, y_arr).astype(np.float32)
+        return encoded, _ClassTargets(classes_=classes, n_classes_=len(classes))
 
-    def _encode_eval_targets(self, y: npt.ArrayLike) -> np.ndarray:
+    def _encode_eval_targets(self, y: npt.ArrayLike, targets: _FittedTargets) -> np.ndarray:
         """A label the training fold never saw cannot be encoded; letting
         searchsorted guess silently corrupts the eval metric and early
         stopping, so reject it."""
-        y_arr = np.asarray(y)
-        ids = np.clip(np.searchsorted(self.classes_, y_arr), 0, self.n_classes_ - 1)
-        bad = self.classes_[ids] != y_arr
+        classes = _class_targets(targets).classes_
+        y_arr = _as_labels(y, "y")
+        ids = np.clip(np.searchsorted(classes, y_arr), 0, len(classes) - 1)
+        bad = classes[ids] != y_arr
         if bad.any():
             raise ValueError(
                 f"eval_set labels {np.unique(y_arr[bad])!r} are not in the "
-                f"training classes {self.classes_!r}"
+                f"training classes {classes!r}"
             )
         return _as_f32(ids, 1, "y")
 
     def _decode_predictions(self, raw: np.ndarray) -> np.ndarray:
-        if self.n_classes_ == 2:
+        if self._is_logloss():
             return self.classes_[(raw >= 0.5).astype(np.int64)]
         return self.classes_[raw.astype(np.int64)]
 
+    def _is_logloss(self) -> bool:
+        """Whether the model predicts P(class 1) rather than class ids.
+
+        Read off the model, not the class count: a two-class ``softmax``
+        model, loaded or forced through ``params``, predicts ids.
+        """
+        return self._fitted().objective_name == "logloss"
+
 
 # Private Functions ================================================================================
+
+
+def __getattr__(name: str) -> type[Exception]:
+    """Resolve ``NotFittedError`` by name, so the error pickles across processes."""
+    if name == "NotFittedError":
+        return _not_fitted_error()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+@functools.cache
+def _not_fitted_error() -> type[Exception]:
+    """The error an unfitted estimator raises, built on first use.
+
+    It is sklearn's ``NotFittedError`` when sklearn is installed, which is
+    what sklearn's tooling and estimator checks catch, and stays a
+    ``RuntimeError`` for callers written against the earlier error. sklearn
+    is imported here rather than at module scope, so ``import bonsai`` never
+    needs it; without sklearn the error keeps ``NotFittedError``'s own bases.
+
+    Returns
+    -------
+    type
+        One class per process, named ``bonsai.estimators.NotFittedError``.
+    """
+    try:
+        from sklearn.exceptions import NotFittedError
+    except ImportError:
+        bases: tuple[type, ...] = (ValueError, AttributeError, RuntimeError)
+    else:
+        bases = (NotFittedError, RuntimeError)
+    return type("NotFittedError", bases, {"__module__": __name__})
 
 
 def _constructor_names(cls) -> list[str]:
@@ -1161,6 +1380,16 @@ def _init_defaults(cls) -> dict[str, object]:
     """Constructor-signature defaults, keyed by parameter name."""
     sig = inspect.signature(cls.__init__)
     return {name: prm.default for name, prm in sig.parameters.items() if name != "self"}
+
+
+def _shortest_spellings(config: dict[str, object]) -> dict[str, object]:
+    """A config dict with each float in its shortest float32 spelling.
+
+    The config stores its floats as float32, so a learning rate of 0.3
+    reads back as 0.30000001192092896; the shortest spelling that rounds
+    to the same float32 is the value the caller wrote.
+    """
+    return {k: float(str(np.float32(v))) if isinstance(v, float) else v for k, v in config.items()}
 
 
 def _names_disagreement(fitted: list[str], given: list[str]) -> str:
@@ -1250,18 +1479,118 @@ def _feature_names_of(X: object) -> list[str] | None:
     return names
 
 
-def _grower_for_device(grower: str, device: str) -> str:
-    """The grower that runs ``grower``'s strategy on ``device``.
+def _class_targets(targets: _FittedTargets) -> _ClassTargets:
+    """The class attributes a classifier's ``_encode_targets`` returned."""
+    if not isinstance(targets, _ClassTargets):
+        raise TypeError(f"expected class targets, got {type(targets).__name__}")
+    return targets
 
-    Every growth strategy has a CUDA grower, so the mapping is a prefix: the
-    device moves compute and never substitutes the structural choice.
+
+def _as_labels(y: npt.ArrayLike, name: str) -> np.ndarray:
+    """Class labels as a vector, one per row.
+
+    A single-column 2-D array is read as one label per row, the way the
+    regressors read a single-column target and sklearn's classifiers read
+    a column vector.
+
+    Parameters
+    ----------
+    y
+        Labels of any hashable, orderable dtype.
+    name
+        The argument's name, for the error message.
+
+    Returns
+    -------
+    numpy.ndarray
+        Rank 1, in the caller's dtype.
+
+    Raises
+    ------
+    ValueError
+        When ``y`` is neither a vector nor a single column.
+    """
+    arr = np.asarray(y)
+    if arr.ndim == 2 and arr.shape[1] == 1:
+        arr = arr[:, 0]
+    if arr.ndim != 1:
+        raise ValueError(f"{name} must be 1-dimensional or a single column, got shape {arr.shape}")
+    return arr
+
+
+def _check_scored_shapes(y_true: np.ndarray, y_pred: np.ndarray, w: np.ndarray | None):
+    """Refuse a ``score`` whose inputs would broadcast instead of pairing up.
+
+    numpy would stretch a single row against many, or score only the
+    targets ``y`` happens to share with the predictions, and report a
+    number for data that does not line up.
+
+    Parameters
+    ----------
+    y_true
+        The caller's targets or labels, a single column already flattened.
+    y_pred
+        What ``predict`` returned for ``X``.
+    w
+        The sample weights, or None.
+
+    Raises
+    ------
+    ValueError
+        If the row counts differ, or the target counts do.
+    """
+    n_rows = len(y_pred)
+    if len(y_true) != n_rows:
+        raise ValueError(f"len(y) must equal the row count of X: got {len(y_true)} and {n_rows}")
+    if y_true.shape[1:] != y_pred.shape[1:]:
+        raise ValueError(
+            f"y has {_target_count(y_true)} targets but the model predicts {_target_count(y_pred)}"
+        )
+    if w is not None and len(w) != n_rows:
+        raise ValueError(
+            f"len(sample_weight) must equal the row count of X: got {len(w)} and {n_rows}"
+        )
+
+
+def _target_count(a: np.ndarray) -> int:
+    """Columns of a target array; a vector is one target."""
+    return 1 if a.ndim == 1 else int(a.shape[1])
+
+
+def _device_pairs(grower: str, device: str) -> dict[str, object]:
+    """The config keys ``device`` writes: the grower, and which GPU.
+
+    Every growth strategy has a CUDA grower, so the grower mapping is a
+    prefix: the device moves compute and never substitutes the structural
+    choice. ``"cuda:N"`` also places the fit on device ``N``.
+
+    Parameters
+    ----------
+    grower
+        The grower name before the device is applied.
+    device
+        ``"cpu"``, ``"cuda"`` (or ``"gpu"``), or ``"cuda:N"``.
+
+    Returns
+    -------
+    dict
+        ``dispatch.grower_name``, and ``parallel.device_id`` for ``"cuda:N"``.
+
+    Raises
+    ------
+    ValueError
+        If ``device`` is none of those, ``"cuda:abc"`` included.
     """
     dev = device.lower()
-    if dev in ("cuda", "gpu") or dev.startswith("cuda:"):
-        return grower if grower.startswith("cuda_") else f"cuda_{grower}"
     if dev == "cpu":
-        return grower.removeprefix("cuda_")
-    raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")
+        return {"dispatch.grower_name": grower.removeprefix("cuda_")}
+    cuda_grower = grower if grower.startswith("cuda_") else f"cuda_{grower}"
+    if dev in ("cuda", "gpu"):
+        return {"dispatch.grower_name": cuda_grower}
+    kind, _, index = dev.partition(":")
+    if kind != "cuda" or not index.isdigit():
+        raise ValueError(f"device must be 'cpu', 'cuda' or 'cuda:N', got {device!r}")
+    return {"dispatch.grower_name": cuda_grower, "parallel.device_id": int(index)}
 
 
 def _has_nan_label(y: np.ndarray) -> bool:
