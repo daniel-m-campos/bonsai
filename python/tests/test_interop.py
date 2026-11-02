@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import bonsai
+import numpy as np
 import pytest
 from bonsai import interop
 from bonsai.params import Params
+
+LEAFWISE = {"dispatch.grower_name": "leafwise"}
+LEVELWISE = {"dispatch.grower_name": "levelwise"}
 
 # from_xgboost =====================================================================================
 
@@ -71,6 +75,44 @@ def test_from_xgboost_rejects_an_unknown_objective():
         interop.from_xgboost({"objective": "rank:pairwise"})
 
 
+def test_from_xgboost_leaves_a_none_value_unset():
+    out = interop.from_xgboost(
+        {"grow_policy": None, "objective": None, "colsample_bylevel": None, "max_depth": 4}
+    )
+    assert out.to_dict() == {"tree.max_depth": 4}
+
+
+def test_from_lightgbm_leaves_a_none_objective_unset():
+    assert "dispatch.objective_name" not in interop.from_lightgbm({"objective": None}).to_dict()
+
+
+def test_from_xgboost_grows_leafwise_under_a_leaf_cap():
+    out = interop.from_xgboost({"grow_policy": "depthwise", "max_depth": 6, "max_leaves": 8})
+    assert out.to_dict() == {**LEAFWISE, "tree.max_depth": 6, "tree.max_leaves": 8}
+
+
+def test_from_xgboost_leaves_the_no_cap_leaf_count_unset():
+    assert interop.from_xgboost({"max_leaves": 0}) == Params()
+
+
+def test_from_xgboost_carries_the_no_cap_leaf_count_under_lossguide():
+    out = interop.from_xgboost({"grow_policy": "lossguide", "max_leaves": 0})
+    assert out.to_dict() == {**LEAFWISE, "tree.max_leaves": 0}
+
+
+def test_from_xgboost_reports_a_class_count_without_a_multiclass_objective():
+    with pytest.raises(ValueError, match="num_class"):
+        interop.from_xgboost({"objective": "reg:squarederror", "num_class": 3})
+
+
+def test_from_xgboost_reads_the_drop_rate_under_dart_only():
+    dart = interop.from_xgboost({"booster": "dart", "rate_drop": 0.2}).to_dict()
+    assert dart == {"booster.dart_drop_rate": 0.2}
+    assert interop.from_xgboost({"booster": "gbtree", "rate_drop": 0.2}) == Params()
+    with pytest.raises(ValueError, match=r"booster value 'gblinear'.*accepted values"):
+        interop.from_xgboost({"booster": "gblinear"}, strict=False)
+
+
 def test_from_xgboost_accepts_the_booster_api_aliases():
     assert interop.from_xgboost({"eta": 0.1, "lambda": 2.0}).to_dict() == {
         "booster.learning_rate": 0.1,
@@ -91,14 +133,37 @@ def test_from_lightgbm_keeps_a_positive_depth_cap():
     assert interop.from_lightgbm({"max_depth": 8}).to_dict()["tree.max_depth"] == 8
 
 
+@pytest.mark.parametrize(
+    ("translate", "depth"),
+    [(interop.from_lightgbm, 0), (interop.from_lightgbm, -1), (interop.from_xgboost, 0)],
+)
+def test_from_library_resolves_the_no_limit_depth(translate, depth):
+    out = translate({"max_depth": depth}).to_dict()
+    assert out["tree.max_depth"] == interop.UNCAPPED_DEPTH
+
+
+@pytest.mark.parametrize(
+    ("translate", "key"),
+    [
+        (interop.from_xgboost, "n_jobs"),
+        (interop.from_lightgbm, "num_threads"),
+        (interop.from_catboost, "thread_count"),
+    ],
+)
+def test_from_library_resolves_all_cores_to_auto(translate, key):
+    assert translate({key: -1}).to_dict()["parallel.n_threads"] == 0
+
+
 def test_from_lightgbm_accepts_the_documented_aliases():
     assert interop.from_lightgbm(
         {
             "num_iterations": 100,
             "min_child_samples": 20,
             "bagging_fraction": 0.5,
+            "subsample_freq": 1,
         }
     ).to_dict() == {
+        **LEAFWISE,
         "booster.n_iters": 100,
         "tree.min_data_in_leaf": 20,
         "sampler.subsample": 0.5,
@@ -106,30 +171,110 @@ def test_from_lightgbm_accepts_the_documented_aliases():
     }
 
 
+def test_from_lightgbm_ignores_a_bagging_fraction_without_a_bagging_freq():
+    assert interop.from_lightgbm({"bagging_fraction": 0.5, "bagging_freq": 0}).to_dict() == LEAFWISE
+
+
+def test_from_lightgbm_refuses_a_bagging_freq_above_one():
+    with pytest.raises(ValueError, match=r"bagging_freq value 5.*accepted values"):
+        interop.from_lightgbm({"bagging_fraction": 0.5, "bagging_freq": 5}, strict=False)
+
+
+def test_from_lightgbm_selects_the_goss_sampler():
+    for params in ({"boosting": "goss"}, {"data_sample_strategy": "goss", "top_rate": 0.3}):
+        out = interop.from_lightgbm(params).to_dict()
+        assert out["dispatch.sampler_name"] == "goss"
+    assert out["sampler.top_rate"] == 0.3
+
+
+@pytest.mark.parametrize(("stated", "rate"), [({}, 0.1), ({"drop_rate": 0.3}, 0.3)])
+def test_from_lightgbm_dart_sets_the_drop_rate(stated, rate):
+    out = interop.from_lightgbm({"boosting_type": "dart", **stated}).to_dict()
+    assert out["booster.dart_drop_rate"] == rate
+
+
+def test_from_lightgbm_ignores_a_drop_rate_outside_dart():
+    assert interop.from_lightgbm({"drop_rate": 0.3}).to_dict() == LEAFWISE
+
+
+def test_from_lightgbm_refuses_random_forest_mode():
+    with pytest.raises(ValueError, match="boosting"):
+        interop.from_lightgbm({"boosting": "rf"})
+
+
 def test_from_lightgbm_translates_objectives():
     assert interop.from_lightgbm({"objective": "regression_l1"}).to_dict() == {
-        "dispatch.objective_name": "mae"
+        **LEAFWISE,
+        "dispatch.objective_name": "mae",
     }
     assert interop.from_lightgbm({"objective": "multiclass"}).to_dict() == {
-        "dispatch.objective_name": "softmax"
+        **LEAFWISE,
+        "dispatch.objective_name": "softmax",
     }
 
 
-def test_from_lightgbm_drops_the_overloaded_alpha():
-    assert interop.from_lightgbm({"alpha": 0.9}) == Params()
+@pytest.mark.parametrize(
+    ("objective", "native"), [("quantile", "quantile_alpha"), ("huber", "huber_delta")]
+)
+@pytest.mark.parametrize(("stated", "alpha"), [({"alpha": 0.8}, 0.8), ({}, 0.9)])
+def test_from_lightgbm_routes_alpha_by_objective(objective, native, stated, alpha):
+    out = interop.from_lightgbm({"objective": objective, **stated}).to_dict()
+    assert out == {**LEAFWISE, "dispatch.objective_name": objective, f"objective.{native}": alpha}
+
+
+def test_from_lightgbm_reports_alpha_outside_its_objectives():
+    with pytest.raises(ValueError, match="alpha"):
+        interop.from_lightgbm({"alpha": 0.9})
+    assert interop.from_lightgbm({"alpha": 0.9}, strict=False).to_dict() == LEAFWISE
+
+
+def test_from_lightgbm_grows_leafwise_so_num_leaves_binds(toy_train):
+    Xtr, ytr = toy_train
+    p = interop.from_lightgbm({"num_leaves": 7, "max_depth": -1, "n_estimators": 1})
+    assert p.to_dict()["dispatch.grower_name"] == "leafwise"
+    leaves = bonsai.train(p, Xtr, ytr).predict_leaf(Xtr)
+    assert len(set(leaves.ravel().tolist())) <= 7
 
 
 # from_catboost ====================================================================================
 
 
 def test_from_catboost_adds_the_border_fencepost():
-    assert interop.from_catboost({"border_count": 254}).to_dict() == {"bin_mapper.max_bin": 255}
+    assert interop.from_catboost({"border_count": 254}).to_dict() == {
+        **LEVELWISE,
+        "bin_mapper.max_bin": 255,
+    }
+
+
+def test_from_catboost_defaults_to_the_symmetric_tree_policy():
+    assert interop.from_catboost({"depth": 6}).to_dict()["dispatch.grower_name"] == "levelwise"
+    explicit = interop.from_catboost({"grow_policy": "Depthwise"}).to_dict()
+    assert explicit["dispatch.grower_name"] == "depthwise"
 
 
 def test_from_catboost_translates_the_grow_policy():
-    assert interop.from_catboost({"grow_policy": "SymmetricTree"}).to_dict() == {
-        "dispatch.grower_name": "levelwise"
-    }
+    assert interop.from_catboost({"grow_policy": "SymmetricTree"}).to_dict() == LEVELWISE
+
+
+def test_from_catboost_reports_a_leaf_cap_outside_lossguide():
+    with pytest.raises(ValueError, match="max_leaves"):
+        interop.from_catboost({"max_leaves": 31})
+    lossguide = interop.from_catboost({"grow_policy": "Lossguide", "max_leaves": 31}).to_dict()
+    assert lossguide == {**LEAFWISE, "tree.max_leaves": 31}
+
+
+@pytest.mark.parametrize(("stated", "rate"), [({"subsample": 0.7}, 0.7), ({}, 0.66)])
+def test_from_catboost_reads_a_bernoulli_bootstrap(stated, rate):
+    out = interop.from_catboost({"bootstrap_type": "Bernoulli", **stated}).to_dict()
+    assert out["dispatch.sampler_name"] == "bernoulli"
+    assert out["sampler.subsample"] == rate
+
+
+def test_from_catboost_reports_a_subsample_outside_bernoulli():
+    with pytest.raises(ValueError, match="subsample"):
+        interop.from_catboost({"subsample": 0.7})
+    with pytest.raises(ValueError, match=r"bootstrap_type value 'MVS'.*accepted values"):
+        interop.from_catboost({"bootstrap_type": "MVS", "subsample": 0.7}, strict=False)
 
 
 def test_from_catboost_rejects_a_parametrized_loss():
@@ -138,7 +283,9 @@ def test_from_catboost_rejects_a_parametrized_loss():
 
 
 def test_from_catboost_drops_the_best_model_flag():
-    assert interop.from_catboost({"use_best_model": False, "task_type": "GPU"}) == Params()
+    assert interop.from_catboost({"use_best_model": False, "task_type": "GPU"}).to_dict() == (
+        LEVELWISE
+    )
 
 
 # to_xgboost =======================================================================================
@@ -170,6 +317,36 @@ def test_to_xgboost_drops_the_implied_sampler():
     ) == {"subsample": 0.8}
 
 
+@pytest.mark.parametrize("sampler", [{"dispatch.sampler_name": "all_rows"}, {}])
+def test_to_xgboost_drops_a_subsample_the_sampler_never_reads(sampler):
+    assert interop.to_xgboost({**sampler, "sampler.subsample": 0.5}) == {}
+
+
+def test_to_xgboost_emits_the_leaf_cap_only_under_leafwise_growth():
+    depthwise = {"dispatch.grower_name": "depthwise", "tree.max_depth": 6, "tree.max_leaves": 31}
+    assert interop.to_xgboost(depthwise) == {"grow_policy": "depthwise", "max_depth": 6}
+    leafwise = {**depthwise, **LEAFWISE}
+    assert interop.to_xgboost(leafwise) == {
+        "grow_policy": "lossguide",
+        "max_depth": 6,
+        "max_leaves": 31,
+    }
+
+
+def test_to_xgboost_turns_dart_on_with_its_drop_rate():
+    assert interop.to_xgboost({"booster.dart_drop_rate": 0.5}) == {
+        "rate_drop": 0.5,
+        "booster": "dart",
+    }
+    assert interop.to_xgboost({"booster.dart_drop_rate": 0.0}) == {}
+
+
+@pytest.mark.parametrize("translate", [interop.to_xgboost, interop.to_catboost])
+def test_to_library_refuses_a_sampler_it_lacks(translate):
+    with pytest.raises(ValueError, match=r"dispatch\.sampler_name"):
+        translate({"dispatch.sampler_name": "goss"})
+
+
 def test_to_xgboost_strict_names_every_unmappable_key():
     with pytest.raises(ValueError, match=r"tree\.min_data_in_leaf"):
         interop.to_xgboost({"tree.min_data_in_leaf": 20})
@@ -199,6 +376,44 @@ def test_to_lightgbm_uses_the_canonical_names():
     }
 
 
+def test_to_lightgbm_bags_every_tree_under_bernoulli():
+    bernoulli = {"dispatch.sampler_name": "bernoulli", "sampler.subsample": 0.5}
+    assert interop.to_lightgbm(bernoulli) == {"bagging_fraction": 0.5, "bagging_freq": 1}
+    all_rows = {"dispatch.sampler_name": "all_rows", "sampler.subsample": 0.5}
+    assert interop.to_lightgbm(all_rows) == {}
+
+
+def test_to_lightgbm_turns_dart_on_with_its_drop_rate():
+    assert interop.to_lightgbm({"booster.dart_drop_rate": 0.5}) == {
+        "drop_rate": 0.5,
+        "boosting": "dart",
+    }
+
+
+def test_to_lightgbm_keeps_goss_as_its_own_sampler():
+    goss = {"dispatch.sampler_name": "goss", "sampler.top_rate": 0.3, "sampler.subsample": 0.5}
+    out = interop.to_lightgbm(goss)
+    assert out == {"data_sample_strategy": "goss", "top_rate": 0.3}
+    assert interop.from_lightgbm(out).to_dict()["dispatch.sampler_name"] == "goss"
+
+
+@pytest.mark.parametrize(
+    ("objective", "native", "default"),
+    [("quantile", "quantile_alpha", 0.5), ("huber", "huber_delta", 1.0)],
+)
+def test_to_lightgbm_carries_the_loss_parameter_as_alpha(objective, native, default):
+    pairs = {"dispatch.objective_name": objective}
+    assert interop.to_lightgbm(pairs) == {"objective": objective, "alpha": default}
+    stated = {**pairs, f"objective.{native}": 0.8}
+    assert interop.to_lightgbm(stated) == {"objective": objective, "alpha": 0.8}
+
+
+def test_to_library_drops_loss_parameters_another_objective_reads():
+    pairs = {"objective.quantile_alpha": 0.8, "objective.huber_delta": 2.0}
+    assert interop.to_lightgbm(pairs) == {}
+    assert interop.to_xgboost(pairs, strict=False) == {}
+
+
 def test_to_lightgbm_drops_the_grower_name():
     assert interop.to_lightgbm({"dispatch.grower_name": "leafwise"}) == {}
 
@@ -210,10 +425,72 @@ def test_to_catboost_subtracts_the_border_fencepost():
     assert interop.to_catboost({"bin_mapper.max_bin": 255}) == {"border_count": 254}
 
 
+def test_to_catboost_leaves_disabled_early_stopping_unset():
+    assert interop.to_catboost({"booster.n_iters": 5, "booster.early_stopping_rounds": 0}) == {
+        "iterations": 5
+    }
+
+
+@pytest.mark.parametrize(("stated", "rate"), [({"sampler.subsample": 0.7}, 0.7), ({}, 1.0)])
+def test_to_catboost_draws_bernoulli_rows(stated, rate):
+    out = interop.to_catboost({"dispatch.sampler_name": "bernoulli", **stated})
+    assert out == {"bootstrap_type": "Bernoulli", "subsample": rate}
+
+
+def test_to_catboost_samples_no_rows_under_all_rows():
+    assert interop.to_catboost({"dispatch.sampler_name": "all_rows"}) == {"bootstrap_type": "No"}
+
+
 def test_to_catboost_maps_a_cuda_grower_to_its_growth_policy():
     assert interop.to_catboost({"dispatch.grower_name": "cuda_levelwise"}) == {
         "grow_policy": "SymmetricTree"
     }
+
+
+# constraints ======================================================================================
+
+
+@pytest.mark.parametrize("native", [[1, -1, 0], "1,-1,0"])
+def test_to_xgboost_emits_monotone_constraints_as_a_tuple(native):
+    out = interop.to_xgboost({"tree.monotone_constraints": native})
+    assert out == {"monotone_constraints": (1, -1, 0)}
+
+
+@pytest.mark.parametrize("translate", [interop.from_xgboost, interop.from_catboost])
+@pytest.mark.parametrize("foreign", ["(1,-1,0)", "(1, -1, 0)", np.array([1, -1, 0])])
+def test_from_library_parses_monotone_constraints_to_a_list(translate, foreign):
+    out = translate({"monotone_constraints": foreign}).to_dict()
+    assert out["tree.monotone_constraints"] == [1, -1, 0]
+
+
+def test_from_xgboost_refuses_an_unparseable_monotone_value():
+    with pytest.raises(ValueError, match="monotone_constraints"):
+        interop.from_xgboost({"monotone_constraints": "(1,up)"})
+
+
+@pytest.mark.parametrize("native", [["0,1", "2,3"], "0+1,2+3"])
+def test_to_lightgbm_emits_interaction_groups_as_index_lists(native):
+    out = interop.to_lightgbm({"tree.interaction_constraints": native})
+    assert out == {"interaction_constraints": [[0, 1], [2, 3]]}
+
+
+def test_to_xgboost_emits_interaction_groups_as_a_json_index_string():
+    out = interop.to_xgboost({"tree.interaction_constraints": ["0,1", "2,3"]})
+    assert out == {"interaction_constraints": "[[0, 1], [2, 3]]"}
+
+
+@pytest.mark.parametrize(
+    ("translate", "foreign"),
+    [(interop.from_lightgbm, [[0, 1], [2, 3]]), (interop.from_xgboost, "[[0, 1], [2, 3]]")],
+)
+def test_from_library_translates_interaction_index_lists(translate, foreign):
+    out = translate({"interaction_constraints": foreign}).to_dict()
+    assert out["tree.interaction_constraints"] == ["0,1", "2,3"]
+
+
+def test_from_xgboost_refuses_named_interaction_groups():
+    with pytest.raises(ValueError, match="feature names"):
+        interop.from_xgboost({"interaction_constraints": [["age", "debt"]]})
 
 
 # round trips ======================================================================================
@@ -232,8 +509,8 @@ def test_round_trip_preserves_the_shared_knobs():
 
 
 def test_round_trip_survives_the_catboost_fencepost():
-    p = interop.from_catboost({"border_count": 254})
-    assert interop.to_catboost(p) == {"border_count": 254}
+    p = interop.from_catboost({"border_count": 254, "grow_policy": "SymmetricTree"})
+    assert interop.to_catboost(p) == {"border_count": 254, "grow_policy": "SymmetricTree"}
 
 
 def test_every_native_key_is_reachable_from_the_reverse_index():
