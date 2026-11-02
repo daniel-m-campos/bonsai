@@ -1376,6 +1376,68 @@ void check_eval_labels(std::vector<float> const &labels, bonsai::Config const &c
     }
 }
 
+void check_eval_dataset_matches_fit(Dataset const &dataset, bonsai::Config const &cfg,
+                                    bonsai::BinMappers const &mappers)
+{
+    if (dataset.n_targets() != cfg.objective.n_targets)
+    {
+        throw std::invalid_argument(
+            std::format("eval_set carries {} target{} per row and this fit trains {}",
+                        dataset.n_targets(), dataset.n_targets() == 1 ? "" : "s",
+                        cfg.objective.n_targets));
+    }
+    if (!mappers.same_cuts(dataset.loaded().mappers))
+    {
+        throw std::invalid_argument(
+            "the eval_set Dataset was binned with different cut points than this "
+            "fit's training data, so its bins name different splits. Build it "
+            "against the training data: bonsai.Dataset(X_valid, y_valid, "
+            "reference=train_dataset).");
+    }
+    if (!dataset.bins().weights().empty())
+    {
+        throw std::invalid_argument(
+            "the eval_set Dataset carries sample weights, which the validation "
+            "loss does not apply: it is the unweighted metric. Drop the weight "
+            "argument from the eval-set Dataset rather than have it ignored.");
+    }
+}
+
+bonsai::cli::ValidationRef
+resolve_eval_dataset(Dataset const &dataset, bonsai::Config const &cfg, bool warm_start)
+{
+    if (!dataset.has_host_matrix() && (warm_start || !dataset.bins().bins_are_u8()))
+    {
+        throw std::invalid_argument(
+            "this eval_set Dataset was built from device-resident (DLPack) input "
+            "and kept no host matrix, but this fit scores it from raw rows (an "
+            "init_model warm start, or bins above 255 that have no row-major "
+            "mirror). Pass eval_set=(X_valid, y_valid), or build the Dataset "
+            "from a host array.");
+    }
+    if (!dataset.is_view())
+    {
+        check_eval_labels(dataset.train_data().labels, cfg);
+        return std::cref(dataset.train_data());
+    }
+    if (warm_start)
+    {
+        dataset.refuse_view("eval_set", "seeds an init_model warm start from raw "
+                                        "rows, which are its parent's");
+    }
+    if (!dataset.bins().bins_are_u8())
+    {
+        dataset.refuse_view("eval_set",
+                            "carries more than 255 bins, which have no row-major "
+                            "mirror for the binned walk to route, leaving only the "
+                            "raw rows its parent retained");
+    }
+    check_eval_labels(
+        dataset.row_view().gather(dataset.train_data().labels, dataset.n_targets()),
+        cfg);
+    return std::cref(dataset.train_data());
+}
+
 bonsai::cli::ValidationRef
 resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &cfg,
                  bonsai::BinMappers const &mappers, bool warm_start,
@@ -1395,50 +1457,9 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
         check_eval_labels(owned->labels, cfg);
         return std::cref(*owned);
     }
-    auto const *const dataset = std::get<Dataset const *>(*eval_set);
-    if (!mappers.same_cuts(dataset->loaded().mappers))
-    {
-        throw std::invalid_argument(
-            "the eval_set Dataset was binned with different cut points than this "
-            "fit's training data, so its bins name different splits. Build it "
-            "against the training data: bonsai.Dataset(X_valid, y_valid, "
-            "reference=train_dataset).");
-    }
-    if (!dataset->bins().weights().empty())
-    {
-        throw std::invalid_argument(
-            "the eval_set Dataset carries sample weights, which the validation "
-            "loss does not apply: it is the unweighted metric. Drop the weight "
-            "argument from the eval-set Dataset rather than have it ignored.");
-    }
-    if (!dataset->has_host_matrix() && (warm_start || !dataset->bins().bins_are_u8()))
-    {
-        throw std::invalid_argument(
-            "this eval_set Dataset was built from device-resident (DLPack) input "
-            "and kept no host matrix, but this fit scores it from raw rows (an "
-            "init_model warm start, or bins above 255 that have no row-major "
-            "mirror). Pass eval_set=(X_valid, y_valid), or build the Dataset "
-            "from a host array.");
-    }
-    if (!dataset->is_view())
-    {
-        check_eval_labels(dataset->train_data().labels, cfg);
-        return std::cref(dataset->train_data());
-    }
-    if (warm_start)
-    {
-        dataset->refuse_view("eval_set", "seeds an init_model warm start from raw "
-                                         "rows, which are its parent's");
-    }
-    if (!dataset->bins().bins_are_u8())
-    {
-        dataset->refuse_view("eval_set",
-                             "carries more than 255 bins, which have no row-major "
-                             "mirror for the binned walk to route, leaving only the "
-                             "raw rows its parent retained");
-    }
-    check_eval_labels(dataset->row_view().gather(dataset->train_data().labels), cfg);
-    return std::cref(dataset->train_data());
+    Dataset const &dataset = *std::get<Dataset const *>(*eval_set);
+    check_eval_dataset_matches_fit(dataset, cfg, mappers);
+    return resolve_eval_dataset(dataset, cfg, warm_start);
 }
 
 using ConfigPairs = std::vector<std::pair<std::string, std::string>>;

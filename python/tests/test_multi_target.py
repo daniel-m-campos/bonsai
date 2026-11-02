@@ -152,6 +152,48 @@ def test_dataset_api_refuses_a_width_that_disagrees_with_the_config():
         bonsai.train({"dispatch.objective_name": "logloss"}, bonsai.Dataset(X, binary))
 
 
+def test_an_eval_dataset_of_another_target_count_is_refused():
+    X, Y = _data()
+    pairs = {"booster.n_iters": 3}
+    train3 = bonsai.Dataset(X, Y)
+    for labels in (Y[:, 0], np.ascontiguousarray(Y[:, :2])):
+        valid = bonsai.Dataset(X, labels, reference=train3)
+        with pytest.raises(ValueError, match="eval_set carries"):
+            bonsai.train(pairs, train3, eval_set=valid)
+    train1 = bonsai.Dataset(X, Y[:, 0])
+    with pytest.raises(ValueError, match="1 target per row and this fit trains 3"):
+        bonsai.train(
+            pairs, bonsai.Dataset(X, Y), eval_set=bonsai.Dataset(X, Y[:, 0], reference=train1)
+        )
+    with pytest.raises(ValueError, match="3 targets per row and this fit trains 1"):
+        _regressor(n_iters=3).fit(X, Y[:, 0], eval_set=bonsai.Dataset(X, Y, reference=train1))
+
+
+def test_a_row_view_eval_set_scores_its_own_target_rows():
+    X, Y = _data()
+    full = bonsai.Dataset(X, Y)
+    pairs = {"booster.n_iters": 4, "parallel.n_threads": 2}
+    for valid_rows in (np.arange(400, 600), np.arange(400, 600)[::-1]):
+        model = bonsai.train(
+            pairs, full.subset(rows=slice(0, 400)), eval_set=full.subset(rows=valid_rows)
+        )
+        by_hand = [
+            float(((model.predict(X[400:], num_iteration=r + 1) - Y[400:]) ** 2).mean())
+            for r in range(4)
+        ]
+        np.testing.assert_allclose(model.eval_history, by_hand, rtol=1e-4)
+
+
+def test_regressor_refuses_an_eval_y_whose_rows_disagree_with_eval_x():
+    X, Y = _data()
+    Xv, Yv = _data(n=60, seed=2)
+    Yv2 = np.ascontiguousarray(Yv[:, :2])
+    with pytest.raises(ValueError, match="eval_set y has 2 rows and eval_set X has 60"):
+        _regressor(n_iters=3).fit(X, Y[:, :2], eval_set=(Xv, Yv2.T))
+    with pytest.raises(ValueError, match="eval_set y has 30 rows and eval_set X has 60"):
+        _regressor(n_iters=3).fit(X, Y[:, :2], eval_set=(Xv, Yv2.reshape(30, 4)))
+
+
 @requires_cuda
 @pytest.mark.parametrize("grower", ["depthwise", "levelwise", "leafwise"])
 def test_cuda_grower_fits_a_2d_y_and_matches_k_device_fits(grower, monkeypatch):

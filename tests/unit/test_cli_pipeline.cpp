@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -194,6 +196,45 @@ TEST_CASE("train_with_progress: labels outside the objective's domain are "
         REQUIRE_THROWS_WITH(
             train_with_progress(cfg, train),
             Catch::Matchers::ContainsSubstring("softmax labels must be integers"));
+    }
+}
+
+TEST_CASE("train_with_progress: validation labels outside the objective's domain "
+          "are refused",
+          "[cli_pipeline][fit][edge][nan]")
+{
+    auto cfg            = make_tiny_config();
+    cfg.data.valid      = {k_tiny_path};
+    auto const loaded   = load_train_and_validation_from_csv(cfg);
+    auto       validate = loaded.validation.value();
+
+    SECTION("a NaN label is refused under a regression objective")
+    {
+        validate.labels[1] = std::numeric_limits<float>::quiet_NaN();
+        REQUIRE_THROWS_WITH(
+            train_with_progress(cfg, loaded.train, std::cref(validate)),
+            Catch::Matchers::ContainsSubstring("mse labels must be finite"));
+    }
+    SECTION("an infinite label is refused")
+    {
+        cfg.dispatch.objective_name = "huber";
+        validate.labels[2]          = std::numeric_limits<float>::infinity();
+        REQUIRE_THROWS_WITH(
+            train_with_progress(cfg, loaded.train, std::cref(validate)),
+            Catch::Matchers::ContainsSubstring("validation labels include inf"));
+    }
+    SECTION("poisson refuses a negative label")
+    {
+        cfg.dispatch.objective_name = "poisson";
+        validate.labels[0]          = -50.0F;
+        REQUIRE_THROWS_WITH(
+            train_with_progress(cfg, loaded.train, std::cref(validate)),
+            Catch::Matchers::ContainsSubstring("poisson labels must be non-negative"));
+    }
+    SECTION("finite labels in the domain train")
+    {
+        cfg.dispatch.objective_name = "poisson";
+        CHECK_NOTHROW(train_with_progress(cfg, loaded.train, std::cref(validate)));
     }
 }
 
