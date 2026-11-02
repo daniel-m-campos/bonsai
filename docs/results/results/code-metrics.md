@@ -5,7 +5,7 @@
 Self-measurement of the bonsai tree, no comparison: line counts and lizard complexity per plane at one SHA. LOC is `wc -l`; NLOC is lizard's non-blank, non-comment count; CCN is cyclomatic complexity (independent paths through a function). The plane map and the non-claims: [the benchmark protocol](../benchmark-protocol.md#the-code-division).
 
 | plane | files | LOC | NLOC | functions | mean CCN | max CCN |
-|---|---|---|---|---|---|---|
+|---|--:|--:|--:|--:|--:|--:|
 | core_headers | 66 | 8362 | 5904 | 444 | 1.74 | 10 |
 | engine_impl | 31 | 8221 | 7329 | 400 | 2.80 | 11 |
 | cuda_plane | 22 | 8677 | 7600 | 453 | 2.60 | 17 |
@@ -17,7 +17,7 @@ Self-measurement of the bonsai tree, no comparison: line counts and lizard compl
 The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
 
 | function | file | CCN | NLOC |
-|---|---|---|---|
+|---|---|--:|--:|
 | `bonsai::BinStore::select_columns` | `src/bin_store.cpp` | 11 | 60 |
 | `bonsai::fill_detail::fill_lone` | `src/fill/lone.hpp` | 11 | 81 |
 | `bonsai::fill_detail::fill_rows` | `src/fill/rows.hpp` | 11 | 63 |

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
+from collections.abc import Collection
 
 
 def write_or_check(
@@ -54,9 +55,13 @@ def write_or_check(
     return 0
 
 
-def md_table(headers: list[str], rows: list[list[str]]) -> str:
-    """One GitHub-flavored markdown table; the generators own all styling."""
+def md_table(headers: list[str], rows: list[list[str]], numeric: Collection[str] = ()) -> str:
+    """One GitHub-flavored markdown table; the generators own all styling.
+
+    Headers named in `numeric` render right-aligned, so a column of
+    measurements lines up on its digits.
+    """
     head = "| " + " | ".join(headers) + " |"
-    sep = "|" + "|".join("---" for _ in headers) + "|"
+    sep = "|" + "|".join("--:" if h in numeric else "---" for h in headers) + "|"
     body = ["| " + " | ".join(r) + " |" for r in rows]
     return "\n".join([head, sep, *body])
