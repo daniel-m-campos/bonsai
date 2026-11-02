@@ -153,6 +153,22 @@ std::vector<std::string> stated_keys(std::string const           &toml_path,
     return keys;
 }
 
+void require_in_bounds(Config const &cfg)
+{
+    internal::tuple_for_each(internal::all_sections,
+                             [&](auto const &sec)
+                             {
+                                 internal::tuple_for_each(
+                                     sec.fields,
+                                     [&](auto const &field)
+                                     {
+                                         internal::require_in_bounds(
+                                             sec.name, field,
+                                             (cfg.*(sec.sub)).*(field.member));
+                                     });
+                             });
+}
+
 Config resolve(std::string const &toml_path, std::vector<Override> const &overrides)
 {
     Config cfg = toml_path.empty() ? Config{} : load_toml(toml_path);

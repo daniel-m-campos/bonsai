@@ -182,6 +182,8 @@ class IBooster
 class ITrainableBooster : public IBooster
 {
   public:
+    virtual void begin_fit(Dataset const &train) = 0;
+
     virtual void update_one_iter(Dataset const &train) = 0;
 
     virtual void seed_validation_scores(features_view X, std::span<float> out,
@@ -755,22 +757,28 @@ class Booster final : public Ensemble<Gr, Sa>
     {
     }
 
+    void begin_fit(Dataset const &train) override
+    {
+        if (!scores_.empty())
+        {
+            return;
+        }
+        grad().resize(train.plane_n_rows());
+        hess().resize(train.plane_n_rows());
+        if (trees().empty())
+        {
+            this->set_init_scores({init_score_over(train)});
+            scores_.assign(train.plane_n_rows(), init_score());
+        }
+        else
+        {
+            seed_train_scores(train);
+        }
+    }
+
     void update_one_iter(Dataset const &train) override
     {
-        if (scores_.empty())
-        {
-            grad().resize(train.plane_n_rows());
-            hess().resize(train.plane_n_rows());
-            if (trees().empty())
-            {
-                this->set_init_scores({init_score_over(train)});
-                scores_.assign(train.plane_n_rows(), init_score());
-            }
-            else
-            {
-                seed_train_scores(train);
-            }
-        }
+        begin_fit(train);
 
         if (try_resident_round(train))
         {

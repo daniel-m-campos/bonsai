@@ -62,24 +62,31 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
         }
     }
 
+    void begin_fit(Dataset const &train) override
+    {
+        if (!this->scores().empty())
+        {
+            return;
+        }
+        size_t const n = train.plane_n_rows();
+        require_width(train);
+        this->grad().resize(n);
+        this->hess().resize(n);
+        split_targets(train, n);
+        if (trees().empty())
+        {
+            seed_init_scores(train);
+        }
+        this->broadcast_init_scores(n);
+        this->replay_warm_start(train, n);
+        column_.resize(n);
+    }
+
     void update_one_iter(Dataset const &train) override
     {
         size_t const n   = train.plane_n_rows();
         size_t const n_k = n_outputs();
-        if (this->scores().empty())
-        {
-            require_width(train);
-            this->grad().resize(n);
-            this->hess().resize(n);
-            split_targets(train, n);
-            if (trees().empty())
-            {
-                seed_init_scores(train);
-            }
-            this->broadcast_init_scores(n);
-            this->replay_warm_start(train, n);
-            column_.resize(n);
-        }
+        begin_fit(train);
 
         if (try_resident_round(train))
         {

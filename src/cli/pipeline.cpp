@@ -123,6 +123,17 @@ class SelectedLabels
     std::vector<float> gathered_;
 };
 
+void check_monotone_width(Config const &cfg, size_t n_features)
+{
+    size_t const listed = cfg.tree_config.monotone_constraints.size();
+    if (listed > n_features)
+    {
+        throw ConfigError(std::format("tree.monotone_constraints lists {} directions "
+                                      "but the training data has {} features",
+                                      listed, n_features));
+    }
+}
+
 struct ParsedFeatures
 {
     detail::ColumnBatch batch;
@@ -615,6 +626,7 @@ train_with_progress(Config const &cfg, LabeledData const &train,
 {
     check_label_domain(
         cfg, SelectedLabels(train.dataset, train.dataset.labels()).view(), "train");
+    check_monotone_width(cfg, train.dataset.n_features());
     if (validation)
     {
         check_validation_labels(
@@ -624,6 +636,7 @@ train_with_progress(Config const &cfg, LabeledData const &train,
     select_device_for(cfg);
     [[maybe_unused]] bool const warm_start = initial != nullptr;
     auto booster = initial ? std::move(initial) : make_booster(cfg);
+    booster->begin_fit(train.dataset);
 
     FitTicker ticker(cfg, train, validation, on_tick);
     ticker.baseline(*booster);

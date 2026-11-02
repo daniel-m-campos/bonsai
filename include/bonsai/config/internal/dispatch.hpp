@@ -14,6 +14,7 @@
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/errors.hpp"
 #include "bonsai/config/internal/codec.hpp"
+#include "bonsai/config/internal/field.hpp"
 
 namespace bonsai::config::internal
 {
@@ -22,6 +23,22 @@ namespace bonsai::config::internal
                                    std::string_view reason)
 {
     throw ConfigError(std::format("config: [{}].{}: {}", section, key, reason));
+}
+
+template <typename Field, typename T>
+void require_in_bounds(std::string_view section, Field const &field, T const &value)
+{
+    if constexpr (is_bounded_field<T>::value)
+    {
+        if (!field.bounds)
+        {
+            return;
+        }
+        if (auto const why = out_of_bounds(*field.bounds, value))
+        {
+            key_error(section, field.leaf, *why);
+        }
+    }
 }
 
 inline std::pair<std::string_view, std::string_view> split_key(std::string_view key)
@@ -66,6 +83,7 @@ void visit_section(toml::table const &table, Section const &sec, Sink &&sink)
                            {
                                key_error(sec.name, field.leaf, r.error());
                            }
+                           require_in_bounds(sec.name, field, *r);
                            sink(field, std::move(*r));
                        }
                    });
@@ -104,6 +122,7 @@ bool apply_leaf(Config &cfg, Section const &section, std::string_view leaf,
             {
                 key_error(section.name, leaf, r.error());
             }
+            require_in_bounds(section.name, field, *r);
             (cfg.*(section.sub)).*(field.member) = std::move(*r);
             return true;
         });

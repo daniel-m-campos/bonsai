@@ -60,4 +60,6 @@ Config resolve(std::string const &toml_path, std::vector<Override> const &overri
 std::vector<std::string> stated_keys(std::string const           &toml_path,
                                      std::vector<Override> const &overrides);
 
+void require_in_bounds(Config const &cfg);
+
 } // namespace bonsai::config

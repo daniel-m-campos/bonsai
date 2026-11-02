@@ -152,3 +152,50 @@ def test_train_rejects_the_retired_pairs_form():
 def test_train_accepts_none_params():
     X, y = _reg_data(n=500)
     assert bonsai.train(None, bonsai.Dataset(X, y)).n_iters == 100
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        (
+            "booster.learning_rate",
+            float("nan"),
+            r"\[booster\]\.learning_rate: must be finite and > 0",
+        ),
+        ("booster.dart_drop_rate", 1.5, r"\[booster\]\.dart_drop_rate: must be in \[0, 1\]"),
+        ("tree.lambda_l1", -500.0, r"\[tree\]\.lambda_l1: must be finite and >= 0"),
+        ("tree.feature_fraction", 0.0, r"\[tree\]\.feature_fraction: must be in \(0, 1\]"),
+        ("objective.quantile_alpha", 1.5, r"\[objective\]\.quantile_alpha: must be in \(0, 1\)"),
+        ("bin_mapper.max_bin", 100_000, r"\[bin_mapper\]\.max_bin: must be in \[3, 65535\]"),
+        ("tree.min_data_in_leaf", 256, r"\[tree\]\.min_data_in_leaf: must be at most 255"),
+        (
+            "booster.random_seed",
+            2**32 + 42,
+            r"\[booster\]\.random_seed: must be at most 4294967295",
+        ),
+        ("sampler.subsample", 1.5, r"sampler\.subsample must be in \(0, 1\]"),
+    ],
+)
+def test_train_refuses_a_value_outside_its_key_domain(key, value, message):
+    X, y = _reg_data(n=200, f=3)
+    params = {"booster.n_iters": 2, "dispatch.sampler_name": "bernoulli", key: value}
+    with pytest.raises(RuntimeError, match=message):
+        bonsai.train(params, X, y)
+
+
+def test_train_with_zero_rounds_predicts_the_base_score():
+    X, y = _reg_data(n=300, f=3)
+    y = y + 10.0
+    reg = bonsai.train({"booster.n_iters": 0}, X, y)
+    np.testing.assert_allclose(np.asarray(reg.predict(X)), y.mean(), rtol=1e-5)
+    labels = (X[:, 0] > 0.8).astype(np.float32)
+    clf = bonsai.train({"booster.n_iters": 0, "dispatch.objective_name": "logloss"}, X, labels)
+    np.testing.assert_allclose(np.asarray(clf.predict_proba(X)), labels.mean(), rtol=1e-5)
+
+
+def test_train_refuses_a_bad_positional_monotone_list():
+    X, y = _reg_data(n=200, f=3)
+    with pytest.raises(RuntimeError, match=r"item 0: must be in \[-1, 1\] \(got 2\)"):
+        bonsai.train({"tree.monotone_constraints": [2, 0, 0]}, X, y)
+    with pytest.raises(RuntimeError, match="lists 5 directions but the training data has 3"):
+        bonsai.train({"tree.monotone_constraints": [1, 0, 0, -1, 1]}, X, y)
