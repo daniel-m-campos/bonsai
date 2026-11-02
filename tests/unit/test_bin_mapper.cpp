@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <random>
 #include <span>
 #include <vector>
@@ -505,4 +506,26 @@ TEST_CASE("BinMapper: from_edges rejects malformed edge lists", "[bin_mapper][ed
     CHECK_THROWS_AS(BinMapper::from_edges({f_nan}), ConfigError); // not finite
     CHECK_THROWS_AS(BinMapper::from_edges({std::numeric_limits<float>::max()}),
                     ConfigError); // FLT_MAX is the reserved top-band cut
+}
+
+TEST_CASE("BinMapper: from_edges refuses more edges than bin ids",
+          "[bin_mapper][edges]")
+{
+    auto ascending = [](size_t n)
+    {
+        std::vector<float> edges(n);
+        std::iota(edges.begin(), edges.end(), 0.5F);
+        return edges;
+    };
+    size_t const most = std::numeric_limits<bin_id_t>::max() - 2;
+    SECTION("the widest edge list keeps its top bin id in range")
+    {
+        auto const mapper = BinMapper::from_edges(ascending(most));
+        CHECK(mapper.n_bins() == std::numeric_limits<bin_id_t>::max());
+        CHECK(mapper.transform(f_nan) == mapper.n_bins() - 1);
+    }
+    SECTION("one edge more is refused")
+    {
+        CHECK_THROWS_AS(BinMapper::from_edges(ascending(most + 1)), ConfigError);
+    }
 }

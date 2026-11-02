@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <iterator>
 #include <limits>
 #include <numeric>
@@ -24,6 +25,10 @@ namespace bonsai
 
 namespace
 {
+
+constexpr size_t k_top_band_and_missing_bins = 2;
+constexpr size_t k_most_edges =
+    std::numeric_limits<bin_id_t>::max() - k_top_band_and_missing_bins;
 
 bool is_not_nan(float x)
 {
@@ -298,6 +303,14 @@ BinMapper BinMapper::from_edges(std::vector<float> edges)
     if (edges.empty())
     {
         throw ConfigError("bin_edges: a column's edge list must not be empty");
+    }
+    if (edges.size() > k_most_edges)
+    {
+        throw ConfigError(std::format(
+            "bin_edges: a column takes at most {} edges, "
+            "the {} bin ceiling less the top band and the "
+            "missing bin (got {})",
+            k_most_edges, std::numeric_limits<bin_id_t>::max(), edges.size()));
     }
     for (size_t i = 0; i < edges.size(); ++i)
     {

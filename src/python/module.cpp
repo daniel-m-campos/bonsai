@@ -682,6 +682,7 @@ class Dataset
         cfg.bin_mapper.min_data_in_bin = min_data_in_bin.value_or(base.min_data_in_bin);
         cfg.parallel.n_threads         = n_threads;
         cfg.parallel.device_id         = dev_id;
+        bonsai::config::require_in_bounds(cfg);
         if (reference != nullptr)
         {
             check_reference(*reference, cfg.bin_mapper, bin_edges.has_value(),

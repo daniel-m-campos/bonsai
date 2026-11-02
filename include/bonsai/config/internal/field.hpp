@@ -1,10 +1,13 @@
 #pragma once
 
+#include <optional>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <vector>
 
 #include "bonsai/config/config.hpp"
+#include "bonsai/config/internal/bounds.hpp"
 #include "bonsai/config/internal/field_name.hpp"
 #include "bonsai/detail/member_pointer.hpp"
 
@@ -14,9 +17,19 @@ namespace bonsai::config::internal
 template <typename Sub, typename T> struct Field
 {
     std::string_view leaf;
-    T Sub::*member;
+    T Sub::              *member;
+    std::optional<Bounds> bounds;
     using class_type  = Sub;
     using member_type = T;
+};
+
+template <typename T> struct is_bounded_field : std::bool_constant<Bounded<T>>
+{
+};
+
+template <typename T>
+struct is_bounded_field<std::vector<T>> : std::bool_constant<Bounded<T>>
+{
 };
 
 template <auto MemPtr> consteval auto field()
@@ -24,7 +37,16 @@ template <auto MemPtr> consteval auto field()
     using Traits = detail::member_pointer_traits<std::remove_cv_t<decltype(MemPtr)>>;
     using Sub    = typename Traits::class_type;
     using T      = typename Traits::member_type;
-    return Field<Sub, T>{field_name<MemPtr>(), MemPtr};
+    return Field<Sub, T>{field_name<MemPtr>(), MemPtr, std::nullopt};
+}
+
+template <auto MemPtr> consteval auto field(Bounds bounds)
+{
+    auto f = field<MemPtr>();
+    static_assert(is_bounded_field<typename decltype(f)::member_type>::value,
+                  "only a numeric field, or a list of numbers, takes bounds");
+    f.bounds = bounds;
+    return f;
 }
 
 template <typename Sub, typename Fields> struct Section

@@ -54,21 +54,28 @@ class MulticlassBooster final : public MultiOutputEnsemble<Gr, Sa>
         }
     }
 
+    void begin_fit(Dataset const &train) override
+    {
+        if (!this->scores().empty())
+        {
+            return;
+        }
+        size_t const n = train.plane_n_rows();
+        this->grad().resize(n);
+        this->hess().resize(n);
+        if (trees().empty())
+        {
+            seed_class_priors(train);
+        }
+        this->broadcast_init_scores(n);
+        this->replay_warm_start(train, n);
+    }
+
     void update_one_iter(Dataset const &train) override
     {
         size_t const n   = train.plane_n_rows();
         size_t const n_k = n_outputs();
-        if (this->scores().empty())
-        {
-            this->grad().resize(n);
-            this->hess().resize(n);
-            if (trees().empty())
-            {
-                seed_class_priors(train);
-            }
-            this->broadcast_init_scores(n);
-            this->replay_warm_start(train, n);
-        }
+        begin_fit(train);
 
         std::vector<float> probs(n * n_k);
         softmax_rows(this->scores(), n, n_k, probs);

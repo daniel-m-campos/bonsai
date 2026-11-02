@@ -57,6 +57,39 @@ TEST_CASE("train_with_progress: a train-only fit runs every configured round",
     CHECK(booster->n_iters() == cfg.booster_config.n_iters);
 }
 
+TEST_CASE("train_with_progress: a zero-round fit predicts the init score",
+          "[cli_pipeline][train][edge]")
+{
+    auto cfg                   = make_tiny_config();
+    cfg.booster_config.n_iters = 0;
+    auto const loaded          = load_train_and_validation_from_csv(cfg);
+
+    auto const         booster = train_with_progress(cfg, loaded.train);
+    std::vector<float> preds(loaded.train.features.n_rows);
+    REQUIRE(!preds.empty());
+    booster->predict(loaded.train.features.view(), preds);
+    CHECK(booster->n_iters() == 0);
+    for (float const p : preds)
+    {
+        CHECK(p == Catch::Approx(2.0F));
+    }
+}
+
+TEST_CASE("train_with_progress: monotone constraints past the feature count are "
+          "refused",
+          "[cli_pipeline][fit][edge]")
+{
+    auto       cfg                       = make_tiny_config();
+    auto const loaded                    = load_train_from_csv(cfg, cfg.data.train);
+    cfg.tree_config.monotone_constraints = {1, 0, 0, -1};
+    REQUIRE_THROWS_WITH(train_with_progress(cfg, loaded.train),
+                        Catch::Matchers::ContainsSubstring(
+                            "tree.monotone_constraints lists 4 directions but the "
+                            "training data has 3 features"));
+    cfg.tree_config.monotone_constraints = {1, 0, -1};
+    CHECK_NOTHROW(train_with_progress(cfg, loaded.train));
+}
+
 TEST_CASE("score_csv: returns one raw score per row", "[cli_pipeline][score]")
 {
     auto const cfg     = make_tiny_config();
