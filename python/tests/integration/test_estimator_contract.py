@@ -192,7 +192,8 @@ def test_device_and_grower_mapping():
 
 
 def test_sklearn_clone_roundtrips_every_kwarg():
-    from sklearn.base import clone
+    base = pytest.importorskip("sklearn.base")
+    clone = base.clone
 
     est = bonsai.BonsaiClassifier(subsample=0.7, max_bin=63, device="cpu")
     twin = clone(est)
