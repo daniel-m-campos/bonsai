@@ -25,7 +25,7 @@ The boosting loop: how many trees, how strongly each contributes, when to stop.
 | `dart_drop_rate` | float | `0.0` | DART: probability of dropping each existing tree per round. Above 0 enables DART regularization; incompatible with early stopping. |
 | `early_stopping_rounds` | integer | `0` | Stop when the first validation objective stalls this many rounds, keeping the best iteration. 0 disables it; needs a valid set. |
 | `learning_rate` | float | `0.05` | Shrinks each tree's contribution. Lower values need more rounds but generalize better, the classic accuracy-versus-iterations trade. |
-| `log_intervals` | integer | `0` | Progress-logging frequency during fit. 0 is silent; higher prints more metric ticks. No effect on the trained model. |
+| `log_intervals` | integer | `0` | Progress-logging frequency during `bonsai fit`. 0 is silent; higher prints more metric ticks. CLI-only: the Python API prints nothing and records the objective's loss on the eval set in `eval_history` instead. No effect on the trained model. |
 | `n_iters` | integer | `100` | Number of boosting rounds. More rounds lower training loss but risk overfitting; pair with a smaller learning_rate. |
 | `random_seed` | integer | `42` | Seeds every draw the fit makes: row sampling, DART drops and, together with tree.feature_seed, the feature_fraction draws. Fixing it makes a run reproducible bit for bit. |
 
@@ -85,8 +85,8 @@ Which metrics to report during fit and eval; no effect on the trained model.
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `eval` | list | `[]` | Metric names reported during eval. Empty uses the objective's defaults. Reporting only, no effect on the model. |
-| `fit` | list | `[]` | Metric names reported during fit. Empty uses the objective's defaults. Reporting only, no effect on the model. |
+| `eval` | list | `[]` | Metric names reported during eval. Empty uses the objective's defaults. Each name must be a built-in metric for the objective's task, or the fit is refused. Reporting only, no effect on the model. |
+| `fit` | list | `[]` | Metric names reported during fit. Empty uses the objective's defaults. Each name must be a built-in metric for the objective's task, or the fit is refused. Reporting only, no effect on the model. |
 
 ## data
 
@@ -106,7 +106,7 @@ Dataset IO for the CLI; the Python API passes arrays instead of paths. Missing v
 
 ## parallel
 
-Compute placement: CPU threads and CUDA device. No effect on the model bits.
+Compute placement: CPU threads and CUDA device. A fixed `n_threads` gives the same model bits on every run; another thread count can move them within numerical tolerance (u16 bins, `max_bin` above 255, stay bit-identical at any count), and so can `n_threads = 0` on hosts with different core counts.
 
 | parameter | type | default | effect |
 |---|---|---|---|

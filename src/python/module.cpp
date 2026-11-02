@@ -44,6 +44,7 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/model.hpp"
+#include "bonsai/metric.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
@@ -1901,10 +1902,35 @@ void reconcile_targets(bonsai::Config &cfg, bonsai::Dataset const &train)
     }
 }
 
+void require_built_in_metrics(std::string_view                key,
+                              std::vector<std::string> const &names,
+                              bonsai::TaskKind                task)
+{
+    for (auto const &name : names)
+    {
+        try
+        {
+            bonsai::resolve_metric_for_task(name, task);
+        }
+        catch (std::runtime_error const &e)
+        {
+            throw std::invalid_argument(std::format("{}: {}", key, e.what()));
+        }
+    }
+}
+
+void require_built_in_metrics(bonsai::Config const &cfg)
+{
+    auto const task = bonsai::task_kind_by_name(cfg.dispatch.objective_name);
+    require_built_in_metrics("metrics.fit", cfg.metrics.fit, task);
+    require_built_in_metrics("metrics.eval", cfg.metrics.eval, task);
+}
+
 Model run_fit(bonsai::Config cfg, bonsai::cli::LabeledData const &train,
               bonsai::BinMappers mappers, std::optional<EvalSet> const &eval_set,
               std::optional<bonsai::io::LoadedBooster> init)
 {
+    require_built_in_metrics(cfg);
     reconcile_targets(cfg, train.dataset);
     std::optional<bonsai::cli::LabeledData> owned;
     bonsai::cli::ValidationRef const        validation =

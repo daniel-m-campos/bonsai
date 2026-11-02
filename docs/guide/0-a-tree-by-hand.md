@@ -95,7 +95,7 @@ print(np.asarray(model.predict(X)).round(2))
 print(model.dump())  # the trees, with the split thresholds and gains
 ```
 
-`model.dump()`'s first tree reads `f0 <= 1.400000 ... gain=6.400000` with leaves `-0.8` and `+0.8`: the threshold, gain, and leaf values you just derived, to the printed digit. From here:
+`model.dump()`'s first tree reads `f0 <= 1.4 ... gain=6.4` with leaves `-0.79999995` and `0.8`: the threshold, gain, and leaf values you just derived. The dump prints each float with the digits that round-trip it, so the left leaf shows the one float32 step its single-precision sum lands short of -0.8. From here:
 
 - The CLI equivalents (`bonsai fit/predict/eval/bench/dump/importance/info/params`) are in the [README](../../README.md) quickstart.
 - [Chapter 1](1-gradient-boosting.md) does step 1 properly (why gradients, why second order); chapters 2–4 do steps 2–5 at production scale.

@@ -63,7 +63,7 @@ SECTION_INTRO = {
     "objective": "Extra parameters read only by the matching objective.",
     "metrics": "Which metrics to report during fit and eval; no effect on the trained model.",
     "data": "Dataset IO for the CLI; the Python API passes arrays instead of paths. Missing values are NaN everywhere: in a CSV write the literal `nan`, since an empty field is a parse error naming its row and column.",
-    "parallel": "Compute placement: CPU threads and CUDA device. No effect on the model bits.",
+    "parallel": "Compute placement: CPU threads and CUDA device. A fixed `n_threads` gives the same model bits on every run; another thread count can move them within numerical tolerance (u16 bins, `max_bin` above 255, stay bit-identical at any count), and so can `n_threads = 0` on hosts with different core counts.",
 }
 
 # One effect-on-model line per dotted knob (type and default come from the
@@ -77,7 +77,7 @@ EFFECTS = {
     "booster.n_iters": "Number of boosting rounds. More rounds lower training loss but risk overfitting; pair with a smaller learning_rate.",
     "booster.learning_rate": "Shrinks each tree's contribution. Lower values need more rounds but generalize better, the classic accuracy-versus-iterations trade.",
     "booster.random_seed": "Seeds every draw the fit makes: row sampling, DART drops and, together with tree.feature_seed, the feature_fraction draws. Fixing it makes a run reproducible bit for bit.",
-    "booster.log_intervals": "Progress-logging frequency during fit. 0 is silent; higher prints more metric ticks. No effect on the trained model.",
+    "booster.log_intervals": "Progress-logging frequency during `bonsai fit`. 0 is silent; higher prints more metric ticks. CLI-only: the Python API prints nothing and records the objective's loss on the eval set in `eval_history` instead. No effect on the trained model.",
     "booster.early_stopping_rounds": "Stop when the first validation objective stalls this many rounds, keeping the best iteration. 0 disables it; needs a valid set.",
     "booster.dart_drop_rate": "DART: probability of dropping each existing tree per round. Above 0 enables DART regularization; incompatible with early stopping.",
     # tree
@@ -107,8 +107,8 @@ EFFECTS = {
     "objective.n_targets": "regression objectives: targets per row, the width of a 2-D y. The Python API sets it from the label block; a fit grows one tree per target per round and predicts one column per target.",
     "objective.n_classes": "softmax objective: number of classes, labels 0 to K-1. Must match the data; sets the trees-per-round multiplier.",
     # metrics
-    "metrics.fit": "Metric names reported during fit. Empty uses the objective's defaults. Reporting only, no effect on the model.",
-    "metrics.eval": "Metric names reported during eval. Empty uses the objective's defaults. Reporting only, no effect on the model.",
+    "metrics.fit": "Metric names reported during fit. Empty uses the objective's defaults. Each name must be a built-in metric for the objective's task, or the fit is refused. Reporting only, no effect on the model.",
+    "metrics.eval": "Metric names reported during eval. Empty uses the objective's defaults. Each name must be a built-in metric for the objective's task, or the fit is refused. Reporting only, no effect on the model.",
     # data
     "data.train": "Path to the training dataset. The CLI reads it; the Python API passes arrays instead.",
     "data.test": "Path to a test dataset scored after fit. CLI-only, like train.",

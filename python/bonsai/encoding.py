@@ -16,6 +16,8 @@ import itertools
 
 import numpy as np
 
+from bonsai._coerce import _as_array
+
 __all__ = ["OrderedTargetEncoder"]
 
 # Pair keys pack two integer codes into one int64; codes must fit 32 bits.
@@ -124,21 +126,21 @@ class OrderedTargetEncoder:
         numpy.ndarray
             The encoded matrix, columns in the layout documented on the class.
         """
-        X = np.asarray(X, dtype=np.float32)
+        codes = _as_array(X, np.float64)
         y = np.asarray(y, dtype=np.float64).ravel()
-        out = np.array(X, copy=True)
+        out = codes.astype(np.float32)
         self._prior = float(y.mean())
         self._stats = {}
         self._pair_stats = {}
         appended = []
         for c in self.columns:
-            col = _bucket_missing(X[:, c])
+            col = _bucket_missing(codes[:, c])
             out[:, c] = self._causal_encoding(col, y)
             self._stats[c] = self._full_stats(col, y)
             if self.keep_codes:
-                appended.append(X[:, c])
+                appended.append(codes[:, c].astype(np.float32))
         for i, j in self._pairs():
-            keys = _pair_keys(X, i, j)
+            keys = _pair_keys(codes, i, j)
             appended.append(self._causal_encoding(keys, y))
             self._pair_stats[(i, j)] = self._full_stats(keys, y)
         return np.column_stack([out, *appended]) if appended else out
@@ -164,15 +166,15 @@ class OrderedTargetEncoder:
         """
         if self._stats is None:
             raise RuntimeError("fit_transform must run before transform")
-        X = np.asarray(X, dtype=np.float32)
-        out = np.array(X, copy=True)
+        codes = _as_array(X, np.float64)
+        out = codes.astype(np.float32)
         appended = []
         for c in self.columns:
-            out[:, c] = self._lookup(*self._stats[c], _bucket_missing(X[:, c]))
+            out[:, c] = self._lookup(*self._stats[c], _bucket_missing(codes[:, c]))
             if self.keep_codes:
-                appended.append(X[:, c])
+                appended.append(codes[:, c].astype(np.float32))
         for i, j in self._pairs():
-            appended.append(self._lookup(*self._pair_stats[(i, j)], _pair_keys(X, i, j)))
+            appended.append(self._lookup(*self._pair_stats[(i, j)], _pair_keys(codes, i, j)))
         return np.column_stack([out, *appended]) if appended else out
 
     def _pairs(self):

@@ -462,6 +462,11 @@ void write_file(std::string const &path, std::span<uint8_t const> bytes)
     }
     out.write(reinterpret_cast<char const *>(bytes.data()),
               static_cast<std::streamsize>(bytes.size()));
+    out.close();
+    if (!out)
+    {
+        throw std::runtime_error("model: failed writing '" + path + "'");
+    }
 }
 
 } // namespace
