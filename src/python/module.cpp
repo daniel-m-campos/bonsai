@@ -1467,6 +1467,40 @@ std::string config_str(nb::handle value)
     return nb::cast<std::string>(nb::str(value));
 }
 
+constexpr std::string_view k_interaction_key = "tree.interaction_constraints";
+
+std::string interaction_group_str(nb::handle group)
+{
+    if (nb::isinstance<nb::list>(group) || nb::isinstance<nb::tuple>(group))
+    {
+        std::string members;
+        for (nb::handle member : nb::borrow<nb::object>(group))
+        {
+            members += members.empty() ? "" : "+";
+            members += nb::cast<std::string>(nb::str(member));
+        }
+        return members;
+    }
+    std::string text = nb::cast<std::string>(nb::str(group));
+    std::ranges::replace(text, ',', '+');
+    return text;
+}
+
+std::string interaction_groups_str(nb::handle value)
+{
+    if (!nb::isinstance<nb::list>(value) && !nb::isinstance<nb::tuple>(value))
+    {
+        return config_str(value);
+    }
+    std::string joined;
+    for (nb::handle group : nb::borrow<nb::object>(value))
+    {
+        joined += joined.empty() ? "" : ",";
+        joined += interaction_group_str(group);
+    }
+    return joined;
+}
+
 using ParamItems = std::vector<std::pair<std::string, nb::object>>;
 
 ParamItems items_from_params(nb::object params)
@@ -1529,7 +1563,8 @@ ConfigPairs render_params(ParamItems const &items)
     pairs.reserve(items.size());
     for (auto const &[key, value] : items)
     {
-        pairs.emplace_back(key, config_str(value));
+        pairs.emplace_back(key, key == k_interaction_key ? interaction_groups_str(value)
+                                                         : config_str(value));
     }
     return pairs;
 }

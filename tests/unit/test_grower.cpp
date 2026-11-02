@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "bonsai/config/errors.hpp"
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/grower.hpp"
@@ -366,6 +367,43 @@ TEST_CASE("LeafwiseGrower: monotone -1 forces non-increasing predictions",
         CHECK(cur <= prev);
         prev = cur;
     }
+}
+
+TEST_CASE("Grower: an interaction group naming a feature the data lacks is refused",
+          "[grower][interaction][edge]")
+{
+    auto       in = separable_4row();
+    TreeConfig cfg{.min_child_hess   = 0.0F,
+                   .lambda_l2        = 1.0F,
+                   .max_depth        = 2,
+                   .min_data_in_leaf = 0};
+    cfg.interaction_constraints = {"0+7"};
+    SECTION("depthwise")
+    {
+        DepthwiseGrower<> grower{cfg};
+        REQUIRE_THROWS_AS(grower.grow(in.built.ds, in.grad, in.hess, in.rows),
+                          ConfigError);
+    }
+    SECTION("leafwise")
+    {
+        LeafwiseGrower<> grower{cfg};
+        REQUIRE_THROWS_AS(grower.grow(in.built.ds, in.grad, in.hess, in.rows),
+                          ConfigError);
+    }
+}
+
+TEST_CASE("Grower: an interaction group token must be a whole feature index",
+          "[grower][interaction][edge]")
+{
+    TreeConfig cfg{.min_child_hess = 0.0F, .lambda_l2 = 1.0F, .min_data_in_leaf = 0};
+    for (char const *token : {"0.9+1", "0x+1", "0+1abc", "-1", "a"})
+    {
+        cfg.interaction_constraints = {token};
+        INFO(token);
+        REQUIRE_THROWS_AS(DepthwiseGrower<>{cfg}, ConfigError);
+    }
+    cfg.interaction_constraints = {"0+1", "2,3", "", "+"};
+    REQUIRE_NOTHROW(DepthwiseGrower<>{cfg});
 }
 
 TEST_CASE("DepthwiseGrower: interaction constraints keep groups on separate paths",
