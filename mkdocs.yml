@@ -7,33 +7,48 @@ docs_dir: docs
 
 theme:
   name: material
+  custom_dir: overrides
   logo: assets/bonsai-logo.png
   favicon: assets/bonsai-logo.png
+  font: false
   palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
     - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: green
-      accent: light green
+      scheme: bonsai-light
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
-        name: dark mode
+        name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: green
-      accent: light green
+      scheme: bonsai-dark
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
-        name: light mode
+        name: Switch to system preference
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.indexes
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.progress
+    - navigation.path
     - navigation.top
     - navigation.footer
     - toc.follow
     - search.suggest
     - search.highlight
+    - search.share
     - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.view
 
 # Internal material stays out of the public site: ops/ (the pod runbook),
 # hooks/, the writing contract and the invariants source.
@@ -46,6 +61,9 @@ exclude_docs: |
   ops/
   hooks/
   invariants.src.md
+
+edit_uri: edit/main/docs/
+copyright: 'bonsai · <a href="https://github.com/daniel-m-campos/bonsai">GitHub</a>'
 
 hooks:
   - docs/hooks/repo_links.py
@@ -75,9 +93,16 @@ markdown_extensions:
   - footnotes
   - tables
   - toc:
-      permalink: true
+      permalink: "#"
+      permalink_title: Link to this section
+      title: On this page
   - pymdownx.details
-  - pymdownx.highlight
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.arithmatex:
@@ -95,12 +120,13 @@ markdown_extensions:
               tag: div
 
 extra_javascript:
-  - https://unpkg.com/katex@0/dist/katex.min.js
-  - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+  - https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js
+  - https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/contrib/auto-render.min.js
   - javascripts/katex.js
 
 extra_css:
-  - https://unpkg.com/katex@0/dist/katex.min.css
+  - https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css
+  - stylesheets/bonsai.css
 
 nav:
   - Home: index.md
