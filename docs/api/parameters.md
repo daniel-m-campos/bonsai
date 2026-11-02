@@ -12,9 +12,9 @@ Selects the algorithm: which loss, which tree grower, which row sampler.
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `grower_name` | string | `"depthwise"` | Tree-growth strategy: depthwise, leafwise, or levelwise (plus cuda_ variants). Leafwise cuts loss faster per node; levelwise builds symmetric trees. |
-| `objective_name` | string | `"mse"` | Training loss: mse, mae, huber, quantile, poisson, logloss, or softmax. Sets the gradients, the link, and the default metrics. |
-| `sampler_name` | string | `"all_rows"` | Row-sampling strategy: all_rows, bernoulli (uniform subsample), or goss (keeps large-gradient rows). Trades a little accuracy for training speed. |
+| [`grower_name`](#dispatch.grower_name){ #dispatch.grower_name .bz-param } | string | `"depthwise"` | Tree-growth strategy: depthwise, leafwise, or levelwise (plus cuda_ variants). Leafwise cuts loss faster per node; levelwise builds symmetric trees. |
+| [`objective_name`](#dispatch.objective_name){ #dispatch.objective_name .bz-param } | string | `"mse"` | Training loss: mse, mae, huber, quantile, poisson, logloss, or softmax. Sets the gradients, the link, and the default metrics. |
+| [`sampler_name`](#dispatch.sampler_name){ #dispatch.sampler_name .bz-param } | string | `"all_rows"` | Row-sampling strategy: all_rows, bernoulli (uniform subsample), or goss (keeps large-gradient rows). Trades a little accuracy for training speed. |
 
 ## booster
 
@@ -22,12 +22,12 @@ The boosting loop: how many trees, how strongly each contributes, when to stop.
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `dart_drop_rate` | float | `0.0` | DART: probability of dropping each existing tree per round. Above 0 enables DART regularization; incompatible with early stopping. |
-| `early_stopping_rounds` | integer | `0` | Stop when the first validation objective stalls this many rounds, keeping the best iteration. 0 disables it; needs a valid set. |
-| `learning_rate` | float | `0.05` | Shrinks each tree's contribution. Lower values need more rounds but generalize better, the classic accuracy-versus-iterations trade. |
-| `log_intervals` | integer | `0` | Progress-logging frequency during `bonsai fit`. 0 is silent; higher prints more metric ticks. CLI-only: the Python API prints nothing and records the objective's loss on the eval set in `eval_history` instead. No effect on the trained model. |
-| `n_iters` | integer | `100` | Number of boosting rounds. More rounds lower training loss but risk overfitting; pair with a smaller learning_rate. |
-| `random_seed` | integer | `42` | Seeds every draw the fit makes: row sampling, DART drops and, together with tree.feature_seed, the feature_fraction draws. Fixing it makes a run reproducible bit for bit. |
+| [`dart_drop_rate`](#booster.dart_drop_rate){ #booster.dart_drop_rate .bz-param } | float | `0.0` | DART: probability of dropping each existing tree per round. Above 0 enables DART regularization; incompatible with early stopping. |
+| [`early_stopping_rounds`](#booster.early_stopping_rounds){ #booster.early_stopping_rounds .bz-param } | integer | `0` | Stop when the first validation objective stalls this many rounds, keeping the best iteration. 0 disables it; needs a valid set. |
+| [`learning_rate`](#booster.learning_rate){ #booster.learning_rate .bz-param } | float | `0.05` | Shrinks each tree's contribution. Lower values need more rounds but generalize better, the classic accuracy-versus-iterations trade. |
+| [`log_intervals`](#booster.log_intervals){ #booster.log_intervals .bz-param } | integer | `0` | Progress-logging frequency during `bonsai fit`. 0 is silent; higher prints more metric ticks. CLI-only: the Python API prints nothing and records the objective's loss on the eval set in `eval_history` instead. No effect on the trained model. |
+| [`n_iters`](#booster.n_iters){ #booster.n_iters .bz-param } | integer | `100` | Number of boosting rounds. More rounds lower training loss but risk overfitting; pair with a smaller learning_rate. |
+| [`random_seed`](#booster.random_seed){ #booster.random_seed .bz-param } | integer | `42` | Seeds every draw the fit makes: row sampling, DART drops and, together with tree.feature_seed, the feature_fraction draws. Fixing it makes a run reproducible bit for bit. |
 
 ## tree
 
@@ -35,17 +35,17 @@ Per-tree shape and regularization, the primary overfitting controls.
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `feature_fraction` | float | `1.0` | Fraction of features sampled per tree. Below 1 decorrelates trees and speeds training, often improving generalization. |
-| `feature_seed` | integer | `2` | Seeds the per-tree feature_fraction draws together with booster.random_seed, so two fits that share random_seed and differ here draw different features. Fixing both keeps feature subsampling reproducible across runs. |
-| `interaction_constraints` | list | `[]` | Feature groups allowed to interact on one tree path. Restricts which features co-split, encoding domain structure and limiting interactions. |
-| `lambda_l1` | float | `0.0` | L1 penalty on leaf weights. Above 0 pushes small leaf outputs to exactly zero, a sparser, more regularized fit. |
-| `lambda_l2` | float | `1.0` | L2 penalty on leaf weights. Higher values shrink leaf outputs toward zero, smoothing predictions and reducing variance. |
-| `max_depth` | integer | `6` | Maximum tree depth. Deeper trees capture more feature interactions but overfit and cost more; the primary complexity knob. |
-| `max_leaves` | integer | `31` | Leaf cap for leafwise growth. 0 is unbounded (depth-capped). A budget of 0 or of 2^max_depth and above cannot bind, so that tree is grown by the depthwise plane. Fewer leaves regularize; more leaves fit finer structure. |
-| `min_child_hess` | float | `1.0` | Minimum hessian each child of a split must hold, or the candidate is rejected. Under squared error a row weighs 1, so this counts rows. |
-| `min_data_in_leaf` | integer | `20` | Rows a node needs to split at all, twice this value. It gates the node, not the child: min_child_hess is the per-child floor. |
-| `min_gain_to_split` | float | `0.0` | Minimum loss reduction to accept a split. Raising it prunes low-value splits and shrinks trees, curbing overfitting. |
-| `monotone_constraints` | list | `[]` | Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free. Forces predictions to respect known monotonic relationships. Honoured by every grower. |
+| [`feature_fraction`](#tree.feature_fraction){ #tree.feature_fraction .bz-param } | float | `1.0` | Fraction of features sampled per tree. Below 1 decorrelates trees and speeds training, often improving generalization. |
+| [`feature_seed`](#tree.feature_seed){ #tree.feature_seed .bz-param } | integer | `2` | Seeds the per-tree feature_fraction draws together with booster.random_seed, so two fits that share random_seed and differ here draw different features. Fixing both keeps feature subsampling reproducible across runs. |
+| [`interaction_constraints`](#tree.interaction_constraints){ #tree.interaction_constraints .bz-param } | list | `[]` | Feature groups allowed to interact on one tree path. Restricts which features co-split, encoding domain structure and limiting interactions. |
+| [`lambda_l1`](#tree.lambda_l1){ #tree.lambda_l1 .bz-param } | float | `0.0` | L1 penalty on leaf weights. Above 0 pushes small leaf outputs to exactly zero, a sparser, more regularized fit. |
+| [`lambda_l2`](#tree.lambda_l2){ #tree.lambda_l2 .bz-param } | float | `1.0` | L2 penalty on leaf weights. Higher values shrink leaf outputs toward zero, smoothing predictions and reducing variance. |
+| [`max_depth`](#tree.max_depth){ #tree.max_depth .bz-param } | integer | `6` | Maximum tree depth. Deeper trees capture more feature interactions but overfit and cost more; the primary complexity knob. |
+| [`max_leaves`](#tree.max_leaves){ #tree.max_leaves .bz-param } | integer | `31` | Leaf cap for leafwise growth. 0 is unbounded (depth-capped). A budget of 0 or of 2^max_depth and above cannot bind, so that tree is grown by the depthwise plane. Fewer leaves regularize; more leaves fit finer structure. |
+| [`min_child_hess`](#tree.min_child_hess){ #tree.min_child_hess .bz-param } | float | `1.0` | Minimum hessian each child of a split must hold, or the candidate is rejected. Under squared error a row weighs 1, so this counts rows. |
+| [`min_data_in_leaf`](#tree.min_data_in_leaf){ #tree.min_data_in_leaf .bz-param } | integer | `20` | Rows a node needs to split at all, twice this value. It gates the node, not the child: min_child_hess is the per-child floor. |
+| [`min_gain_to_split`](#tree.min_gain_to_split){ #tree.min_gain_to_split .bz-param } | float | `0.0` | Minimum loss reduction to accept a split. Raising it prunes low-value splits and shrinks trees, curbing overfitting. |
+| [`monotone_constraints`](#tree.monotone_constraints){ #tree.monotone_constraints .bz-param } | list | `[]` | Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free. Forces predictions to respect known monotonic relationships. Honoured by every grower. |
 
 ## sampler
 
@@ -53,9 +53,9 @@ Row subsampling, active only for the `bernoulli` and `goss` samplers.
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `other_rate` | float | `0.1` | goss sampler: fraction sampled from the remaining small-gradient rows. Higher samples more, nearer full-data accuracy but slower. |
-| `subsample` | float | `1.0` | bernoulli sampler: fraction of rows drawn per tree. Below 1 adds randomness and speed, trading accuracy for less overfitting. |
-| `top_rate` | float | `0.2` | goss sampler: fraction of large-gradient rows always kept. Higher retains more of the informative rows goss prioritizes. |
+| [`other_rate`](#sampler.other_rate){ #sampler.other_rate .bz-param } | float | `0.1` | goss sampler: fraction sampled from the remaining small-gradient rows. Higher samples more, nearer full-data accuracy but slower. |
+| [`subsample`](#sampler.subsample){ #sampler.subsample .bz-param } | float | `1.0` | bernoulli sampler: fraction of rows drawn per tree. Below 1 adds randomness and speed, trading accuracy for less overfitting. |
+| [`top_rate`](#sampler.top_rate){ #sampler.top_rate .bz-param } | float | `0.2` | goss sampler: fraction of large-gradient rows always kept. Higher retains more of the informative rows goss prioritizes. |
 
 ## bin_mapper
 
@@ -63,10 +63,10 @@ Histogram binning: how feature values become the bins that splits search over.
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `max_bin` | integer | `255` | Histogram bins per feature. More bins give finer split candidates at higher histogram cost; measured standings use 255 and were insensitive to small changes near it. |
-| `min_data_in_bin` | integer | `1` | Minimum rows per histogram bin. Higher values merge sparse bins, coarsening splits and guarding against noise-driven cuts. |
-| `n_samples` | integer | `200000` | Rows sampled to compute bin edges. More gives more accurate quantiles at higher binning cost; the default already stabilizes edges. |
-| `seed` | integer | `0` | Seeds the row sample used for bin-edge quantiles. Fixing it keeps bin boundaries reproducible across runs. |
+| [`max_bin`](#bin_mapper.max_bin){ #bin_mapper.max_bin .bz-param } | integer | `255` | Histogram bins per feature. More bins give finer split candidates at higher histogram cost; measured standings use 255 and were insensitive to small changes near it. |
+| [`min_data_in_bin`](#bin_mapper.min_data_in_bin){ #bin_mapper.min_data_in_bin .bz-param } | integer | `1` | Minimum rows per histogram bin. Higher values merge sparse bins, coarsening splits and guarding against noise-driven cuts. |
+| [`n_samples`](#bin_mapper.n_samples){ #bin_mapper.n_samples .bz-param } | integer | `200000` | Rows sampled to compute bin edges. More gives more accurate quantiles at higher binning cost; the default already stabilizes edges. |
+| [`seed`](#bin_mapper.seed){ #bin_mapper.seed .bz-param } | integer | `0` | Seeds the row sample used for bin-edge quantiles. Fixing it keeps bin boundaries reproducible across runs. |
 
 ## objective
 
@@ -74,10 +74,10 @@ Extra parameters read only by the matching objective.
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `huber_delta` | float | `1.0` | huber objective: residual half-width of the L2 zone. Smaller behaves more like L1 (robust to outliers), larger like L2. |
-| `n_classes` | integer | `3` | softmax objective: number of classes, labels 0 to K-1. Must match the data; sets the trees-per-round multiplier. |
-| `n_targets` | integer | `1` | regression objectives: targets per row, the width of a 2-D y. The Python API sets it from the label block; a fit grows one tree per target per round and predicts one column per target. |
-| `quantile_alpha` | float | `0.5` | quantile objective: the target quantile in (0, 1). 0.5 is the median; higher tilts predictions toward that upper quantile. |
+| [`huber_delta`](#objective.huber_delta){ #objective.huber_delta .bz-param } | float | `1.0` | huber objective: residual half-width of the L2 zone. Smaller behaves more like L1 (robust to outliers), larger like L2. |
+| [`n_classes`](#objective.n_classes){ #objective.n_classes .bz-param } | integer | `3` | softmax objective: number of classes, labels 0 to K-1. Must match the data; sets the trees-per-round multiplier. |
+| [`n_targets`](#objective.n_targets){ #objective.n_targets .bz-param } | integer | `1` | regression objectives: targets per row, the width of a 2-D y. The Python API sets it from the label block; a fit grows one tree per target per round and predicts one column per target. |
+| [`quantile_alpha`](#objective.quantile_alpha){ #objective.quantile_alpha .bz-param } | float | `0.5` | quantile objective: the target quantile in (0, 1). 0.5 is the median; higher tilts predictions toward that upper quantile. |
 
 ## metrics
 
@@ -85,8 +85,8 @@ Which metrics to report during fit and eval; no effect on the trained model.
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `eval` | list | `[]` | Metric names reported during eval. Empty uses the objective's defaults. Each name must be a built-in metric for the objective's task, or the fit is refused. Reporting only, no effect on the model. |
-| `fit` | list | `[]` | Metric names reported during fit. Empty uses the objective's defaults. Each name must be a built-in metric for the objective's task, or the fit is refused. Reporting only, no effect on the model. |
+| [`eval`](#metrics.eval){ #metrics.eval .bz-param } | list | `[]` | Metric names reported during eval. Empty uses the objective's defaults. Each name must be a built-in metric for the objective's task, or the fit is refused. Reporting only, no effect on the model. |
+| [`fit`](#metrics.fit){ #metrics.fit .bz-param } | list | `[]` | Metric names reported during fit. Empty uses the objective's defaults. Each name must be a built-in metric for the objective's task, or the fit is refused. Reporting only, no effect on the model. |
 
 ## data
 
@@ -94,15 +94,15 @@ Dataset IO for the CLI; the Python API passes arrays instead of paths. Missing v
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `format` | string | `"csv"` | Input file format: csv or libsvm. Selects the parser and must match the files. |
-| `header` | boolean | `true` | Whether CSV inputs have a header row. The wrong setting misreads the first row as data or as names. |
-| `ignore_columns` | list | `[]` | Zero-based column indices to drop before training. Excludes ids or leaks without editing the file. |
-| `label_column` | integer | `0` | Zero-based index of the label column in CSV inputs. Points the parser at the target. |
-| `libsvm_n_features` | integer | `0` | libsvm only: force the feature count. 0 infers from the max index; set it when a split's max index is lower. |
-| `test` | string | `""` | Path to a test dataset scored after fit. CLI-only, like train. |
-| `train` | string | `""` | Path to the training dataset. The CLI reads it; the Python API passes arrays instead. |
-| `valid` | list | `[]` | Paths to validation datasets. The first drives early stopping; all are scored each logging tick. |
-| `weight_column` | integer | `-1` | Zero-based index of a per-row weight column. -1 means unweighted; a valid index weights the loss per row. |
+| [`format`](#data.format){ #data.format .bz-param } | string | `"csv"` | Input file format: csv or libsvm. Selects the parser and must match the files. |
+| [`header`](#data.header){ #data.header .bz-param } | boolean | `true` | Whether CSV inputs have a header row. The wrong setting misreads the first row as data or as names. |
+| [`ignore_columns`](#data.ignore_columns){ #data.ignore_columns .bz-param } | list | `[]` | Zero-based column indices to drop before training. Excludes ids or leaks without editing the file. |
+| [`label_column`](#data.label_column){ #data.label_column .bz-param } | integer | `0` | Zero-based index of the label column in CSV inputs. Points the parser at the target. |
+| [`libsvm_n_features`](#data.libsvm_n_features){ #data.libsvm_n_features .bz-param } | integer | `0` | libsvm only: force the feature count. 0 infers from the max index; set it when a split's max index is lower. |
+| [`test`](#data.test){ #data.test .bz-param } | string | `""` | Path to a test dataset scored after fit. CLI-only, like train. |
+| [`train`](#data.train){ #data.train .bz-param } | string | `""` | Path to the training dataset. The CLI reads it; the Python API passes arrays instead. |
+| [`valid`](#data.valid){ #data.valid .bz-param } | list | `[]` | Paths to validation datasets. The first drives early stopping; all are scored each logging tick. |
+| [`weight_column`](#data.weight_column){ #data.weight_column .bz-param } | integer | `-1` | Zero-based index of a per-row weight column. -1 means unweighted; a valid index weights the loss per row. |
 
 ## parallel
 
@@ -110,5 +110,5 @@ Compute placement: CPU threads and CUDA device. A fixed `n_threads` gives the sa
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `device_id` | integer | `0` | CUDA device for cuda_ growers. Placement only: ignored by CPU growers and deliberately not stored in the model. |
-| `n_threads` | integer | `0` | CPU threads for training. 0 auto-detects hardware threads, capped at 16 and at the CPU quota of a quota-limited container. An explicit count over that quota is honored, so the model stays reproducible, and warns once. Set OMP_WAIT_POLICY=passive where the pool is oversubscribed. Worker threads bind to one core each, one package first, unless OMP_PROC_BIND or OMP_PLACES is set; OMP_PROC_BIND=false leaves placement to the scheduler, for several fits sharing one container. |
+| [`device_id`](#parallel.device_id){ #parallel.device_id .bz-param } | integer | `0` | CUDA device for cuda_ growers. Placement only: ignored by CPU growers and deliberately not stored in the model. |
+| [`n_threads`](#parallel.n_threads){ #parallel.n_threads .bz-param } | integer | `0` | CPU threads for training. 0 auto-detects hardware threads, capped at 16 and at the CPU quota of a quota-limited container. An explicit count over that quota is honored, so the model stays reproducible, and warns once. Set OMP_WAIT_POLICY=passive where the pool is oversubscribed. Worker threads bind to one core each, one package first, unless OMP_PROC_BIND or OMP_PLACES is set; OMP_PROC_BIND=false leaves placement to the scheduler, for several fits sharing one container. |

@@ -246,12 +246,18 @@ def render() -> str:
         if sec in SECTION_INTRO:
             block.append("\n" + SECTION_INTRO[sec])
         rows = [
-            [f"`{leaf}`", typ, f"`{default}`", EFFECTS[dotted]]
+            [_anchored_name(leaf, dotted), typ, f"`{default}`", EFFECTS[dotted]]
             for leaf, dotted, typ, default in sections[sec]
         ]
         block.append("\n" + md_table(["parameter", "type", "default", "effect"], rows))
         parts.append("\n".join(block) + "\n")
     return "\n".join(parts)
+
+
+def _anchored_name(leaf: str, dotted: str) -> str:
+    """The name cell, linked to its own row so every knob has a URL equal to
+    its dotted key: `#tree.max_depth`."""
+    return f"[`{leaf}`](#{dotted}){{ #{dotted} .bz-param }}"
 
 
 def coverage_error() -> str | None:
