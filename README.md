@@ -30,7 +30,7 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 
 - **Compile-time dispatch, concept-checked components.** The runtime TOML config resolves once to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>`; no virtual calls in the hot path, and contract violations fail at compile time. Adding a component is a [short recipe](https://daniel-m-campos.github.io/bonsai/api/building/#extending-bonsai).
 - **Six growers, one engine.** `depthwise` (XGBoost-style), `leafwise` (LightGBM-style), `levelwise` (CatBoost-style), and their CUDA twins `cuda_depthwise` / `cuda_leafwise` / `cuda_levelwise`; with 7 objectives and 3 samplers the dispatch space is 126 statically-typed combinations, selectable per run from config.
-- **Deterministic parallelism.** Models are bit-identical across runs, thread counts, and even CPU architectures (arm64 == x86-64), a property no reference library offers, enforced per-commit in CI ([the contract](https://daniel-m-campos.github.io/bonsai/learn/determinism-as-a-contract/)).
+- **Deterministic parallelism.** At a fixed thread count, models are bit-identical across runs and even across CPU architectures (arm64 == x86-64), a property no reference library offers, enforced per-commit in CI. With u16 bins (`max_bin` above 256) they are also bit-identical at any thread count ([the contract](https://daniel-m-campos.github.io/bonsai/learn/determinism-as-a-contract/)).
 - **A guide, not just docs.** [The guide](https://daniel-m-campos.github.io/bonsai/guide/) explains gradient boosting chapter by chapter: concept, math, then the ~50 real lines that implement it here, then an experiment against the reference libraries.
 
 ## Install
@@ -39,7 +39,7 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 pip install bonsai-gbt
 ```
 
-Wheels cover Linux x86_64/aarch64 and macOS arm64, Python 3.9 to 3.13, no toolchain needed. The linux x86_64 wheel is CUDA-enabled at 2.3MB total: GPU training works out of the box on any NVIDIA driver R525+, it behaves exactly like a CPU wheel on machines without a GPU, and every release's CUDA wheel passes a live GPU validation before it ships ([decision 70](https://daniel-m-campos.github.io/bonsai/decisions/)). The full story, docker image included, is [Install](https://daniel-m-campos.github.io/bonsai/api/install/); everything past a wheel (the CLI binary, development setups, CUDA source builds) is [Building from source](https://daniel-m-campos.github.io/bonsai/api/building/).
+Wheels cover Linux x86_64/aarch64 and macOS arm64, Python 3.9 to 3.13, no toolchain needed. The linux x86_64 wheel is CUDA-enabled at about 5.4MB: GPU training works out of the box on any NVIDIA driver R525+, it behaves exactly like a CPU wheel on machines without a GPU, and every release's CUDA wheel passes a live GPU validation before it ships ([decision 70](https://daniel-m-campos.github.io/bonsai/decisions/)). The full story, docker image included, is [Install](https://daniel-m-campos.github.io/bonsai/api/install/); everything past a wheel (the CLI binary, development setups, CUDA source builds) is [Building from source](https://daniel-m-campos.github.io/bonsai/api/building/).
 
 ## Quick start
 
@@ -78,7 +78,7 @@ Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bon
 
 ### Perf
 
-On GPU at the tall scenario, fit totals run depthwise 3.3s vs XGBoost 27.7s; leafwise 3.3s vs LightGBM 29.0s; levelwise 3.1s vs CatBoost 19.3s. On CPU at the tall scenario: depthwise 9.5s vs XGBoost 18.3s; leafwise 10.4s vs LightGBM 23.4s; levelwise 9.0s vs CatBoost 17.1s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
+A fit total is ingest plus train time. On GPU at the tall scenario (16M rows x 128 features), fit totals run depthwise 3.3s vs XGBoost 27.7s; leafwise 3.3s vs LightGBM 29.0s; levelwise 3.1s vs CatBoost 19.3s. On CPU at the tall scenario (2M rows x 128 features): depthwise 9.5s vs XGBoost 18.3s; leafwise 10.4s vs LightGBM 23.4s; levelwise 9.0s vs CatBoost 17.1s. The wide and extreme scenarios, memory use on the host and the device, and early stopping are on [the scenario panels](https://daniel-m-campos.github.io/bonsai/results/results/perf/).
 
 The panels, and the closed campaigns behind them, are in [the ledger](https://daniel-m-campos.github.io/bonsai/results/results/).
 

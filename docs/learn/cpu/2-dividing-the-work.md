@@ -12,7 +12,7 @@ See [guide chapter 2](../../guide/2-binning-and-histograms.md) for the definitio
 
 **Formula:** `adds_per_fill = n_node_rows * n_selected_features`
 
-**Example:** A root fill at either running example makes 2^28 adds, about 268 million.
+**Example:** A root fill at either of the [two running examples](README.md#the-two-running-examples), the tall cell (128 features) or the wide cell (16,384 features), makes 2^28 adds, about 268 million.
 
 There is no arithmetic to remove here. The body is two additions of a float pair, and the bin id is one byte already in memory.
 
@@ -20,10 +20,10 @@ No ordering of the loop changes the answer either. So everything below is about 
 
 Two arrays are in play, and they pull in opposite directions:
 
-- **The mirror.** The bins, stored row by row, so one row's bins are contiguous bytes. See [guide chapter 2](../../guide/2-binning-and-histograms.md) for details.
+- **The mirror.** The bins, stored row by row within column tiles of 2,048 features, so one row's bins inside a tile are contiguous bytes. See [guide chapter 2](../../guide/2-binning-and-histograms.md) for details.
 - **The arena.** The node's histograms, stored feature by feature, so one feature's 256 cells are contiguous.
 
-A row walk is sequential in the mirror and scattered in the arena. A feature walk is the reverse. There is no third option, because the two arrays cannot both be walked in order.
+A row walk is sequential in the mirror and scattered in the arena. A feature walk is the reverse. Within one node there is no third option, because the two arrays cannot both be walked in order.
 
 ## What gets touched, how often
 
@@ -63,7 +63,7 @@ The row-parallel form's extra machinery is the expensive half. The cost is not t
 
 Each of those cells is zeroed before the fill and read again during the reduce. Neither pass does any useful arithmetic.
 
-**Example:** At the tall cell with 12 threads, the leaf plane's partial volume, its `partial_cells` summed over fills, measured 24x the depthwise plane's. That is 118 million cells per two boosting rounds.
+**Example:** A plane is a code path for the histogram fill, and each grower normally uses its own. At the tall cell with 12 threads, the leaf-wise grower's fill (its leaf plane) needed 24x as many partial cells, its `partial_cells` summed over fills, as the depthwise grower's fill (its depthwise plane). The leaf plane's figure is 118 million cells zeroed and reduced per two boosting rounds.
 
 The count also grows with the thread count: 11 partial sets per node at 12 threads against 3 at 4. So the row-parallel price rises exactly when you add workers to make it cheaper.
 
@@ -101,19 +101,19 @@ The answer reads as one sentence. Go feature-parallel, and split the rows into b
 
 Blocks are taken only while each one still owns at least 8,192 rows. That is the work a block must do to earn the partial it is charged.
 
-**The result at tall.** Populate fell from 33.5 to 21.7 seconds and train from 45.4 to 32.9 on one EPYC draw. The pre-registered falsifier bar was a 10% drop, and the lever cleared it three times over.
+**The result at tall.** Populate fell from 33.5 to 21.7 seconds (-35%) and train from 45.4 to 32.9 (-28%) on one EPYC draw (a draw is the specific machine a cloud rental hands you). Before measuring, I set the bar at a 10% drop: anything smaller would have meant the idea was wrong. Both drops cleared it.
 
 Mirror traffic per tree fell from 3.85GB to 1.45GB in the same change.
 
 **The result at wide.** Unchanged, as predicted, once a self-inflicted regression was found and reverted. [Chapter C3](3-coordination-costs.md) tells that part, because its cause was how many workers were requested, not how the work was divided.
 
-The attribution behind the rule is the campaign's best table. It is a 14-band histogram of node sizes at the tall cell, with the per-band cost of five forced decompositions.
+The rule rests on a table that sorts the tall cell's nodes into 14 size ranges and gives the cost of five forced decompositions in each range.
 
-It found three things. Parallelism stops paying below roughly 400 to 800 rows. The pure row-parallel form loses at every band on shared-cache hosts. The 2D form wins above roughly 16,000 rows.
+It found three things. Parallelism stops paying below roughly 400 to 800 rows. The pure row-parallel form loses in every size range on shared-cache hosts. The 2D form wins above roughly 16,000 rows.
 
-The contract this shipped as, with the exact constants and the determinism consequence, is in [the invariants](../../invariants.md); the constants themselves are `k_fill_cells_per_worker` and `k_fill_rows_per_block` in `src/fill/lone.hpp`.
+The contract this shipped as is the lone fill's block order, pinned by `lone-totals-fill-matches-lone-fill` in [the invariants](../../invariants.md), and the thread-count independence of model bytes in `host-determinism` there. The constants are `k_fill_cells_per_worker` (32,768 cells) and `k_fill_rows_per_block` (8,192 rows) in `src/fill/lone.hpp`.
 
-**Where it runs today.** Decision 147 later routed the leafwise grower onto the level plane's fill whenever a node's histogram arena is under 2 MiB, which the tall cell's 256KiB arena always is. So at tall the 2D form is now the fallback for the rare node that plane declines, and the wide cell, whose 32MiB arenas never qualify, is where it runs.
+**Where it runs today.** Decision 147 later handed a leafwise fit whose leaf budget cannot bind (max_leaves 0, or 2^max_depth and above) to the level plane's fill whenever one node's histogram arena is under 2 MiB, which the tall cell's 256KiB arena always is. The default budget (max_leaves 31 at max_depth 6) can bind, so default leafwise fits still use the 2D form at tall. At wide, whose 32MiB arenas never qualify, it runs for every leafwise fit.
 
 ## The third axis: how the bins are stored
 Both forms above assume the row-major mirror. Column-major storage is the other option, and LightGBM is built on it: each worker scans one feature's column into that feature's histogram.
@@ -122,11 +122,11 @@ A column scan gives every worker its own read stream, so the refetch multiplier 
 
 The cost is read traffic, the total bytes fetched from memory. Below the root a node owns a subset of rows, so a column scan reads scattered positions, and most bytes in each fetched line belong to rows the node does not own. At the tall cell that is roughly 20x bonsai's read traffic, about 30GB against 1.45GB per tree.
 
-Which layout wins depends on the host's bandwidth. On a bandwidth-rich EPYC draw LightGBM's tall train beat bonsai's. On the local M2 bonsai trains tall 2.4x faster: 17.4 to 22.1 seconds against 42.4 to 70.7 at 4 and 8 threads.
+Which layout wins depends on the host's bandwidth. On a bandwidth-rich EPYC draw, LightGBM trained tall 1.4x faster at the campaign's start: 15.6 seconds against bonsai's 21.6 ([chapter C1](1-cache-awareness.md) has the measurement). On the local M2 bonsai trains tall 2.4x to 3.2x faster: 17.4 to 22.1 seconds against 42.4 to 70.7 at 4 and 8 threads.
 
 The tempting conclusion, that bonsai should fill from columns on rich hosts too, was tested directly. bonsai stores both representations, so the campaign built a column-major fill arm (an arm is one variant in a comparison) for single nodes and a per-host selector.
 
-On a rich EPYC draw, with three arms rotated on one machine, the forced column arm tied the forced mirror arm: tall populate 15.6 and 15.2 seconds against 14.9 and 16.2. The pre-registered falsifier required a 25% cut, so the lever was reverted.
+On a rich EPYC draw, with three arms rotated on one machine, the forced column arm tied the forced mirror arm: tall populate 15.6 and 15.2 seconds against 14.9 and 16.2. The bar written down beforehand was a 25% cut, so the lever was reverted.
 
 Layout is therefore not what buys LightGBM its rich-host win. The selector itself was correct wherever it ran, at 0.7% cost: the premise failed, not the implementation.
 
@@ -134,7 +134,7 @@ Neither layout dominates. [Chapter C3](3-coordination-costs.md)'s ledger records
 
 ## Why best-first growth makes this hard
 
-There is a third form, and it is the cheapest of the three: node-parallel, one worker per node.
+A different form, node-parallel, gives each worker whole nodes, so both its reads and its writes are private. It needs many nodes in one fill.
 
 The level growers expand a whole level at once, so a fill has many nodes in front of it. The work list is long and one worker usually owns whole nodes.
 
@@ -144,7 +144,7 @@ Best-first growth has no such list. It expands one node per round, so the fronti
 
 Every worker must therefore be paid out of one node's rows or one node's features. That is precisely the choice this chapter has been pricing.
 
-That constraint is what the campaign's opening baseline priced. The leaf-wise grower trained the tall cell in 39.8 seconds against the depthwise grower's 14.4. At the wide cell it was 518.2 against 98.3 (issue #367). On the 2.7.0 standings the same pair reads 7.2 against 6.7 at tall and 21.6 against 27.6 at wide, the leaf plane ahead at the shape that used to cost it 5x.
+That constraint is what the campaign's opening baseline priced. The leaf-wise grower trained the tall cell in 39.8 seconds against the depthwise grower's 14.4. At the wide cell it was 518.2 against 98.3 (issue #367). On the 2.7.0 standings the same pair reads 7.2 against 6.7 seconds at tall, so the leaf-wise grower still trails there. At wide it reads 21.6 against 27.6 seconds, so it now leads at the shape where it used to take 5x as long.
 
 Those baseline numbers were the same host at 12 threads. Both growers build the same complete tree to identical r2, so the trees, the arithmetic and the machine were all held fixed.
 
@@ -158,4 +158,4 @@ The entire gap was how the work was divided.
 - The refetch multiplier is `max(1, W / L)`, so feature-parallel is free at 256 lines and costs about 6x at 2 lines with 12 workers.
 - The 2D form hands out feature ranges first, and adds row blocks only when the row has too few cache lines to give every worker its own.
 - Column-major storage removes the multiplier and pays roughly 20x read traffic for it. Which one wins moves with the host.
-- Node batching beats both forms and is unavailable to best-first growth, which is why this problem exists.
+- Node-parallel fills (one worker per node) avoid both costs, but best-first growth expands one node per round and cannot use them, which is why this problem exists.

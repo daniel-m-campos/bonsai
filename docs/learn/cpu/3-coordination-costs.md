@@ -1,8 +1,8 @@
 # C3. Coordination costs
 
-The bottom line first. Coordinating parallel work charges fixed fees, about 35 microseconds per synchronization event, while only the fill itself is variable work. Best-first growth makes small fills by construction, so the fees show.
+The bottom line first. Coordinating parallel work charges fixed fees, about 35 microseconds per synchronization event, while only the fill itself is variable work. Best-first growth splits one leaf at a time, so on a tall dataset (many rows, few features) each fill does only about 0.9 milliseconds of work. A fill is the step that adds every row's gradients into the node's histograms. Each split pays about 76 microseconds of those fees (2.16 events per split), about 8% of that work.
 
-This chapter names the costs, sorts them into fixed and variable, and derives the team-sizing rule from the sorted list. The refutations that set each constant come with it.
+This chapter names the costs, sorts them into fixed and variable, and derives the team-sizing rules from the sorted list. The refutations that set each constant come with it.
 
 ## The cost model
 
@@ -24,7 +24,7 @@ The first three are fixed: they price coordination events, and their unit cost d
 
 Two measurements pin down the entry row, and the first closes a whole family of designs.
 
-The fee attaches to the synchronization event, not to the region boundary. An in-region barrier costs the same 35 microseconds as a fork and join. So the folk remedy, one persistent region held open for the whole tree with a barrier per split, saves nothing: it renames the events without changing their count.
+The fee attaches to the synchronization event, not to the region boundary. An in-region barrier costs the same 35 microseconds as a fork and join. A common workaround is one persistent region held open for the whole tree, with a barrier per split. It saves nothing, because each barrier is still one synchronization event, so the count is unchanged.
 
 Fusing phases does change the count. Arena zeroing and the sibling subtraction ran as regions of their own, paying 167 and 135 microseconds of entry each to do less work than the entry cost.
 
@@ -32,7 +32,7 @@ Folded into the fill's own work list, one worker now zeroes its feature range, f
 
 ## When the fee dominates, and when it disappears
 
-Here is the count that makes the tall cell different. The leaf plane enters roughly 25,500 fill regions per fit against the level plane's 800. (The tall cell's leaf plane has since moved onto the level fill, decision 147, so the arithmetic below is the lone-node fill's, which the wide cell still runs; the fee itself is unchanged.)
+The fee is about 8% of a tall fill and about 1% of a wide fill (tall is the 2-million-row, 128-feature benchmark shape, wide the 16,384-feature one). The count behind that: the leaf plane, the best-first code path, enters roughly 25,500 fill regions per fit, against 800 for the level plane, the level-wise code path. (The tall benchmark's leaf plane has since moved onto the level fill, decision 147, so the arithmetic below is the lone-node fill's, which the wide benchmark still runs; the fee itself is unchanged.)
 
 The reason is structural. Best-first growth splits one node per round, and a 100-round fit at a 256-leaf budget makes 25,500 splits.
 
@@ -40,7 +40,7 @@ The reason is structural. Best-first growth splits one node per round, and a 100
 
 **The measurement.** Tall populate fell from 24.73 to 22.95 seconds, which is 1.78 seconds.
 
-That is as clean as attribution gets. The campaign still recorded it as a falsification.
+The prediction and the measurement differ by 0.01 seconds. The lever was still recorded as a falsification.
 
 The pre-registered bar was an 8% drop and the lever delivered 7.2%. By its own rule, synchronization count is not the dominant tall term.
 
@@ -60,23 +60,23 @@ The counts are the same. The work is not.
 
 A wide fill zeroes a 32MiB arena and reads 16,384 bytes of every row. A tall fill zeroes 256KiB and reads 128.
 
-So the same 35 microseconds is a term worth chasing at tall and a rounding error at wide. The campaign moved between the two shapes accordingly.
+So the same entry cost, about 76 microseconds per split, is about 8% of a tall fill and about 1% of a wide fill. The campaign moved between the two shapes accordingly.
 
 The last two rows are derived from the campaign's measured seconds rather than measured directly. Tall's figure divides a 22.95-second populate by the split count, and wide's is a measured reading of one full-team fill. Treat both as an order of magnitude.
 
 ## The decision rule
 
-The sorted costs derive the sizing rule in three clauses, each set by a measured number.
+The sorted costs derive the sizing rules in three clauses, each set by a measured number. The first two size the fill's team, and the third sizes the partition's.
 
 **Count the variable work in cells, all of it.** A fill's work is `work_cells = n_sel * 256 + n_rows * n_sel`, the zeroing plus the accumulates.
 
-Counting the zeroing is what keeps a wide node from looking small: a node holding a handful of rows still zeroes a 32MiB arena. The rule's first form counted only the accumulates, so exactly those nodes ran the 32MiB zero on one worker, at 84.9 milliseconds per fill against the full team's 7.5. An 11x penalty, self-inflicted on the shape the change was not trying to touch.
+Counting the zeroing is what keeps a wide node from looking small: a node holding a handful of rows still zeroes a 32MiB arena. The rule's first form counted only the accumulates, so exactly those nodes ran the 32MiB zero on one worker, at 84.9 milliseconds per fill against the full team's 7.5. That is 11 times slower than the full team, on a shape the first form of the rule was not meant to affect.
 
-**Take one worker per 32,768 cells, never more than configured.** The constant is the amortization threshold from the 14-band attribution [chapter C2](2-dividing-the-work.md) introduced: parallelism stops paying below roughly 400 to 800 rows.
+**Take one worker per 32,768 cells, never more than configured.** The constant comes from the table in [chapter C2](2-dividing-the-work.md) that sorts the tall cell's nodes into 14 size ranges and gives the cost of five forced decompositions in each. It showed that parallelism stops paying below roughly 400 to 800 rows.
 
-A team of one runs the loop inline and enters no region at all. The smallest nodes pay no fee, which is the cheapest fix in this chapter.
+A team of one runs the loop inline and enters no region at all, so a node that gets one worker pays none of the 35-microsecond entries.
 
-**Allow two team sizes: full or one.** An exact size per node is the textbook refinement, and it pays the rebuild fee constantly. OpenMP keeps a pool of workers hot between regions, and a region of a new size makes it rebuild the team the regions around it were reusing.
+**A partition takes the full team or one worker.** The fill's team still follows its cell count from the clause above, clamped to the configured threads, so this clause governs the partition alone. This page does not measure whether the fill's own team-size changes pay the rebuild fee. An exact size per node is the textbook refinement, and it pays the rebuild fee constantly. OpenMP (the threading runtime bonsai uses) keeps its worker threads alive between regions. When a region asks for a different team size, OpenMP rebuilds the team, and the fills around that region pay for it.
 
 The exact-size floor requested 8 distinct sizes, at 129 switches per 431 fills. Sizing partition teams to their parent node reproduced the same failure from the other side: partition time fell 22%, from 4.2 to 3.2 seconds, but the rule switched sizes on essentially every split, 265 per tree against the baseline's 78. The fills on either side paid for every rebuild: populate rose 7%, absorbed the whole gain, and train came out flat.
 
@@ -88,7 +88,7 @@ The methodology note is worth as much as the rule. The churn regression was visi
 
 Once two arms exist and neither wins everywhere, something has to choose. There are two honest forms and one common failure.
 
-**The priced gate.** Pick a constant, and only where its reason is structural rather than host-specific. bonsai's fill has four such constants, each with the argument that makes it a constant, in [the invariants](../../invariants.md) and `src/fill/lone.hpp`.
+**The priced gate.** Pick a constant, and only where its reason is structural rather than host-specific. bonsai's fill sizing constants (`k_fill_cells_per_worker` and `k_fill_rows_per_block` in `src/fill/lone.hpp`) each carry their measured argument beside the declaration.
 
 A constant tuned on one host is a claim about that host. That is how the engine track's [wide-data case](../engine/6-the-wide-data-wall.md) lost a threshold one day after shipping it.
 
@@ -100,7 +100,7 @@ The probe has to run on nodes that represent the fit, at enough size to resolve 
 
 On the local M2 at the tall cell, its row-major path beats its own column path by 1.9 to 2.1x. Its selector ships the losing arm.
 
-That is not a hypothetical cost. On that host it is most of why bonsai trains the tall cell 2.4x faster than LightGBM, on identical data and knobs with matching r2.
+That is not a hypothetical cost. On that host it is most of why bonsai trains the tall cell 2.4x to 3.2x faster than LightGBM, on identical data and knobs with matching r2.
 
 bonsai's own attempt at the deferred switch is the third ledger entry below, and it was reverted. The selector was correct everywhere it ran, at 0.7% cost, and its pre-registered property caught a cold-rep bias in its own first draft.
 
@@ -121,13 +121,13 @@ The third entry is the one worth reading twice. The pruning lever was built comp
 
 At the wide cell, 23 to 27% of features stop producing any positive-gain split by depth 7, so the mechanism fires. It still cost 18.3 seconds at four threads.
 
-The cost decomposes cleanly. 13.7 seconds was the arena becoming a unique size per node, so the block pool never hits. 1.7 was losing the arithmetic address that contiguous selection provides, and 2.6 was the census itself.
+The 18.3 seconds splits into three measured parts that sum to 18.0, leaving 0.3 seconds unattributed. Giving each node a unique arena size meant the block pool (the store of arenas that later nodes reuse) never had a matching size to hand back, which cost 13.7 seconds. Losing the contiguous selection that gives the mirror fill its arithmetic address cost 1.7 seconds. The pass that counts which features have stopped producing splits cost 2.6 seconds.
 
 At the tall cell it barely fires at all, 3%. Two million rows over 256 leaves keeps every node near 8,000 rows, which is too shallow for features to die.
 
 Quality was never at risk either way. With pruning on, single-thread models came out byte-identical, so every pruned feature was one that never won a split.
 
-So bonsai's fill is fast because a mirror tile's selected features are contiguous. One address computation per add, and one arena size per tree.
+So bonsai's fill needs one address computation per add and one arena size per tree, because the mirror (the bins stored row by row, in tiles of 2,048 features) keeps a tile's selected features contiguous.
 
 Any per-node sub-selection forfeits both. That is why the same lever is nearly free for a column-major engine and never profitable for this one.
 
@@ -136,7 +136,7 @@ Any per-node sub-selection forfeits both. That is why the same lever is nearly f
 - Entry to a parallel region costs about 35 microseconds at 12 threads, and an in-region barrier costs the same.
 - Persistent-region designs therefore save nothing. The fee is synchronization, not the region boundary.
 - Region count matters where work per region is small: about 8% of a tall fill and about 1% of a wide one.
-- The cheapest team is a team of one, which enters no region. Size teams from a work count that includes the zeroing.
+- A team of one enters no region, so it pays none of the 35-microsecond entries. Size teams from a work count that includes the zeroing.
 - Asking for a new team size is itself a cost, and a rule that computes an exact size per node pays it constantly.
 - A selector calibrated on one unrepresentative node is worse than no selector. LightGBM's root-only calibration is the worked example.
 - Where two coherent designs cross, ship the honest statement with its mechanism named, and put the number in the ledger.

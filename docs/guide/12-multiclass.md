@@ -2,9 +2,9 @@
 
 ## The idea
 
-Binary classification needed one score per row ([chapter 1](1-gradient-boosting.md)); $K$ classes need $K$. Gradient boosting's answer is almost embarrassingly direct: keep $K$ running score columns, and each round grow **one tree per class**, each fitting the gradient of the softmax cross-entropy with respect to *its* class's score. Nothing about trees, histograms, splits, or sampling changes: the same grower that fits house prices fits "the gradient of class 3". All the multiclass machinery lives one level up, in a booster that owns the $K$-column score matrix.
+Binary classification needed one score per row ([chapter 1](1-gradient-boosting.md)); $K$ classes need $K$. Gradient boosting keeps $K$ running scores per row. Each round it grows **one tree per class**. Each tree fits the gradient, with respect to that class's score, of the softmax cross-entropy (the loss that turns the $K$ scores into probabilities with softmax, then penalizes the probability given to the true class). Nothing about trees, histograms, splits, or sampling changes: the same grower that fits house prices fits "the gradient of class 3". Only the booster (the class that runs the boosting rounds) knows about classes: it owns the matrix of scores with one column per class, and the tree grower sees one column of gradients and Hessians at a time, exactly as in a regression fit.
 
-Prediction is then a vote: sum each class's trees, take the argmax (or a softmax if you want probabilities).
+To predict, sum each class's trees to get $K$ scores per row, then pick the class with the highest score (the argmax). Apply softmax to those scores if you want probabilities.
 
 ## The math
 
@@ -20,18 +20,18 @@ The derivatives that feed the trees are the classic softmax pair:
 \frac{\partial \mathcal{L}}{\partial s_k} = p_k - \mathbf{1}[y = k], \qquad \frac{\partial^2 \mathcal{L}}{\partial s_k^2} = p_k (1 - p_k)
 ```
 
-The gradient is beautifully interpretable ("how much probability did you give class $k$ beyond what it deserved"), and the Hessian is largest where the model is uncertain ($p_k \approx \tfrac12$) so confident rows contribute little curvature. Two practical adjustments the code makes: the Hessian ships as the true diagonal $p_k(1 - p_k)$ (a factor-2 'XGBoost convention' variant halves every Newton step: the quality campaign measured it as exactly 2× the iterations to match LightGBM at the same learning rate, so bonsai matches LightGBM's step size), and it is floored at $10^{-6}$, because a row the model is *certain* about has $p_k(1-p_k) \to 0$ and would otherwise divide a leaf value by nothing.
+The gradient $p_k - \mathbf{1}[y = k]$ is the probability the model gave class $k$ minus the target. The Hessian (the second derivative of the loss, which measures curvature) is largest when $p_k \approx \tfrac12$, so rows the model is sure about add little curvature. bonsai makes two choices. First, it uses the true diagonal Hessian $p_k(1 - p_k)$. XGBoost's factor-2 variant halves every Newton step (the leaf value update) and needed 2x the iterations to match LightGBM at the same learning rate ([decision 56](../decisions.md)). Second, it floors the Hessian at $10^{-6}$. For a row the model is certain about, $p_k(1-p_k) \to 0$, and a leaf value is a gradient sum divided by a Hessian sum, so without the floor the leaf value would grow without bound.
 
-Note the diagonal approximation quietly taken: the true softmax Hessian couples classes ($\partial^2 \mathcal{L} / \partial s_k \partial s_j = -p_k p_j$), and every GBT library ignores the off-diagonal terms so each class's tree can be fit independently. It costs iterations, not correctness: the coupled information re-enters through the updated probabilities next round.
+Like XGBoost and LightGBM, bonsai uses only the diagonal of the softmax Hessian. The full Hessian couples classes ($\partial^2 \mathcal{L} / \partial s_k \partial s_j = -p_k p_j$), but dropping those terms lets each class's tree fit independently. The cost is extra rounds (not measured here). The dropped coupling re-enters through the updated probabilities in the next round.
 
 ## In bonsai
 
-Everything is in [`include/bonsai/multiclass_booster.hpp`](../../include/bonsai/multiclass_booster.hpp):
+The round lives in [`include/bonsai/multiclass_booster.hpp`](../../include/bonsai/multiclass_booster.hpp). The $K$-wide trees, score matrix and raw-score queries it inherits live in [`include/bonsai/multi_output_ensemble.hpp`](../../include/bonsai/multi_output_ensemble.hpp), which multi-target fits share, and the flat `trees_` store sits in the `Ensemble` base in [`include/bonsai/booster.hpp`](../../include/bonsai/booster.hpp):
 
-- **Why a separate booster at all**: the 1-D `Objective` concept says gradients are a function of `(preds, targets)`, one column. The $K$-output shape can't be expressed there without contorting every other objective, so `softmax` dispatches to its own `IBooster` implementation (`BoosterFor<{softmax, G, Sa}>` in the registry) and [`SoftmaxObjective`](../../src/objective.cpp)'s 1-D methods deliberately throw. The dispatch mechanism, not a flag inside the booster, decides the shape: one of the places the typelist registry ([decision 26](../decisions.md)) earns its keep.
+- **Why a separate booster at all**: an `Objective` computes gradients from `(preds, targets)` as one column. Softmax needs $K$ columns, so the registry maps `{softmax, G, Sa}` to its own booster, `MulticlassBooster` (`BoosterFor<{softmax, G, Sa}>`). The one-column methods of [`SoftmaxObjective`](../../src/objective.cpp) throw on purpose: no training code path calls them. Choosing the booster through the registry, not through a flag inside one booster, keeps every other objective one-dimensional ([decision 26](../decisions.md)).
 - **The round loop** (`update_one_iter`): scores are a flat `n × K` row-major matrix; for each class $k$, a softmax pass fills `grad_/hess_` for column $k$, the *same* row sampler draws (GOSS and bagging work unchanged), and the *same* grower grows a tree. `trees_` is flat and round-major: class $k$ of round $r$ sits at `r * K + k`, which is all `predict_at(n_rounds)` needs to truncate cleanly.
-- **Prediction**: `raw_scores` accumulates each tree into its class column; `predict` emits argmax class ids; `eval` is the multiclass logloss on the raw scores.
-- **What composes for free, and what needed work**: bagging, GOSS, every grower (including the CUDA ones: the engine sees $K$ ordinary trees per round), feature importance, warm start, and the model format all work unchanged, because they never knew about classes. The seams that *do* know the output shape needed their own passes: early stopping runs through a shape-agnostic score matrix (`score_width()` = $K$), and `pred_contribs` returns per-class slices, `(n, K, n_features + 1)`, each class's slice sums to that class's raw score.
+- **Prediction**: `raw_scores` (inherited from `MultiOutputEnsemble` in [`include/bonsai/multi_output_ensemble.hpp`](../../include/bonsai/multi_output_ensemble.hpp)) accumulates each tree into its class column; `predict` emits argmax class ids; `eval` is the multiclass logloss on the raw scores.
+- **What works unchanged, and what changed**: bagging, GOSS, every grower (including the CUDA ones), feature importance, warm start, and the model format work as for any objective, because each round is $K$ ordinary trees. Two features needed multiclass code. Early stopping scores a matrix of width `score_width()` = $K$. `pred_contribs` returns shape `(n, K, n_features + 1)`, and each class's slice sums to that class's raw score.
 
 ## Try it
 
@@ -55,10 +55,10 @@ pred = np.asarray(model.predict(X))
 print("train accuracy:", (pred == y).mean())
 ```
 
-Watch the model size: 50 iterations × 3 classes = **150 trees**. Multiclass training cost scales linearly in $K$: this is true of every GBT library and routinely surprises people coming from neural nets, where extra classes are one wider layer.
+Watch the model size: 50 iterations × 3 classes = **150 trees**. Training time and model size grow roughly linearly with $K$, because each round grows $K$ trees: 3 classes at the same `n_iters` give 3 times the trees of a binary fit. A neural network differs here: an extra class adds one output unit to the last layer.
 
 ## Gotchas & war stories
 
-- **`n_classes` is config, not inference.** The booster trusts `objective.n_classes` and buckets labels by `class_of`; labels outside `[0, K)` silently fold. Validate your label range yourself.
-- **The Hessian floor is not decoration.** Remove it and a well-separated dataset produces leaves dividing by ~0 curvature late in training: enormous leaf values, then NaN scores two rounds later. Every library has this floor; nobody advertises it.
-- **Per-class trees mean per-class importance.** `feature_importance` aggregates across all $K$ trees per round; a feature that only matters for one rare class dilutes accordingly. Slice `trees_` round-major if you need per-class attribution.
+- **`n_classes` is config, not inference.** `objective.n_classes` (int, default 3, at least 2) sets $K$, the number of classes and the number of trees per round. The booster does not count the classes in your labels. Training refuses any train or validation label that is not an integer in `[0, K)` with a `ValueError`. Set `n_classes` to the number of classes your labels use, and encode labels to `0..K-1` first.
+- **The Hessian floor of $10^{-6}$ prevents NaN scores.** On a well-separated dataset, $p_k(1-p_k)$ approaches 0 late in training. Without the floor, the leaf value (a gradient sum divided by a Hessian sum) grows without bound and then produces NaN scores. Do not remove it.
+- **Per-class trees mean per-class importance.** `feature_importance` adds up the gain (or split count) of all $K$ trees in every round into one score per feature, so it cannot say which class a feature serves: a feature that matters only for one class is mixed in with the features of the other $K-1$ classes. For per-class attribution, use `pred_contribs`, which returns a `(n, K, n_features + 1)` array with one slice per class. To inspect the trees, read `model.dump()`, which labels each tree with its round and class.
