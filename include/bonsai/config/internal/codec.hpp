@@ -90,11 +90,12 @@ inline FloatSpelling float_spelling(std::string_view value)
 
 inline std::optional<float> saturate_to_float(FloatSpelling const &spelling)
 {
-    double      wide = 0.0;
-    auto const *end  = spelling.magnitude.data() + spelling.magnitude.size();
-    auto const  res =
-        std::from_chars(spelling.magnitude.data(), end, wide, spelling.format);
-    if (res.ec != std::errc{} || res.ptr != end)
+    double     wide = 0.0;
+    auto const res  = std::from_chars(
+        spelling.magnitude.data(),
+        spelling.magnitude.data() + spelling.magnitude.size(), wide, spelling.format);
+    if (res.ec != std::errc{} ||
+        res.ptr != spelling.magnitude.data() + spelling.magnitude.size())
     {
         return std::nullopt;
     }
@@ -104,12 +105,15 @@ inline std::optional<float> saturate_to_float(FloatSpelling const &spelling)
 
 inline ParseResult<float> read_float_from_string(std::string_view value)
 {
-    auto const  spelling  = float_spelling(value);
-    float       magnitude = 0.0F;
-    auto const *end       = spelling.magnitude.data() + spelling.magnitude.size();
-    auto const  res =
-        std::from_chars(spelling.magnitude.data(), end, magnitude, spelling.format);
-    bool const whole = res.ptr == end && !spelling.magnitude.starts_with('-');
+    auto const spelling  = float_spelling(value);
+    float      magnitude = 0.0F;
+    auto const res =
+        std::from_chars(spelling.magnitude.data(),
+                        spelling.magnitude.data() + spelling.magnitude.size(),
+                        magnitude, spelling.format);
+    bool const whole =
+        res.ptr == spelling.magnitude.data() + spelling.magnitude.size() &&
+        !spelling.magnitude.starts_with('-');
     if (whole && res.ec == std::errc::result_out_of_range)
     {
         auto const saturated = saturate_to_float(spelling);
