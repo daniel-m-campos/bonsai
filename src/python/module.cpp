@@ -19,6 +19,7 @@
 #include <mdspan>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -62,14 +63,50 @@ bonsai::features_view as_view(array_2d const &X)
     return bonsai::features_view{X.data(), X.shape(0), X.shape(1)};
 }
 
-template <typename T>
-nb::ndarray<nb::numpy, T> to_numpy(std::unique_ptr<std::vector<T>> out,
-                                   std::initializer_list<size_t>   shape)
+template <typename Array, typename T>
+Array owning_array(std::unique_ptr<std::vector<T>> out,
+                   std::initializer_list<size_t>   shape)
 {
     auto       *raw = out.release();
     nb::capsule owner(raw, [](void *p) noexcept
                       { delete static_cast<std::vector<T> *>(p); });
     return {raw->data(), shape, owner};
+}
+
+template <typename T>
+nb::ndarray<nb::numpy, T> to_numpy(std::unique_ptr<std::vector<T>> out,
+                                   std::initializer_list<size_t>   shape)
+{
+    return owning_array<nb::ndarray<nb::numpy, T>>(std::move(out), shape);
+}
+
+array_2d gather_matrix(array_2d const &x, std::span<bonsai::row_id_t const> rows,
+                       std::span<bonsai::feature_id_t const> columns)
+{
+    size_t const width = x.shape(1);
+    auto   out  = std::make_unique<std::vector<float>>(rows.size() * columns.size());
+    float *cell = out->data();
+    for (bonsai::row_id_t const r : rows)
+    {
+        float const *row = x.data() + (static_cast<size_t>(r) * width);
+        for (bonsai::feature_id_t const f : columns)
+        {
+            *cell++ = row[f];
+        }
+    }
+    return owning_array<array_2d>(std::move(out), {rows.size(), columns.size()});
+}
+
+bonsai::cli::FeatureBuffer borrow_features(std::optional<array_2d> const &x)
+{
+    if (!x)
+    {
+        return {};
+    }
+    return {.data       = {},
+            .borrowed   = std::span{x->data(), x->size()},
+            .n_rows     = x->shape(0),
+            .n_features = x->shape(1)};
 }
 
 template <typename T, typename Fill>
@@ -655,6 +692,23 @@ std::vector<IdT> parse_index_selection(nb::handle selection, size_t n,
     return out;
 }
 
+void require_distinct_columns(std::span<bonsai::feature_id_t const> keep,
+                              std::span<std::string const>          names)
+{
+    std::vector<bool> seen(names.size(), false);
+    for (bonsai::feature_id_t const id : keep)
+    {
+        if (seen[id])
+        {
+            throw nb::value_error(
+                std::format("subset(columns=...) selects '{}' twice; names are unique",
+                            names[id])
+                    .c_str());
+        }
+        seen[id] = true;
+    }
+}
+
 class Dataset
 {
   public:
@@ -721,16 +775,16 @@ class Dataset
     {
     }
 
-    Dataset(bonsai::Dataset gathered, bonsai::BinMapperConfig cfg,
-            std::optional<uint32_t> device_id)
-        : n_features_(gathered.n_features()),
+    Dataset(bonsai::Dataset gathered, std::optional<array_2d> x,
+            bonsai::BinMapperConfig cfg, std::optional<uint32_t> device_id)
+        : x_(std::move(x)), n_features_(gathered.n_features()),
           device_id_(gathered.ingest_plane() != nullptr ? device_id : std::nullopt),
           bin_cfg_(cfg)
     {
         loaded_->mappers = gathered.mappers();
         loaded_->train   = bonsai::cli::LabeledData{
               .dataset  = std::move(gathered),
-              .features = {},
+              .features = borrow_features(x_),
               .labels   = {},
         };
         loaded_->train.labels.assign(loaded_->train.dataset.labels().begin(),
@@ -750,10 +804,13 @@ class Dataset
             Dataset const narrowed =
                 rows.is_none() ? *this : subset(self, rows, nb::none());
             auto const names = narrowed.loaded_->mappers.feature_names();
-            return {narrowed.bins().select_features(
-                        parse_index_selection<bonsai::feature_id_t>(
-                            columns, names.size(), column_axis(names))),
-                    narrowed.bin_cfg_, narrowed.device_id_};
+            std::vector<bonsai::feature_id_t> const keep =
+                parse_index_selection<bonsai::feature_id_t>(columns, names.size(),
+                                                            column_axis(names));
+            require_distinct_columns(keep, names);
+            return {narrowed.bins().select_features(keep),
+                    narrowed.gathered_matrix(keep), narrowed.bin_cfg_,
+                    narrowed.device_id_};
         }
         std::vector<bonsai::row_id_t> ids =
             parse_index_selection<bonsai::row_id_t>(rows, n_rows(), row_axis());
@@ -795,8 +852,11 @@ class Dataset
             }
             seen[id] = true;
         }
-        Dataset const laid = subset(self, rows, nb::none());
-        return {laid.bins().materialize(), bin_cfg_, laid.device_id_};
+        Dataset const                     laid = subset(self, rows, nb::none());
+        std::vector<bonsai::feature_id_t> every_column(n_features_);
+        std::iota(every_column.begin(), every_column.end(), bonsai::feature_id_t{0});
+        return {laid.bins().materialize(), laid.gathered_matrix(every_column), bin_cfg_,
+                laid.device_id_};
     }
 
     bool is_view() const
@@ -841,6 +901,11 @@ class Dataset
     bool has_host_matrix() const
     {
         return x_.has_value();
+    }
+
+    bonsai::BinMapperConfig const &bin_config() const
+    {
+        return bin_cfg_;
     }
 
     bonsai::cli::LoadedTrainValidation const &loaded() const
@@ -891,6 +956,16 @@ class Dataset
     }
 
   private:
+    std::optional<array_2d>
+    gathered_matrix(std::span<bonsai::feature_id_t const> columns) const
+    {
+        if (!x_)
+        {
+            return std::nullopt;
+        }
+        return gather_matrix(*x_, row_view().materialize(), columns);
+    }
+
     static void check_reference(Dataset const                 &reference,
                                 bonsai::BinMapperConfig const &bin_cfg,
                                 bool has_bin_edges, bool has_feature_names,
@@ -1924,7 +1999,8 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
             "cuts describes one set of columns, so a warm start needs the "
             "dataset binned with the model's own cuts");
     }
-    cfg = reconcile_init(std::move(cfg), init, items);
+    cfg            = reconcile_init(std::move(cfg), init, items);
+    cfg.bin_mapper = dataset.bin_config();
     nb::gil_scoped_release release;
     return run_fit(std::move(cfg), dataset.train_data(), dataset.loaded().mappers,
                    eval_set, std::move(init));
@@ -2317,8 +2393,8 @@ NB_MODULE(_bonsai, m)
             "wherever the parent's bins were: a device-resident parent is "
             "rewritten on the device and the result reports that device, so a "
             "feature-selection loop never round-trips through the host. "
-            "Out-of-range and negative indices raise, and an unknown name "
-            "raises KeyError.\n"
+            "Out-of-range, negative and repeated columns raise, and an unknown "
+            "name raises KeyError.\n"
             "\n"
             "Returns\n"
             "-------\n"
