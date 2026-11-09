@@ -22,7 +22,7 @@ A FitPlace narrows the calling thread to the team's first CPU for its scope and 
 
 ### constrained-scan-matches-scalar-scan
 
-A monotone constraint routes a feature off the lanes. Constrained and free features interleave here under a leaf-value fence, and every node still returns the reference scan's split to the bit.
+A monotone constraint adds a bounded leaf weight test to its lane group. Constrained and free features share groups here, half the nodes under leaf value bounds, and every node returns the reference scan's split to the bit.
 
 - enforced by: [`HistogramNodeSplitFinder: constrained features match the scalar scan to `](../tests/unit/test_split_node.cpp)
 
@@ -106,7 +106,7 @@ A device root carries a host row list only until the engine stages it; from begi
 
 ### finder-reads-own-feature-totals
 
-Every feature's right side and node score are read from that feature's own histogram totals, never from another feature's. Float cells summed over a long same-sign run disagree across features by hundreds; read against one shared total, a feature's empty right side inherits the difference and an 800k-row label-sorted classification fit took that phantom cut at the root of every tree from round three on (issue 549). The lane scan and the scalar scan, which a monotone constraint routes to, both hold it.
+Every feature's right side and node score are read from that feature's own histogram totals, never from another feature's. Float cells summed over a long same-sign run disagree across features by hundreds; read against one shared total, a feature's empty right side inherits the difference and an 800k-row label-sorted classification fit took that phantom cut at the root of every tree from round three on (issue 549). The free lane scan and the bounded one a monotone constraint selects both hold it.
 
 - enforced by: [`HistogramNodeSplitFinder: scores each feature against its own totals`](../tests/unit/test_split_node.cpp)
 
