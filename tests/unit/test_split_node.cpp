@@ -32,6 +32,32 @@ TEST_CASE("HistogramNodeSplitFinder: picks the obvious cut on a single feature",
     CHECK(s.gain == expected);
 }
 
+// INVARIANT: finder-reads-own-feature-totals
+// Every feature's right side and node score are read from that feature's own
+// histogram totals, never from another feature's. Float cells summed over a
+// long same-sign run disagree across features by hundreds; read against one
+// shared total, a feature's empty right side inherits the difference and an
+// 800k-row label-sorted classification fit took that phantom cut at the root
+// of every tree from round three on (issue 549). The lane scan and the
+// scalar scan, which a monotone constraint routes to, both hold it.
+TEST_CASE("HistogramNodeSplitFinder: scores each feature against its own totals",
+          "[split][feature][totals]")
+{
+    SplitInput const node = disagreeing_totals_node();
+    TreeConfig       cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
+    SECTION("lane scan") {}
+    SECTION("scalar scan")
+    {
+        cfg.monotone_constraints = {-1, -1};
+    }
+    SplitOutput const s = HistogramNodeSplitFinder::find(node, cfg);
+
+    REQUIRE(s.valid);
+    CHECK(s.feature_id == feature_id_t{0});
+    CHECK(s.bin_id == bin_id_t{0});
+    CHECK(s.gain == weak_cut_gain(cfg));
+}
+
 TEST_CASE("HistogramNodeSplitFinder: picks the best feature across two features",
           "[split][feature]")
 {
@@ -346,18 +372,20 @@ bool scalar_scannable(SplitInput const &node, feature_id_t fid)
 }
 
 void scalar_scan_feature(SplitInput const &node, feature_id_t fid,
-                         HistCell const &totals, TreeConfig const &cfg,
-                         double node_score, SplitOutput &best)
+                         TreeConfig const &cfg, SplitOutput &best)
 {
-    Histogram const &hist       = node.hists[fid];
-    HistCell const  &missing    = hist.missing();
-    bool const       no_missing = missing.sum_grad == 0.0F && missing.sum_hess == 0.0F;
-    ScalarPrefix     p{.left_grad = 0.0,
-                       .left_hess = 0.0,
-                       .real_grad = totals.sum_grad - missing.sum_grad,
-                       .real_hess = totals.sum_hess - missing.sum_hess,
-                       .missing   = missing};
-    bin_id_t         b = 0;
+    Histogram const &hist   = node.hists[fid];
+    HistCell const   totals = hist.totals();
+    double const     node_score =
+        score(totals.sum_grad, totals.sum_hess, cfg.lambda_l1, cfg.lambda_l2);
+    HistCell const &missing    = hist.missing();
+    bool const      no_missing = missing.sum_grad == 0.0F && missing.sum_hess == 0.0F;
+    ScalarPrefix    p{.left_grad = 0.0,
+                      .left_hess = 0.0,
+                      .real_grad = totals.sum_grad - missing.sum_grad,
+                      .real_hess = totals.sum_hess - missing.sum_hess,
+                      .missing   = missing};
+    bin_id_t        b = 0;
     for (HistCell const &cell : hist.cut_cells())
     {
         p.left_grad += cell.sum_grad;
@@ -374,15 +402,12 @@ void scalar_scan_feature(SplitInput const &node, feature_id_t fid,
 
 SplitOutput scalar_scan(SplitInput const &node, TreeConfig const &cfg)
 {
-    HistCell const totals = cell_totals(node);
-    double const   node_score =
-        score(totals.sum_grad, totals.sum_hess, cfg.lambda_l1, cfg.lambda_l2);
     SplitOutput best;
     for (feature_id_t fid = 0; fid < node.hists.size(); ++fid)
     {
         if (scalar_scannable(node, fid))
         {
-            scalar_scan_feature(node, fid, totals, cfg, node_score, best);
+            scalar_scan_feature(node, fid, cfg, best);
         }
     }
     return best;

@@ -98,6 +98,18 @@ A device root carries a host row list only until the engine stages it; from begi
 
 - enforced by: [`Resident: a one-leaf tree on a view matches the host path`](../tests/unit/test_cuda_resident.cpp)
 
+### finder-reads-own-feature-totals
+
+Every feature's right side and node score are read from that feature's own histogram totals, never from another feature's. Float cells summed over a long same-sign run disagree across features by hundreds; read against one shared total, a feature's empty right side inherits the difference and an 800k-row label-sorted classification fit took that phantom cut at the root of every tree from round three on (issue 549). The lane scan and the scalar scan, which a monotone constraint routes to, both hold it.
+
+- enforced by: [`HistogramNodeSplitFinder: scores each feature against its own totals`](../tests/unit/test_split_node.cpp)
+
+### fit-holds-under-label-sorted-rows
+
+A classification fit over rows sorted by label grows every leaf the same rows grow shuffled. Float histogram cells summed over a long run of one class disagree across features by hundreds, and a finder that read one shared total took a phantom cut on an empty side at the root of every tree, so this matrix, the shape of issue 549's, fitted a constant in block order.
+
+- enforced by: [`test_label_sorted_rows_grow_the_trees_shuffled_rows_grow`](../python/tests/test_estimators.py)
+
 ### fit-id-gates-resident-reuse
 
 A row-narrowed view mints a FitId distinct from its parent's, and a copy shares one. Anything caching against a Dataset keys on these tokens, so an equal token means "the same fit" with no allocator caveat: the device resident state is armed for ONE FitId, and a token that compared equal across two different fits would leave the previous fit's labels, scores and rows live under the next one.
@@ -163,6 +175,12 @@ The plane is picked per fit from the node arena's size: below k_level_plane_aren
 The level plane fills a level's smaller children in one call and derives each larger child by subtracting its sibling from the parent's histograms. Whatever order the level fill zeroes, scatters and subtracts in, every small child's cells equal the node filled alone (bit for bit at one thread, where no partial arenas exist), a child with no rows carries no histograms and leaves its sibling the parent's cells untouched, and every other large child's cell is the parent's cell minus the small child's cell in float, once per cell.
 
 - enforced by: [`CpuHistogramEngine: the level fill matches the nodes filled alone`](../tests/unit/test_populate.cpp)
+
+### level-finder-reads-own-feature-totals
+
+The level finder reads each parent's right side and parent score from the feature's own histogram, so a feature whose float cells sum differently from its neighbours offers no phantom cut on an empty side.
+
+- enforced by: [`HistogramLevelSplitFinder: scores each feature against its own totals`](../tests/unit/test_split_level.cpp)
 
 ### level-finder-skips-empty-slots
 
