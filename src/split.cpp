@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <mdspan>
 #include <span>
 #include <vector>
@@ -168,6 +169,7 @@ inline void update_best_for_feature_for_level(LevelParents const &lp, feature_id
 inline constexpr size_t k_scan_lanes = 8;
 
 inline constexpr HistCell k_idle_cell{};
+inline constexpr int      k_unconstrained = 0;
 
 using lane_d = double __attribute__((ext_vector_type(k_scan_lanes)));
 using lane_i = int64_t __attribute__((ext_vector_type(k_scan_lanes)));
@@ -178,6 +180,8 @@ struct LaneRule
     double l2;
     double min_hess;
     double min_gain;
+    double lo = -std::numeric_limits<double>::infinity();
+    double hi = std::numeric_limits<double>::infinity();
 };
 
 inline LaneRule lane_rule(TreeConfig const &config)
@@ -186,6 +190,14 @@ inline LaneRule lane_rule(TreeConfig const &config)
             .l2       = config.lambda_l2,
             .min_hess = config.min_child_hess,
             .min_gain = config.min_gain_to_split};
+}
+
+inline LaneRule node_rule(SplitInput const &input, TreeConfig const &config)
+{
+    LaneRule rule = lane_rule(config);
+    rule.lo       = input.lo;
+    rule.hi       = input.hi;
+    return rule;
 }
 
 struct LaneSums
@@ -203,18 +215,22 @@ struct LaneGroup
     std::array<cell_view_t, k_scan_lanes>      after_cuts{};
     std::array<size_t, k_scan_lanes>           cuts{};
     std::array<feature_id_t, k_scan_lanes>     fids{};
-    size_t                                     n        = 0;
-    size_t                                     max_cuts = 0;
-    bool                                       two_dirs = false;
+    lane_d                                     direction = 0.0;
+    size_t                                     n         = 0;
+    size_t                                     max_cuts  = 0;
+    bool                                       two_dirs  = false;
+    bool                                       bounded   = false;
 
     void clear()
     {
         cells.fill(&k_idle_cell);
         after_cuts.fill({});
         cuts.fill(0);
-        n        = 0;
-        max_cuts = 0;
-        two_dirs = false;
+        direction = 0.0;
+        n         = 0;
+        max_cuts  = 0;
+        two_dirs  = false;
+        bounded   = false;
     }
 
     bool full() const
@@ -227,7 +243,7 @@ struct LaneGroup
         return *std::ranges::min_element(cuts);
     }
 
-    void add(feature_id_t fid, Histogram const &hist)
+    void add(feature_id_t fid, Histogram const &hist, int monotone)
     {
         cell_view_t const all = hist.all_cells();
         cells[n]              = all.data();
@@ -236,6 +252,8 @@ struct LaneGroup
         fids[n]               = fid;
         max_cuts              = std::max(max_cuts, cuts[n]);
         two_dirs              = two_dirs || !missing_empty(hist.missing());
+        direction[n]          = monotone;
+        bounded               = bounded || monotone != 0;
         ++n;
     }
 };
@@ -313,6 +331,10 @@ struct LanePrefix
 
 struct LaneCandidate
 {
+    lane_d grad_left;
+    lane_d hess_left;
+    lane_d grad_right;
+    lane_d hess_right;
     lane_i feasible;
     lane_d children;
 };
@@ -322,24 +344,48 @@ template <bool DefaultLeft>
 lane_candidate(LaneSums const &s, LanePrefix const &p, LaneRule const &rule,
                LaneCandidate &c)
 {
-    lane_d const none       = 0.0;
-    lane_d const grad_left  = p.left_grad + (DefaultLeft ? s.miss_grad : none);
-    lane_d const hess_left  = p.left_hess + (DefaultLeft ? s.miss_hess : none);
-    lane_d const grad_right = p.right_grad + (DefaultLeft ? none : s.miss_grad);
-    lane_d const hess_right = p.right_hess + (DefaultLeft ? none : s.miss_hess);
+    lane_d const none = 0.0;
+    c.grad_left       = p.left_grad + (DefaultLeft ? s.miss_grad : none);
+    c.hess_left       = p.left_hess + (DefaultLeft ? s.miss_hess : none);
+    c.grad_right      = p.right_grad + (DefaultLeft ? none : s.miss_grad);
+    c.hess_right      = p.right_hess + (DefaultLeft ? none : s.miss_hess);
     c.feasible =
-        p.active & ~((hess_left < rule.min_hess) | (hess_right < rule.min_hess));
-    lane_children_score(grad_left, hess_left, grad_right, hess_right, rule.l1, rule.l2,
-                        c.children);
+        p.active & ~((c.hess_left < rule.min_hess) | (c.hess_right < rule.min_hess));
+    lane_children_score(c.grad_left, c.hess_left, c.grad_right, c.hess_right, rule.l1,
+                        rule.l2, c.children);
 }
 
-template <bool DefaultLeft>
-[[gnu::always_inline]] inline void offer_direction(LaneBest &best, LaneSums const &s,
-                                                   LanePrefix const &p,
-                                                   LaneRule const &rule, int64_t b)
+[[gnu::always_inline]] inline void lane_bounded_weight(lane_d const &g, lane_d const &h,
+                                                       LaneRule const &rule, lane_d &w)
+{
+    lane_d t;
+    lane_l1_thresholded(g, rule.l1, t);
+    lane_d const d    = h + rule.l2;
+    lane_d const free = d > 0.0 ? -t / d : lane_d(0.0);
+    w = free < rule.lo ? lane_d(rule.lo) : (rule.hi < free ? lane_d(rule.hi) : free);
+}
+
+[[gnu::always_inline]] inline void
+keep_direction(LaneCandidate &c, lane_d const &direction, LaneRule const &rule)
+{
+    lane_d w_left;
+    lane_d w_right;
+    lane_bounded_weight(c.grad_left, c.hess_left, rule, w_left);
+    lane_bounded_weight(c.grad_right, c.hess_right, rule, w_right);
+    c.feasible &= ~(direction * (w_right - w_left) < 0.0);
+}
+
+template <bool DefaultLeft, bool Bounded>
+[[gnu::always_inline]] inline void
+offer_direction(LaneBest &best, LaneGroup const &g, LaneSums const &s,
+                LanePrefix const &p, LaneRule const &rule, int64_t b)
 {
     LaneCandidate c;
     lane_candidate<DefaultLeft>(s, p, rule, c);
+    if constexpr (Bounded)
+    {
+        keep_direction(c, g.direction, rule);
+    }
     best.offer(c.feasible, c.children - s.node_score, b, DefaultLeft, rule.min_gain);
 }
 
@@ -430,7 +476,7 @@ inline void lane_sums(LaneGroup const &g, LeftSums const &all_cuts,
     lane_sums(g, all_cuts, rule, s);
 }
 
-template <bool TwoDirs, bool AllLanes>
+template <bool TwoDirs, bool Bounded, bool AllLanes>
 [[gnu::always_inline]] inline void
 offer_cuts(LaneGroup const &g, LaneSums const &s, LeftSums const *left,
            LaneRule const &rule, CutRange range, LaneBest &best)
@@ -443,15 +489,16 @@ offer_cuts(LaneGroup const &g, LaneSums const &s, LeftSums const *left,
         p.left_hess  = left[b].hess;
         p.right_grad = s.real_grad - p.left_grad;
         p.right_hess = s.real_hess - p.left_hess;
-        offer_direction<true>(best, s, p, rule, static_cast<int64_t>(b));
+        offer_direction<true, Bounded>(best, g, s, p, rule, static_cast<int64_t>(b));
         if constexpr (TwoDirs)
         {
-            offer_direction<false>(best, s, p, rule, static_cast<int64_t>(b));
+            offer_direction<false, Bounded>(best, g, s, p, rule,
+                                            static_cast<int64_t>(b));
         }
     }
 }
 
-template <bool TwoDirs>
+template <bool TwoDirs, bool Bounded>
 [[gnu::always_inline]] inline void scan_lanes_body(LaneGroup const &g,
                                                    LaneRule const &rule, LaneBest &best)
 {
@@ -459,9 +506,10 @@ template <bool TwoDirs>
     LaneSums        s;
     sum_lanes(g, rule, left, s);
     size_t const shared = g.shared_cuts();
-    offer_cuts<TwoDirs, true>(g, s, left, rule, {.begin = 0, .end = shared}, best);
-    offer_cuts<TwoDirs, false>(g, s, left, rule, {.begin = shared, .end = g.max_cuts},
-                               best);
+    offer_cuts<TwoDirs, Bounded, true>(g, s, left, rule, {.begin = 0, .end = shared},
+                                       best);
+    offer_cuts<TwoDirs, Bounded, false>(g, s, left, rule,
+                                        {.begin = shared, .end = g.max_cuts}, best);
 }
 
 using lane_f = float __attribute__((ext_vector_type(k_scan_lanes)));
@@ -534,11 +582,24 @@ inline bool lanes_available()
 #endif
 }
 
-template <bool TwoDirs>
+template <bool TwoDirs, bool Bounded>
 BONSAI_LANE_TARGET void scan_lanes(LaneGroup const &g, LaneRule const &rule,
                                    LaneBest &best)
 {
-    scan_lanes_body<TwoDirs>(g, rule, best);
+    scan_lanes_body<TwoDirs, Bounded>(g, rule, best);
+}
+
+template <bool Bounded>
+inline void scan_group(LaneGroup const &g, LaneRule const &rule, LaneBest &best)
+{
+    if (g.two_dirs)
+    {
+        scan_lanes<true, Bounded>(g, rule, best);
+    }
+    else
+    {
+        scan_lanes<false, Bounded>(g, rule, best);
+    }
 }
 
 inline void merge_lanes(LaneBest const &lanes, std::span<feature_id_t const> fids,
@@ -564,13 +625,13 @@ inline void flush_lanes(LaneGroup &g, LaneRule const &rule, SplitOutput &best)
         return;
     }
     LaneBest lanes;
-    if (g.two_dirs)
+    if (g.bounded)
     {
-        scan_lanes<true>(g, rule, lanes);
+        scan_group<true>(g, rule, lanes);
     }
     else
     {
-        scan_lanes<false>(g, rule, lanes);
+        scan_group<false>(g, rule, lanes);
     }
     merge_lanes(lanes, std::span(g.fids).first(g.n), best);
     g.clear();
@@ -623,7 +684,7 @@ BONSAI_LANE_TARGET void accumulate_level(LevelParents const &lp, LevelGroup cons
         g.clear();
         for (size_t l = 0; l < lg.n; ++l)
         {
-            g.add(lg.fids[l], lp.frontier[p].hists[lg.fids[l]]);
+            g.add(lg.fids[l], lp.frontier[p].hists[lg.fids[l]], k_unconstrained);
         }
         LaneSums s;
         sum_lanes(g, rule, left, s);
@@ -687,100 +748,74 @@ SplitOutput scan_level_group(LevelParents const &lp, feature_id_t f0, feature_id
     return best;
 }
 
-inline bool scans_in_lanes(TreeConfig const &config, feature_id_t fid)
+inline void update_best_for_feature_for_node(SplitInput const &input, feature_id_t fid,
+                                             TreeConfig const &config,
+                                             SplitOutput      &best)
 {
-    return lanes_available() && monotone_constraint_of(config, fid) == 0;
-}
-
-inline void offer_cut(SplitInput const &input, feature_id_t fid, bin_id_t b,
-                      CellTotals const &left, CellTotals const &real, double node_score,
-                      TreeConfig const &config, SplitOutput &best)
-{
-    HistCell const &missing_cell = input.hists[fid].missing();
-    int const       mc           = monotone_constraint_of(config, fid);
-    size_t const    n_dirs       = missing_empty(missing_cell) ? 1 : 2;
-    for (size_t d = 0; d < n_dirs; ++d)
+    if (!node_scans(input, fid))
     {
-        bool const default_left = d == 0;
-        auto const c = score_candidate(left.grad, left.hess, missing_cell, real.grad,
-                                       real.hess, default_left, config);
-        if (!c.feasible)
+        return;
+    }
+    auto const    &hist         = input.hists[fid];
+    HistCell const node_totals  = hist.totals();
+    auto const    &missing_cell = hist.missing();
+    double const   node_score   = score(node_totals.sum_grad, node_totals.sum_hess,
+                                        config.lambda_l1, config.lambda_l2);
+    double const   real_grad    = node_totals.sum_grad - missing_cell.sum_grad;
+    double const   real_hess    = node_totals.sum_hess - missing_cell.sum_hess;
+
+    int const mc = monotone_constraint_of(config, fid);
+
+    size_t const n_dirs = missing_empty(missing_cell) ? 1 : 2;
+
+    double   left_grad = 0.0;
+    double   left_hess = 0.0;
+    bin_id_t b         = 0;
+    for (auto const &cell : hist.cut_cells())
+    {
+        left_grad += cell.sum_grad;
+        left_hess += cell.sum_hess;
+        for (size_t d = 0; d < n_dirs; ++d)
         {
-            continue;
-        }
-        if (mc != 0)
-        {
-            double const w_left =
-                bounded_leaf_weight(c.s.gL, c.s.hL, config, input.lo, input.hi);
-            double const w_right =
-                bounded_leaf_weight(c.s.gR, c.s.hR, config, input.lo, input.hi);
-            if (static_cast<double>(mc) * (w_right - w_left) < 0.0)
+            bool const default_left = d == 0;
+            auto const c = score_candidate(left_grad, left_hess, missing_cell,
+                                           real_grad, real_hess, default_left, config);
+            if (!c.feasible)
             {
                 continue;
             }
+            if (mc != 0)
+            {
+                double const w_left =
+                    bounded_leaf_weight(c.s.gL, c.s.hL, config, input.lo, input.hi);
+                double const w_right =
+                    bounded_leaf_weight(c.s.gR, c.s.hR, config, input.lo, input.hi);
+                if (static_cast<double>(mc) * (w_right - w_left) < 0.0)
+                {
+                    continue;
+                }
+            }
+            update_best(best, c.children_score - node_score, fid, b, default_left,
+                        config);
         }
-        update_best(best, c.children_score - node_score, fid, b, default_left, config);
+        ++b;
     }
-}
-
-// perf: The following scalar feature's totals accumulate inside this scan, on
-// adds the scoring leaves idle. Staging the left sums through the lane buffer
-// instead cost the M2 find +7.1% at 20k x 2000 with every feature constrained.
-inline HistCell
-update_best_for_feature_for_node(SplitInput const &input, feature_id_t fid,
-                                 HistCell const &totals, cell_view_t following,
-                                 TreeConfig const &config, SplitOutput &best)
-{
-    auto const  &hist         = input.hists[fid];
-    auto const  &missing_cell = hist.missing();
-    double const node_score =
-        score(totals.sum_grad, totals.sum_hess, config.lambda_l1, config.lambda_l2);
-    CellTotals const real{.grad = totals.sum_grad - missing_cell.sum_grad,
-                          .hess = totals.sum_hess - missing_cell.sum_hess};
-
-    cell_view_t const cuts   = hist.cut_cells();
-    size_t const      paired = std::min(cuts.size(), following.size());
-    CellTotals        left;
-    CellTotals        following_totals;
-    for (size_t b = 0; b < paired; ++b)
-    {
-        following_totals.add(following[b]);
-        left.add(cuts[b]);
-        offer_cut(input, fid, static_cast<bin_id_t>(b), left, real, node_score, config,
-                  best);
-    }
-    for (size_t b = paired; b < cuts.size(); ++b)
-    {
-        left.add(cuts[b]);
-        offer_cut(input, fid, static_cast<bin_id_t>(b), left, real, node_score, config,
-                  best);
-    }
-    for (HistCell const &cell : following.subspan(paired))
-    {
-        following_totals.add(cell);
-    }
-    return following_totals.to_cell();
-}
-
-inline feature_id_t next_scalar_feature(SplitInput const &input,
-                                        TreeConfig const &config, feature_id_t fid,
-                                        feature_id_t f1)
-{
-    while (fid < f1 && (!node_scans(input, fid) || scans_in_lanes(config, fid)))
-    {
-        ++fid;
-    }
-    return fid;
 }
 
 SplitOutput scan_features(SplitInput const &input, feature_id_t f0, feature_id_t f1,
                           TreeConfig const &config)
 {
-    LaneRule const rule = lane_rule(config);
-    SplitOutput    best;
+    SplitOutput best;
+    if (!lanes_available())
+    {
+        for (feature_id_t fid = f0; fid < f1; ++fid)
+        {
+            update_best_for_feature_for_node(input, fid, config, best);
+        }
+        return best;
+    }
+    LaneRule const rule = node_rule(input, config);
     LaneGroup      group;
-    HistCell       totals;
-    feature_id_t   summed = f1;
     group.clear();
     for (feature_id_t fid = f0; fid < f1; ++fid)
     {
@@ -788,25 +823,11 @@ SplitOutput scan_features(SplitInput const &input, feature_id_t f0, feature_id_t
         {
             continue;
         }
-        if (scans_in_lanes(config, fid))
+        group.add(fid, input.hists[fid], monotone_constraint_of(config, fid));
+        if (group.full())
         {
-            group.add(fid, input.hists[fid]);
-            if (group.full())
-            {
-                flush_lanes(group, rule, best);
-            }
-            continue;
+            flush_lanes(group, rule, best);
         }
-        flush_lanes(group, rule, best);
-        if (summed != fid)
-        {
-            totals = input.hists[fid].totals();
-        }
-        summed = next_scalar_feature(input, config, fid + 1, f1);
-        cell_view_t const following =
-            summed < f1 ? input.hists[summed].all_cells() : cell_view_t{};
-        totals = update_best_for_feature_for_node(input, fid, totals, following, config,
-                                                  best);
     }
     flush_lanes(group, rule, best);
     return best;

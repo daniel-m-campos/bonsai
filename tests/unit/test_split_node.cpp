@@ -38,15 +38,15 @@ TEST_CASE("HistogramNodeSplitFinder: picks the obvious cut on a single feature",
 // long same-sign run disagree across features by hundreds; read against one
 // shared total, a feature's empty right side inherits the difference and an
 // 800k-row label-sorted classification fit took that phantom cut at the root
-// of every tree from round three on (issue 549). The lane scan and the
-// scalar scan, which a monotone constraint routes to, both hold it.
+// of every tree from round three on (issue 549). The free lane scan and the
+// bounded one a monotone constraint selects both hold it.
 TEST_CASE("HistogramNodeSplitFinder: scores each feature against its own totals",
           "[split][feature][totals]")
 {
     SplitInput const node = disagreeing_totals_node();
     TreeConfig       cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
-    SECTION("lane scan") {}
-    SECTION("scalar scan")
+    SECTION("free lanes") {}
+    SECTION("bounded lanes")
     {
         cfg.monotone_constraints = {-1, -1};
     }
@@ -482,9 +482,9 @@ TEST_CASE("HistogramNodeSplitFinder: lanes match the scalar scan to the bit",
 }
 
 // INVARIANT: constrained-scan-matches-scalar-scan
-// A monotone constraint routes a feature off the lanes. Constrained and free
-// features interleave here under a leaf-value fence, and every node still
-// returns the reference scan's split to the bit.
+// A monotone constraint adds a bounded leaf weight test to its lane group.
+// Constrained and free features share groups here, half the nodes under leaf
+// value bounds, and every node returns the reference scan's split to the bit.
 TEST_CASE("HistogramNodeSplitFinder: constrained features match the scalar scan to "
           "the bit",
           "[split][edge]")
