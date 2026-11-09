@@ -20,6 +20,12 @@ A FitPlace narrows the calling thread to the team's first CPU for its scope and 
 
 - enforced by: [`the caller's place lasts its scope and the mask comes back`](../tests/unit/test_parallel.cpp)
 
+### constrained-scan-matches-scalar-scan
+
+A monotone constraint routes a feature off the lanes. Constrained and free features interleave here under a leaf-value fence, and every node still returns the reference scan's split to the bit.
+
+- enforced by: [`HistogramNodeSplitFinder: constrained features match the scalar scan to `](../tests/unit/test_split_node.cpp)
+
 ### cuda-training-bit-reproducible
 
 A device fit is bit-reproducible on one device and one build. Histogram cells are int64 fixed point, so every accumulation is an exact integer sum whatever order the atomics land in, and everything downstream of the fill already ran in a fixed order. Three fits of one dataset serialize to identical bytes on every device plane, with the device objective and with the host objective forced. Not claimed: cross-device, cross-toolkit, or host-vs-device equality, which stay tolerance-bound.
