@@ -557,10 +557,11 @@ inline LevelGroup level_group(LevelParents const &lp, feature_id_t f0, feature_i
 }
 
 template <bool TwoDirs>
-BONSAI_LANE_TARGET lane_d accumulate_level(LevelParents const &lp, LevelGroup const &lg,
-                                           LaneRule const &rule, lane_d *acc)
+BONSAI_LANE_TARGET void accumulate_level(LevelParents const &lp, LevelGroup const &lg,
+                                         LaneRule const &rule, lane_d *acc,
+                                         lane_d &sum_parent_score)
 {
-    lane_d sum_parent_score = 0.0;
+    sum_parent_score = 0.0;
     for (size_t const p : lp.populated)
     {
         LaneGroup g;
@@ -572,7 +573,6 @@ BONSAI_LANE_TARGET lane_d accumulate_level(LevelParents const &lp, LevelGroup co
         sum_parent_score += g.sums.node_score;
         accumulate_lanes_body<TwoDirs>(g, rule, acc);
     }
-    return sum_parent_score;
 }
 
 template <bool TwoDirs>
@@ -605,7 +605,8 @@ inline void scan_level_lanes(LevelParents const &lp, LevelGroup const &lg,
 {
     static thread_local std::vector<lane_d> acc;
     acc.assign(lg.max_cuts * (TwoDirs ? 2 : 1), lane_d(0.0));
-    lane_d const sum_parent_score = accumulate_level<TwoDirs>(lp, lg, rule, acc.data());
+    lane_d sum_parent_score;
+    accumulate_level<TwoDirs>(lp, lg, rule, acc.data(), sum_parent_score);
     offer_level<TwoDirs>(lg, acc.data(), sum_parent_score, rule, best);
 }
 
