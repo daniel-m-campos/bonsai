@@ -365,6 +365,16 @@ void scalar_offer(SplitOutput &best, ScalarChildren const &c, feature_id_t fid,
     offer_split(best, gain, fid, b, default_left, cfg);
 }
 
+bool keeps_direction(SplitInput const &node, ScalarChildren const &c, int direction,
+                     TreeConfig const &cfg)
+{
+    double const w_left =
+        bounded_leaf_weight(c.grad_left, c.hess_left, cfg, node.lo, node.hi);
+    double const w_right =
+        bounded_leaf_weight(c.grad_right, c.hess_right, cfg, node.lo, node.hi);
+    return static_cast<double>(direction) * (w_right - w_left) >= 0.0;
+}
+
 bool scalar_scannable(SplitInput const &node, feature_id_t fid)
 {
     return node.hists[fid].size() != 0 &&
@@ -385,16 +395,24 @@ void scalar_scan_feature(SplitInput const &node, feature_id_t fid,
                       .real_grad = totals.sum_grad - missing.sum_grad,
                       .real_hess = totals.sum_hess - missing.sum_hess,
                       .missing   = missing};
-    bin_id_t        b = 0;
+    int const       direction = monotone_constraint_of(cfg, fid);
+    bin_id_t        b         = 0;
+    auto const      offer     = [&](bool default_left)
+    {
+        ScalarChildren const c = scalar_children(p, default_left);
+        if (direction == 0 || keeps_direction(node, c, direction, cfg))
+        {
+            scalar_offer(best, c, fid, b, default_left, cfg, node_score);
+        }
+    };
     for (HistCell const &cell : hist.cut_cells())
     {
         p.left_grad += cell.sum_grad;
         p.left_hess += cell.sum_hess;
-        scalar_offer(best, scalar_children(p, true), fid, b, true, cfg, node_score);
+        offer(true);
         if (!no_missing)
         {
-            scalar_offer(best, scalar_children(p, false), fid, b, false, cfg,
-                         node_score);
+            offer(false);
         }
         ++b;
     }
@@ -461,4 +479,43 @@ TEST_CASE("HistogramNodeSplitFinder: lanes match the scalar scan to the bit",
         valid += want.valid ? 1 : 0;
     }
     CHECK(valid > 300);
+}
+
+// INVARIANT: constrained-scan-matches-scalar-scan
+// A monotone constraint routes a feature off the lanes. Constrained and free
+// features interleave here under a leaf-value fence, and every node still
+// returns the reference scan's split to the bit.
+TEST_CASE("HistogramNodeSplitFinder: constrained features match the scalar scan to "
+          "the bit",
+          "[split][edge]")
+{
+    std::mt19937 rng(549);
+    size_t       valid       = 0;
+    size_t       constrained = 0;
+    for (int trial = 0; trial < 400; ++trial)
+    {
+        SplitInput node = random_node(rng);
+        TreeConfig cfg  = random_rule(rng);
+        cfg.monotone_constraints.resize(node.hists.size());
+        for (int &direction : cfg.monotone_constraints)
+        {
+            direction = static_cast<int>(rng() % 3) - 1;
+        }
+        if (rng() % 2 == 0)
+        {
+            node.lo = -0.5;
+            node.hi = 0.25;
+        }
+        SplitOutput const          want = scalar_scan(node, cfg);
+        SplitOutput const          got  = HistogramNodeSplitFinder::find(node, cfg);
+        std::array<SplitOutput, 1> batched{};
+        HistogramNodeSplitFinder::find_parallel({&node, 1}, cfg, batched);
+        REQUIRE(same_split(got, want));
+        REQUIRE(same_split(batched[0], want));
+        valid += want.valid ? 1 : 0;
+        constrained +=
+            want.valid && monotone_constraint_of(cfg, want.feature_id) != 0 ? 1 : 0;
+    }
+    CHECK(valid > 300);
+    CHECK(constrained > 60);
 }
