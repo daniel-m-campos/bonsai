@@ -34,6 +34,24 @@ struct HistCell
     }
 };
 
+struct CellTotals
+{
+    double grad = 0.0;
+    double hess = 0.0;
+
+    void add(HistCell const &cell)
+    {
+        grad += cell.sum_grad;
+        hess += cell.sum_hess;
+    }
+
+    HistCell to_cell() const
+    {
+        return {.sum_grad = static_cast<float>(grad),
+                .sum_hess = static_cast<float>(hess)};
+    }
+};
+
 using cell_view_t = std::span<HistCell const>;
 
 // One node's per-feature cells, viewing memory it never owns: histograms are
@@ -91,15 +109,12 @@ class Histogram
     // apart, so a finder reads its own (invariants: finder-reads-own-feature-totals).
     HistCell totals() const
     {
-        double grad = 0.0;
-        double hess = 0.0;
+        CellTotals run;
         for (auto const &cell : cells_)
         {
-            grad += cell.sum_grad;
-            hess += cell.sum_hess;
+            run.add(cell);
         }
-        return {.sum_grad = static_cast<float>(grad),
-                .sum_hess = static_cast<float>(hess)};
+        return run.to_cell();
     }
 
     HistCell const &operator[](bin_id_t bin) const
@@ -145,25 +160,23 @@ class Histogram
     }
 
     // Fills `out[i] = sum of cut_cells()[0..i] inclusive` for
-    // i in [0, prefix_size()). Used by the level finder to get
-    // random-access left-side sums at every candidate bin.
-    void fill_prefix(std::span<HistCell> out) const
+    // i in [0, prefix_size()) and returns totals() off the same pass:
+    // the level finder's left sums and the feature's own totals.
+    HistCell fill_prefix(std::span<HistCell> out) const
     {
         assert(out.size() == prefix_size());
-        if (out.empty())
-        {
-            return;
-        }
-        double grad = 0.0;
-        double hess = 0.0;
-        size_t i    = 0;
+        CellTotals run;
+        size_t     i = 0;
         for (auto const &cell : cut_cells())
         {
-            grad     = grad + cell.sum_grad;
-            hess     = hess + cell.sum_hess;
-            out[i++] = {.sum_grad = static_cast<float>(grad),
-                        .sum_hess = static_cast<float>(hess)};
+            run.add(cell);
+            out[i++] = run.to_cell();
         }
+        for (auto const &cell : cells_.subspan(prefix_size()))
+        {
+            run.add(cell);
+        }
+        return run.to_cell();
     }
 
     // Accumulates one partial (the row-wise fill's per-thread scratch).
