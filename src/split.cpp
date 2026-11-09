@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <mdspan>
 #include <span>
 #include <vector>
@@ -97,60 +98,6 @@ inline bool node_scans(SplitInput const &input, feature_id_t fid)
            (input.allowed.empty() || input.allowed[fid] != 0);
 }
 
-inline void update_best_for_feature_for_node(SplitInput const &input, feature_id_t fid,
-                                             TreeConfig const &config,
-                                             SplitOutput      &best)
-{
-    if (!node_scans(input, fid))
-    {
-        return;
-    }
-    auto const    &hist         = input.hists[fid];
-    HistCell const node_totals  = hist.totals();
-    auto const    &missing_cell = hist.missing();
-    double const   node_score   = score(node_totals.sum_grad, node_totals.sum_hess,
-                                        config.lambda_l1, config.lambda_l2);
-    double const   real_grad    = node_totals.sum_grad - missing_cell.sum_grad;
-    double const   real_hess    = node_totals.sum_hess - missing_cell.sum_hess;
-
-    int const mc = monotone_constraint_of(config, fid);
-
-    size_t const n_dirs = missing_empty(missing_cell) ? 1 : 2;
-
-    double   left_grad = 0.0;
-    double   left_hess = 0.0;
-    bin_id_t b         = 0;
-    for (auto const &cell : hist.cut_cells())
-    {
-        left_grad += cell.sum_grad;
-        left_hess += cell.sum_hess;
-        for (size_t d = 0; d < n_dirs; ++d)
-        {
-            bool const default_left = d == 0;
-            auto const c = score_candidate(left_grad, left_hess, missing_cell,
-                                           real_grad, real_hess, default_left, config);
-            if (!c.feasible)
-            {
-                continue;
-            }
-            if (mc != 0)
-            {
-                double const w_left =
-                    bounded_leaf_weight(c.s.gL, c.s.hL, config, input.lo, input.hi);
-                double const w_right =
-                    bounded_leaf_weight(c.s.gR, c.s.hR, config, input.lo, input.hi);
-                if (static_cast<double>(mc) * (w_right - w_left) < 0.0)
-                {
-                    continue;
-                }
-            }
-            update_best(best, c.children_score - node_score, fid, b, default_left,
-                        config);
-        }
-        ++b;
-    }
-}
-
 inline void update_best_for_feature_for_level(LevelParents const &lp, feature_id_t fid,
                                               TreeConfig const &config,
                                               SplitOutput      &best)
@@ -178,9 +125,8 @@ inline void update_best_for_feature_for_level(LevelParents const &lp, feature_id
     for (size_t const p : lp.populated)
     {
         auto const    &hist    = lp.frontier[p].hists[fid];
-        HistCell const totals  = hist.totals();
         auto const    &missing = hist.missing();
-        hist.fill_prefix(std::span(&prefix[p, 0], n_bins));
+        HistCell const totals  = hist.fill_prefix(std::span(&prefix[p, 0], n_bins));
         parent_score[p] =
             score(totals.sum_grad, totals.sum_hess, config.lambda_l1, config.lambda_l2);
         sum_parent_score += parent_score[p];
@@ -254,9 +200,9 @@ struct LaneSums
 struct LaneGroup
 {
     std::array<HistCell const *, k_scan_lanes> cells{};
+    std::array<cell_view_t, k_scan_lanes>      after_cuts{};
     std::array<size_t, k_scan_lanes>           cuts{};
     std::array<feature_id_t, k_scan_lanes>     fids{};
-    LaneSums                                   sums{};
     size_t                                     n        = 0;
     size_t                                     max_cuts = 0;
     bool                                       two_dirs = false;
@@ -264,8 +210,8 @@ struct LaneGroup
     void clear()
     {
         cells.fill(&k_idle_cell);
+        after_cuts.fill({});
         cuts.fill(0);
-        sums     = {};
         n        = 0;
         max_cuts = 0;
         two_dirs = false;
@@ -276,23 +222,37 @@ struct LaneGroup
         return n == k_scan_lanes;
     }
 
-    void add(feature_id_t fid, Histogram const &hist, LaneRule const &rule)
+    void add(feature_id_t fid, Histogram const &hist)
     {
-        HistCell const  totals  = hist.totals();
-        HistCell const &missing = hist.missing();
-        cells[n]                = hist.cut_cells().data();
-        cuts[n]                 = hist.prefix_size();
-        fids[n]                 = fid;
-        sums.real_grad[n]       = totals.sum_grad - missing.sum_grad;
-        sums.real_hess[n]       = totals.sum_hess - missing.sum_hess;
-        sums.miss_grad[n]       = missing.sum_grad;
-        sums.miss_hess[n]       = missing.sum_hess;
-        sums.node_score[n] = score(totals.sum_grad, totals.sum_hess, rule.l1, rule.l2);
-        max_cuts           = std::max(max_cuts, cuts[n]);
-        two_dirs           = two_dirs || !missing_empty(missing);
+        cell_view_t const all = hist.all_cells();
+        cells[n]              = all.data();
+        after_cuts[n]         = all.subspan(hist.prefix_size());
+        cuts[n]               = hist.prefix_size();
+        fids[n]               = fid;
+        max_cuts              = std::max(max_cuts, cuts[n]);
+        two_dirs              = two_dirs || !missing_empty(hist.missing());
         ++n;
     }
 };
+
+// perf: The running left sums are stored per cut so a feature's totals fall
+// out of the pass that scores it; summing its cells in a pass of their own
+// first cost the M2 find +20 to +23% at 20k x 2000.
+struct LeftSums
+{
+    lane_d grad;
+    lane_d hess;
+};
+
+inline LeftSums *left_sums_buffer(size_t cuts)
+{
+    static thread_local std::vector<LeftSums> buffer;
+    if (buffer.size() < cuts)
+    {
+        buffer.resize(cuts);
+    }
+    return buffer.data();
+}
 
 struct LaneBest
 {
@@ -379,8 +339,7 @@ template <bool DefaultLeft>
 }
 
 [[gnu::always_inline]] inline void gather_cells(LaneGroup const &g, size_t b,
-                                                lane_d &cell_grad, lane_d &cell_hess,
-                                                lane_i &active)
+                                                lane_d &cell_grad, lane_d &cell_hess)
 {
     for (size_t l = 0; l < k_scan_lanes; ++l)
     {
@@ -388,23 +347,79 @@ template <bool DefaultLeft>
         HistCell const cell = g.cells[l][in ? b : 0];
         cell_grad[l]        = in ? cell.sum_grad : 0.0F;
         cell_hess[l]        = in ? cell.sum_hess : 0.0F;
-        active[l]           = in ? -1 : 0;
     }
+}
+
+[[gnu::always_inline]] inline void
+lanes_with_cut(std::array<size_t, k_scan_lanes> const &cuts, size_t b, lane_i &active)
+{
+    for (size_t l = 0; l < k_scan_lanes; ++l)
+    {
+        active[l] = b < cuts[l] ? -1 : 0;
+    }
+}
+
+[[gnu::always_inline]] inline void store_left_sums(LaneGroup const &g, LeftSums *left,
+                                                   LeftSums &all_cuts)
+{
+    LeftSums run{};
+    for (size_t b = 0; b < g.max_cuts; ++b)
+    {
+        lane_d cell_grad;
+        lane_d cell_hess;
+        gather_cells(g, b, cell_grad, cell_hess);
+        run.grad += cell_grad;
+        run.hess += cell_hess;
+        left[b] = run;
+    }
+    all_cuts = run;
+}
+
+inline void lane_sums(LaneGroup const &g, LeftSums const &all_cuts,
+                      LaneRule const &rule, LaneSums &s)
+{
+    s = {};
+    for (size_t l = 0; l < g.n; ++l)
+    {
+        double grad = all_cuts.grad[l];
+        double hess = all_cuts.hess[l];
+        for (HistCell const &cell : g.after_cuts[l])
+        {
+            grad += cell.sum_grad;
+            hess += cell.sum_hess;
+        }
+        HistCell const  totals{.sum_grad = static_cast<float>(grad),
+                               .sum_hess = static_cast<float>(hess)};
+        HistCell const &missing = g.after_cuts[l].back();
+        s.real_grad[l]          = totals.sum_grad - missing.sum_grad;
+        s.real_hess[l]          = totals.sum_hess - missing.sum_hess;
+        s.miss_grad[l]          = missing.sum_grad;
+        s.miss_hess[l]          = missing.sum_hess;
+        s.node_score[l] = score(totals.sum_grad, totals.sum_hess, rule.l1, rule.l2);
+    }
+}
+
+[[gnu::always_inline]] inline void sum_lanes(LaneGroup const &g, LaneRule const &rule,
+                                             LeftSums *left, LaneSums &s)
+{
+    LeftSums all_cuts;
+    store_left_sums(g, left, all_cuts);
+    lane_sums(g, all_cuts, rule, s);
 }
 
 template <bool TwoDirs>
 [[gnu::always_inline]] inline void scan_lanes_body(LaneGroup const &g,
                                                    LaneRule const &rule, LaneBest &best)
 {
-    LaneSums const &s = g.sums;
-    LanePrefix      p{};
+    LeftSums *const left = left_sums_buffer(g.max_cuts);
+    LaneSums        s;
+    sum_lanes(g, rule, left, s);
+    LanePrefix p;
     for (size_t b = 0; b < g.max_cuts; ++b)
     {
-        lane_d cell_grad;
-        lane_d cell_hess;
-        gather_cells(g, b, cell_grad, cell_hess, p.active);
-        p.left_grad += cell_grad;
-        p.left_hess += cell_hess;
+        lanes_with_cut(g.cuts, b, p.active);
+        p.left_grad  = left[b].grad;
+        p.left_hess  = left[b].hess;
         p.right_grad = s.real_grad - p.left_grad;
         p.right_hess = s.real_hess - p.left_hess;
         offer_direction<true>(best, s, p, rule, static_cast<int64_t>(b));
@@ -434,22 +449,16 @@ template <bool DefaultLeft>
 
 template <bool TwoDirs>
 [[gnu::always_inline]] inline void
-accumulate_lanes_body(LaneGroup const &g, LaneRule const &rule, lane_d *acc)
+accumulate_lanes_body(LaneGroup const &g, LaneSums const &s, LeftSums const *left,
+                      LaneRule const &rule, lane_d *acc)
 {
     constexpr size_t n_dirs = TwoDirs ? 2 : 1;
-    LaneSums const  &s      = g.sums;
-    LanePrefix       p{};
-    lane_d           sum_grad = 0.0;
-    lane_d           sum_hess = 0.0;
+    LanePrefix       p;
     for (size_t b = 0; b < g.max_cuts; ++b)
     {
-        lane_d cell_grad;
-        lane_d cell_hess;
-        gather_cells(g, b, cell_grad, cell_hess, p.active);
-        sum_grad += cell_grad;
-        sum_hess += cell_hess;
-        narrow_lanes(sum_grad, p.left_grad);
-        narrow_lanes(sum_hess, p.left_hess);
+        lanes_with_cut(g.cuts, b, p.active);
+        narrow_lanes(left[b].grad, p.left_grad);
+        narrow_lanes(left[b].hess, p.left_hess);
         p.right_grad = s.real_grad - p.left_grad;
         p.right_hess = s.real_hess - p.left_hess;
         accumulate_direction<true>(acc[b * n_dirs], s, p, rule);
@@ -561,17 +570,20 @@ BONSAI_LANE_TARGET void accumulate_level(LevelParents const &lp, LevelGroup cons
                                          LaneRule const &rule, lane_d *acc,
                                          lane_d &sum_parent_score)
 {
-    sum_parent_score = 0.0;
+    sum_parent_score     = 0.0;
+    LeftSums *const left = left_sums_buffer(lg.max_cuts);
     for (size_t const p : lp.populated)
     {
         LaneGroup g;
         g.clear();
         for (size_t l = 0; l < lg.n; ++l)
         {
-            g.add(lg.fids[l], lp.frontier[p].hists[lg.fids[l]], rule);
+            g.add(lg.fids[l], lp.frontier[p].hists[lg.fids[l]]);
         }
-        sum_parent_score += g.sums.node_score;
-        accumulate_lanes_body<TwoDirs>(g, rule, acc);
+        LaneSums s;
+        sum_lanes(g, rule, left, s);
+        sum_parent_score += s.node_score;
+        accumulate_lanes_body<TwoDirs>(g, s, left, rule, acc);
     }
 }
 
@@ -584,10 +596,7 @@ BONSAI_LANE_TARGET void offer_level(LevelGroup const &lg, lane_d const *acc,
     for (size_t b = 0; b < lg.max_cuts; ++b)
     {
         lane_i active;
-        for (size_t l = 0; l < k_scan_lanes; ++l)
-        {
-            active[l] = b < lg.cuts[l] ? -1 : 0;
-        }
+        lanes_with_cut(lg.cuts, b, active);
         auto const bin = static_cast<int64_t>(b);
         best.offer(active, acc[b * n_dirs] - sum_parent_score, bin, true,
                    rule.min_gain);
@@ -633,11 +642,90 @@ SplitOutput scan_level_group(LevelParents const &lp, feature_id_t f0, feature_id
     return best;
 }
 
-inline bool scans_in_lanes(SplitInput const &input, feature_id_t fid,
-                           TreeConfig const &config)
+inline bool scans_in_lanes(TreeConfig const &config, feature_id_t fid)
 {
-    return lanes_available() && monotone_constraint_of(config, fid) == 0 &&
-           node_scans(input, fid);
+    return lanes_available() && monotone_constraint_of(config, fid) == 0;
+}
+
+inline void offer_cut(SplitInput const &input, feature_id_t fid, bin_id_t b,
+                      CellTotals const &left, CellTotals const &real, double node_score,
+                      TreeConfig const &config, SplitOutput &best)
+{
+    HistCell const &missing_cell = input.hists[fid].missing();
+    int const       mc           = monotone_constraint_of(config, fid);
+    size_t const    n_dirs       = missing_empty(missing_cell) ? 1 : 2;
+    for (size_t d = 0; d < n_dirs; ++d)
+    {
+        bool const default_left = d == 0;
+        auto const c = score_candidate(left.grad, left.hess, missing_cell, real.grad,
+                                       real.hess, default_left, config);
+        if (!c.feasible)
+        {
+            continue;
+        }
+        if (mc != 0)
+        {
+            double const w_left =
+                bounded_leaf_weight(c.s.gL, c.s.hL, config, input.lo, input.hi);
+            double const w_right =
+                bounded_leaf_weight(c.s.gR, c.s.hR, config, input.lo, input.hi);
+            if (static_cast<double>(mc) * (w_right - w_left) < 0.0)
+            {
+                continue;
+            }
+        }
+        update_best(best, c.children_score - node_score, fid, b, default_left, config);
+    }
+}
+
+// perf: The following scalar feature's totals accumulate inside this scan, on
+// adds the scoring leaves idle. Staging the left sums through the lane buffer
+// instead cost the M2 find +7.1% at 20k x 2000 with every feature constrained.
+inline HistCell
+update_best_for_feature_for_node(SplitInput const &input, feature_id_t fid,
+                                 HistCell const &totals, cell_view_t following,
+                                 TreeConfig const &config, SplitOutput &best)
+{
+    auto const  &hist         = input.hists[fid];
+    auto const  &missing_cell = hist.missing();
+    double const node_score =
+        score(totals.sum_grad, totals.sum_hess, config.lambda_l1, config.lambda_l2);
+    CellTotals const real{.grad = totals.sum_grad - missing_cell.sum_grad,
+                          .hess = totals.sum_hess - missing_cell.sum_hess};
+
+    cell_view_t const cuts   = hist.cut_cells();
+    size_t const      paired = std::min(cuts.size(), following.size());
+    CellTotals        left;
+    CellTotals        following_totals;
+    for (size_t b = 0; b < paired; ++b)
+    {
+        following_totals.add(following[b]);
+        left.add(cuts[b]);
+        offer_cut(input, fid, static_cast<bin_id_t>(b), left, real, node_score, config,
+                  best);
+    }
+    for (size_t b = paired; b < cuts.size(); ++b)
+    {
+        left.add(cuts[b]);
+        offer_cut(input, fid, static_cast<bin_id_t>(b), left, real, node_score, config,
+                  best);
+    }
+    for (HistCell const &cell : following.subspan(paired))
+    {
+        following_totals.add(cell);
+    }
+    return following_totals.to_cell();
+}
+
+inline feature_id_t next_scalar_feature(SplitInput const &input,
+                                        TreeConfig const &config, feature_id_t fid,
+                                        feature_id_t f1)
+{
+    while (fid < f1 && (!node_scans(input, fid) || scans_in_lanes(config, fid)))
+    {
+        ++fid;
+    }
+    return fid;
 }
 
 SplitOutput scan_features(SplitInput const &input, feature_id_t f0, feature_id_t f1,
@@ -646,12 +734,18 @@ SplitOutput scan_features(SplitInput const &input, feature_id_t f0, feature_id_t
     LaneRule const rule = lane_rule(config);
     SplitOutput    best;
     LaneGroup      group;
+    HistCell       totals;
+    feature_id_t   summed = f1;
     group.clear();
     for (feature_id_t fid = f0; fid < f1; ++fid)
     {
-        if (scans_in_lanes(input, fid, config))
+        if (!node_scans(input, fid))
         {
-            group.add(fid, input.hists[fid], rule);
+            continue;
+        }
+        if (scans_in_lanes(config, fid))
+        {
+            group.add(fid, input.hists[fid]);
             if (group.full())
             {
                 flush_lanes(group, rule, best);
@@ -659,7 +753,15 @@ SplitOutput scan_features(SplitInput const &input, feature_id_t f0, feature_id_t
             continue;
         }
         flush_lanes(group, rule, best);
-        update_best_for_feature_for_node(input, fid, config, best);
+        if (summed != fid)
+        {
+            totals = input.hists[fid].totals();
+        }
+        summed = next_scalar_feature(input, config, fid + 1, f1);
+        cell_view_t const following =
+            summed < f1 ? input.hists[summed].all_cells() : cell_view_t{};
+        totals = update_best_for_feature_for_node(input, fid, totals, following, config,
+                                                  best);
     }
     flush_lanes(group, rule, best);
     return best;

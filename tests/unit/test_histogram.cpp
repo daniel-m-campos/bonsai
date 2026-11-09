@@ -1,6 +1,10 @@
+#include <bit>
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -195,6 +199,28 @@ TEST_CASE("Histogram: fill_prefix on degenerate hist (prefix_size = 0) is a no-o
     std::vector<HistCell> prefix; // empty, matches prefix_size() == 0
     hist.fill_prefix(prefix);     // must not assert / crash
     CHECK(prefix.empty());
+}
+
+TEST_CASE("Histogram: fill_prefix returns the totals to the bit", "[histogram][prefix]")
+{
+    std::mt19937                          rng(549);
+    std::uniform_real_distribution<float> exponent(-6.0F, 6.0F);
+    auto const draw = [&] { return std::pow(10.0F, exponent(rng)); };
+    for (size_t n_bins = 1; n_bins <= 64; ++n_bins)
+    {
+        Histogram hist{n_bins};
+        for (size_t b = 0; b < n_bins; ++b)
+        {
+            hist.add(static_cast<bin_id_t>(b), b % 3 == 0 ? -draw() : draw(), draw());
+        }
+        std::vector<HistCell> prefix(hist.prefix_size());
+        HistCell const        returned = hist.fill_prefix(prefix);
+        HistCell const        totals   = hist.totals();
+        CHECK(std::bit_cast<uint32_t>(returned.sum_grad) ==
+              std::bit_cast<uint32_t>(totals.sum_grad));
+        CHECK(std::bit_cast<uint32_t>(returned.sum_hess) ==
+              std::bit_cast<uint32_t>(totals.sum_hess));
+    }
 }
 
 TEST_CASE("HistBlockPool: a thread's front cache is freed on exit, not dropped",
