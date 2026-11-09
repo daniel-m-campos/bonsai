@@ -833,11 +833,25 @@ bool cannot_split(SplitInput const &input, TreeConfig const &config)
 
 constexpr size_t k_scan_ranges_per_thread = 4;
 
+size_t lane_groups(size_t n_features)
+{
+    return (n_features + k_scan_lanes - 1) / k_scan_lanes;
+}
+
 size_t scan_ranges(size_t n_features)
 {
     size_t const units =
         static_cast<size_t>(parallel::n_threads()) * k_scan_ranges_per_thread;
-    return std::max<size_t>(1, std::min(n_features / k_scan_lanes, units));
+    return std::max<size_t>(1, std::min(lane_groups(n_features), units));
+}
+
+// perf: A range starts on a lane group, so only a node's last range ends in a
+// partly filled one; 2000 features in 48 even ranges scanned 288 groups
+// against 250.
+feature_id_t range_begin(size_t r, size_t ranges, size_t n_features)
+{
+    size_t const group = r * lane_groups(n_features) / ranges;
+    return static_cast<feature_id_t>(std::min(n_features, group * k_scan_lanes));
 }
 
 } // namespace
@@ -862,21 +876,20 @@ void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
     size_t const ranges = scan_ranges(nodes.empty() ? 0 : nodes.front().hists.size());
     partials.assign(n * ranges, SplitOutput{});
     SplitOutput *const part_ptr = partials.data();
-    parallel::for_each_index(
-        n * ranges,
-        [&, part_ptr](size_t u)
-        {
-            SplitInput const &input = nodes[u / ranges];
-            if (cannot_split(input, config))
-            {
-                return;
-            }
-            size_t const nf = input.hists.size();
-            size_t const r  = u % ranges;
-            part_ptr[u] =
-                scan_features(input, static_cast<feature_id_t>(r * nf / ranges),
-                              static_cast<feature_id_t>((r + 1) * nf / ranges), config);
-        });
+    parallel::for_each_index(n * ranges,
+                             [&, part_ptr](size_t u)
+                             {
+                                 SplitInput const &input = nodes[u / ranges];
+                                 if (cannot_split(input, config))
+                                 {
+                                     return;
+                                 }
+                                 size_t const nf = input.hists.size();
+                                 size_t const r  = u % ranges;
+                                 part_ptr[u]     = scan_features(
+                                     input, range_begin(r, ranges, nf),
+                                     range_begin(r + 1, ranges, nf), config);
+                             });
     for (size_t i = 0; i < n; ++i)
     {
         out[i] = reduce_in_feature_order({part_ptr + (i * ranges), ranges});
@@ -902,7 +915,7 @@ SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
     feature_id_t const n_features = lp.front().hists.size();
     if (lanes_available())
     {
-        size_t const groups = (n_features + k_scan_lanes - 1) / k_scan_lanes;
+        size_t const             groups = lane_groups(n_features);
         std::vector<SplitOutput> per_group(groups);
         parallel::for_each_index(
             groups,
