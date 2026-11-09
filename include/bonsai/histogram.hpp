@@ -86,9 +86,9 @@ class Histogram
         return cells_.size();
     }
 
-    // Sum over all cells (missing included). Node-level totals are the
-    // same for every feature, so callers compute this once per node
-    // instead of the histogram carrying running totals in add().
+    // Sum over all cells (missing included), in double, rounded once. Float
+    // cells summed over a long same-sign run put two features' totals hundreds
+    // apart, so a finder reads its own (invariants: finder-reads-own-feature-totals).
     HistCell totals() const
     {
         double grad = 0.0;

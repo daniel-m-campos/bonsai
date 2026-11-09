@@ -35,9 +35,10 @@ SplitInput const &populated_front(FrontierInput frontier)
 }
 
 ParentScan parent_scan(SplitInput const &parent, feature_id_t fid,
-                       HistCell const &totals, TreeConfig const &cfg)
+                       TreeConfig const &cfg)
 {
     Histogram const &hist    = parent.hists[fid];
+    HistCell const   totals  = hist.totals();
     HistCell const  &missing = hist.missing();
     ParentScan       scan{.prefix       = std::vector<HistCell>(hist.prefix_size()),
                           .missing      = missing,
@@ -69,8 +70,7 @@ double children_or_parent(ParentScan const &p, size_t b, bool default_left,
 }
 
 SplitOutput scalar_level_feature(FrontierInput frontier, feature_id_t fid,
-                                 std::vector<HistCell> const &totals,
-                                 TreeConfig const            &cfg)
+                                 TreeConfig const &cfg)
 {
     SplitOutput  best;
     size_t const n_bins = populated_front(frontier).hists[fid].prefix_size();
@@ -87,7 +87,7 @@ SplitOutput scalar_level_feature(FrontierInput frontier, feature_id_t fid,
         {
             continue;
         }
-        scans.push_back(parent_scan(frontier[p], fid, totals[p], cfg));
+        scans.push_back(parent_scan(frontier[p], fid, cfg));
         sum_parent_score += scans.back().parent_score;
         HistCell const &m = scans.back().missing;
         two_dirs          = two_dirs || m.sum_grad != 0.0F || m.sum_hess != 0.0F;
@@ -110,11 +110,6 @@ SplitOutput scalar_level_feature(FrontierInput frontier, feature_id_t fid,
 
 SplitOutput scalar_level_scan(FrontierInput frontier, TreeConfig const &cfg)
 {
-    std::vector<HistCell> totals(frontier.size());
-    for (size_t p = 0; p < frontier.size(); ++p)
-    {
-        totals[p] = cell_totals(frontier[p]);
-    }
     SplitOutput best;
     if (std::ranges::all_of(frontier,
                             [](SplitInput const &p) { return p.hists.empty(); }))
@@ -123,7 +118,7 @@ SplitOutput scalar_level_scan(FrontierInput frontier, TreeConfig const &cfg)
     }
     for (feature_id_t fid = 0; fid < populated_front(frontier).hists.size(); ++fid)
     {
-        SplitOutput const mine = scalar_level_feature(frontier, fid, totals, cfg);
+        SplitOutput const mine = scalar_level_feature(frontier, fid, cfg);
         if (mine.valid && mine.gain > best.gain)
         {
             best = mine;
@@ -199,6 +194,25 @@ TEST_CASE("HistogramLevelSplitFinder: single-parent frontier reproduces node fin
     CHECK(level_s.bin_id == node_s.bin_id);
     CHECK(level_s.default_left == node_s.default_left);
     CHECK(level_s.gain == node_s.gain);
+}
+
+// INVARIANT: level-finder-reads-own-feature-totals
+// The level finder reads each parent's right side and parent score from the
+// feature's own histogram, so a feature whose float cells sum differently
+// from its neighbours offers no phantom cut on an empty side.
+TEST_CASE("HistogramLevelSplitFinder: scores each feature against its own totals",
+          "[split][level][totals]")
+{
+    std::array<SplitInput, 2> frontier{disagreeing_totals_node(),
+                                       disagreeing_totals_node()};
+    TreeConfig const          cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
+
+    SplitOutput const s = HistogramLevelSplitFinder::find(frontier, cfg);
+
+    REQUIRE(s.valid);
+    CHECK(s.feature_id == feature_id_t{0});
+    CHECK(s.bin_id == bin_id_t{0});
+    CHECK(s.gain == 2.0 * weak_cut_gain(cfg));
 }
 
 TEST_CASE("HistogramLevelSplitFinder: sums per-parent gains across the frontier",

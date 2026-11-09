@@ -80,6 +80,38 @@ def test_random_seed_varies_feature_fraction_draws():
     np.testing.assert_array_equal(fit(1), fit(1))
 
 
+# INVARIANT: fit-holds-under-label-sorted-rows
+# A classification fit over rows sorted by label grows every leaf the same
+# rows grow shuffled. Float histogram cells summed over a long run of one
+# class disagree across features by hundreds, and a finder that read one
+# shared total took a phantom cut on an empty side at the root of every tree,
+# so this matrix, the shape of issue 549's, fitted a constant in block order.
+def test_label_sorted_rows_grow_the_trees_shuffled_rows_grow():
+    """The class share is 30%: a gradient that is a dyadic fraction (25%
+    positives, 0.25 and -0.75) sums exactly in float and never rounds."""
+    rng = np.random.default_rng(1)
+    n = 100_000
+    cols = [rng.normal(39, 15, n).clip(7, 85).round(), rng.gamma(2.0, 600.0, n).round()]
+    cols += [rng.integers(0, 6, n) for _ in range(13)]
+    for _ in range(2):
+        delay = rng.exponential(15.0, n)
+        delay[rng.random(n) < 0.0004] = np.nan
+        cols.append(delay)
+    cols += [rng.integers(0, k, n) for k in (2, 2, 3, 3)]
+    X = np.column_stack(cols).astype(np.float32)
+    n_pos = int(0.3 * n)
+    y = np.r_[np.zeros(n - n_pos), np.ones(n_pos)].astype(np.int64)
+    perm = rng.permutation(n)
+
+    def splits(Xf, yf):
+        est = bonsai.BonsaiClassifier(n_iters=10, learning_rate=0.1, max_leaves=31, n_threads=4)
+        return int(np.asarray(est.fit(Xf, yf).importance("split")).sum())
+
+    shuffled = splits(X[perm], y[perm])
+    assert shuffled == 10 * 30
+    assert splits(X, y) == shuffled
+
+
 def test_sample_weight_ones_is_identity():
     """Uniform weights of 1.0 multiply every gradient/hessian by 1 — the model
     must be identical to fitting with no weights at all."""

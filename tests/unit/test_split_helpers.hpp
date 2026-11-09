@@ -38,12 +38,32 @@ inline SplitInput obvious_cut_node()
     return node_of(obvious_cut_histogram());
 }
 
-// The node totals as the finder reads them: narrowed to the cell width.
-inline HistCell cell_totals(SplitInput const &node)
+// Two features whose cells sum to different totals, as float cells do after a
+// long same-sign run (an 800k-row label-sorted fit read a 5-bin feature at
+// G = 410 where the 81-bin feature read 18). Feature 0 holds a weak cut at
+// bin 0 with totals (0, 2); feature 1 holds (-3, 0.5) twice, totals (-6, 1),
+// and its cut at bin 1 leaves no row on the right. Read against feature 0's
+// totals that empty right side would carry (+6, 1) and score 36 against the
+// weak cut's 0.01; read against its own totals it is infeasible.
+inline SplitInput disagreeing_totals_node()
 {
-    NodeTotals const t = node.totals();
-    return {.sum_grad = static_cast<float>(t.sum_grad),
-            .sum_hess = static_cast<float>(t.sum_hess)};
+    Histogram h0{3};
+    h0.add(0, -0.1, 1.0);
+    h0.add(1, +0.1, 1.0);
+    Histogram h1{3};
+    h1.add(0, -3.0, 0.5);
+    h1.add(1, -3.0, 0.5);
+    SplitInput node{.hists = {}, .rows = {}};
+    node.hists.push_back(std::move(h0));
+    node.hists.push_back(std::move(h1));
+    return node;
+}
+
+inline double weak_cut_gain(TreeConfig const &cfg)
+{
+    double const g = 0.1F;
+    return score(-g, 1.0, cfg.lambda_l2) + score(+g, 1.0, cfg.lambda_l2) -
+           score(0.0, 2.0, cfg.lambda_l2);
 }
 
 // The finder's best update: strictly greater, at or above min_gain_to_split,
