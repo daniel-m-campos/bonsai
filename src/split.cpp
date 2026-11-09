@@ -222,6 +222,11 @@ struct LaneGroup
         return n == k_scan_lanes;
     }
 
+    size_t shared_cuts() const
+    {
+        return *std::ranges::min_element(cuts);
+    }
+
     void add(feature_id_t fid, Histogram const &hist)
     {
         cell_view_t const all = hist.all_cells();
@@ -338,41 +343,59 @@ template <bool DefaultLeft>
     best.offer(c.feasible, c.children - s.node_score, b, DefaultLeft, rule.min_gain);
 }
 
+template <bool AllLanes>
 [[gnu::always_inline]] inline void gather_cells(LaneGroup const &g, size_t b,
                                                 lane_d &cell_grad, lane_d &cell_hess)
 {
     for (size_t l = 0; l < k_scan_lanes; ++l)
     {
-        bool const     in   = b < g.cuts[l];
+        bool const     in   = AllLanes || b < g.cuts[l];
         HistCell const cell = g.cells[l][in ? b : 0];
         cell_grad[l]        = in ? cell.sum_grad : 0.0F;
         cell_hess[l]        = in ? cell.sum_hess : 0.0F;
     }
 }
 
+template <bool AllLanes>
 [[gnu::always_inline]] inline void
 lanes_with_cut(std::array<size_t, k_scan_lanes> const &cuts, size_t b, lane_i &active)
 {
     for (size_t l = 0; l < k_scan_lanes; ++l)
     {
-        active[l] = b < cuts[l] ? -1 : 0;
+        active[l] = AllLanes || b < cuts[l] ? -1 : 0;
     }
 }
 
-[[gnu::always_inline]] inline void store_left_sums(LaneGroup const &g, LeftSums *left,
-                                                   LeftSums &all_cuts)
+struct CutRange
 {
-    LeftSums run{};
-    for (size_t b = 0; b < g.max_cuts; ++b)
+    size_t begin;
+    size_t end;
+};
+
+template <bool AllLanes>
+[[gnu::always_inline]] inline void add_left_sums(LaneGroup const &g, CutRange range,
+                                                 LeftSums *left, LeftSums &run)
+{
+    for (size_t b = range.begin; b < range.end; ++b)
     {
         lane_d cell_grad;
         lane_d cell_hess;
-        gather_cells(g, b, cell_grad, cell_hess);
+        gather_cells<AllLanes>(g, b, cell_grad, cell_hess);
         run.grad += cell_grad;
         run.hess += cell_hess;
         left[b] = run;
     }
-    all_cuts = run;
+}
+
+// perf: Cuts every lane holds gather with no per-lane test; the tested gather
+// compiles to a branch per lane on x86, 87 to 125 instructions a cut.
+[[gnu::always_inline]] inline void store_left_sums(LaneGroup const &g, LeftSums *left,
+                                                   LeftSums &all_cuts)
+{
+    size_t const shared = g.shared_cuts();
+    all_cuts            = {};
+    add_left_sums<true>(g, {.begin = 0, .end = shared}, left, all_cuts);
+    add_left_sums<false>(g, {.begin = shared, .end = g.max_cuts}, left, all_cuts);
 }
 
 inline void lane_sums(LaneGroup const &g, LeftSums const &all_cuts,
@@ -407,17 +430,15 @@ inline void lane_sums(LaneGroup const &g, LeftSums const &all_cuts,
     lane_sums(g, all_cuts, rule, s);
 }
 
-template <bool TwoDirs>
-[[gnu::always_inline]] inline void scan_lanes_body(LaneGroup const &g,
-                                                   LaneRule const &rule, LaneBest &best)
+template <bool TwoDirs, bool AllLanes>
+[[gnu::always_inline]] inline void
+offer_cuts(LaneGroup const &g, LaneSums const &s, LeftSums const *left,
+           LaneRule const &rule, CutRange range, LaneBest &best)
 {
-    LeftSums *const left = left_sums_buffer(g.max_cuts);
-    LaneSums        s;
-    sum_lanes(g, rule, left, s);
     LanePrefix p;
-    for (size_t b = 0; b < g.max_cuts; ++b)
+    for (size_t b = range.begin; b < range.end; ++b)
     {
-        lanes_with_cut(g.cuts, b, p.active);
+        lanes_with_cut<AllLanes>(g.cuts, b, p.active);
         p.left_grad  = left[b].grad;
         p.left_hess  = left[b].hess;
         p.right_grad = s.real_grad - p.left_grad;
@@ -428,6 +449,19 @@ template <bool TwoDirs>
             offer_direction<false>(best, s, p, rule, static_cast<int64_t>(b));
         }
     }
+}
+
+template <bool TwoDirs>
+[[gnu::always_inline]] inline void scan_lanes_body(LaneGroup const &g,
+                                                   LaneRule const &rule, LaneBest &best)
+{
+    LeftSums *const left = left_sums_buffer(g.max_cuts);
+    LaneSums        s;
+    sum_lanes(g, rule, left, s);
+    size_t const shared = g.shared_cuts();
+    offer_cuts<TwoDirs, true>(g, s, left, rule, {.begin = 0, .end = shared}, best);
+    offer_cuts<TwoDirs, false>(g, s, left, rule, {.begin = shared, .end = g.max_cuts},
+                               best);
 }
 
 using lane_f = float __attribute__((ext_vector_type(k_scan_lanes)));
@@ -447,16 +481,16 @@ template <bool DefaultLeft>
     acc += c.feasible ? c.children : s.node_score;
 }
 
-template <bool TwoDirs>
+template <bool TwoDirs, bool AllLanes>
 [[gnu::always_inline]] inline void
-accumulate_lanes_body(LaneGroup const &g, LaneSums const &s, LeftSums const *left,
-                      LaneRule const &rule, lane_d *acc)
+accumulate_cuts(LaneGroup const &g, LaneSums const &s, LeftSums const *left,
+                LaneRule const &rule, CutRange range, lane_d *acc)
 {
     constexpr size_t n_dirs = TwoDirs ? 2 : 1;
     LanePrefix       p;
-    for (size_t b = 0; b < g.max_cuts; ++b)
+    for (size_t b = range.begin; b < range.end; ++b)
     {
-        lanes_with_cut(g.cuts, b, p.active);
+        lanes_with_cut<AllLanes>(g.cuts, b, p.active);
         narrow_lanes(left[b].grad, p.left_grad);
         narrow_lanes(left[b].hess, p.left_hess);
         p.right_grad = s.real_grad - p.left_grad;
@@ -467,6 +501,17 @@ accumulate_lanes_body(LaneGroup const &g, LaneSums const &s, LeftSums const *lef
             accumulate_direction<false>(acc[(b * n_dirs) + 1], s, p, rule);
         }
     }
+}
+
+template <bool TwoDirs>
+[[gnu::always_inline]] inline void
+accumulate_lanes_body(LaneGroup const &g, LaneSums const &s, LeftSums const *left,
+                      LaneRule const &rule, lane_d *acc)
+{
+    size_t const shared = g.shared_cuts();
+    accumulate_cuts<TwoDirs, true>(g, s, left, rule, {.begin = 0, .end = shared}, acc);
+    accumulate_cuts<TwoDirs, false>(g, s, left, rule,
+                                    {.begin = shared, .end = g.max_cuts}, acc);
 }
 
 #ifdef __x86_64__
@@ -596,7 +641,7 @@ BONSAI_LANE_TARGET void offer_level(LevelGroup const &lg, lane_d const *acc,
     for (size_t b = 0; b < lg.max_cuts; ++b)
     {
         lane_i active;
-        lanes_with_cut(lg.cuts, b, active);
+        lanes_with_cut<false>(lg.cuts, b, active);
         auto const bin = static_cast<int64_t>(b);
         best.offer(active, acc[b * n_dirs] - sum_parent_score, bin, true,
                    rule.min_gain);
