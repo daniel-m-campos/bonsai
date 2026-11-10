@@ -458,6 +458,20 @@ SplitInput random_node(std::mt19937 &rng)
     return node;
 }
 
+void constrain_at_random(SplitInput &node, TreeConfig &cfg, std::mt19937 &rng)
+{
+    cfg.monotone_constraints.resize(node.hists.size());
+    for (int &direction : cfg.monotone_constraints)
+    {
+        direction = static_cast<int>(rng() % 3) - 1;
+    }
+    if (rng() % 2 == 0)
+    {
+        node.lo = -0.5;
+        node.hi = 0.25;
+    }
+}
+
 } // namespace
 
 // INVARIANT: lane-scan-matches-scalar-scan
@@ -496,16 +510,7 @@ TEST_CASE("HistogramNodeSplitFinder: constrained features match the scalar scan 
     {
         SplitInput node = random_node(rng);
         TreeConfig cfg  = random_rule(rng);
-        cfg.monotone_constraints.resize(node.hists.size());
-        for (int &direction : cfg.monotone_constraints)
-        {
-            direction = static_cast<int>(rng() % 3) - 1;
-        }
-        if (rng() % 2 == 0)
-        {
-            node.lo = -0.5;
-            node.hi = 0.25;
-        }
+        constrain_at_random(node, cfg, rng);
         SplitOutput const          want = scalar_scan(node, cfg);
         SplitOutput const          got  = HistogramNodeSplitFinder::find(node, cfg);
         std::array<SplitOutput, 1> batched{};
@@ -518,4 +523,36 @@ TEST_CASE("HistogramNodeSplitFinder: constrained features match the scalar scan 
     }
     CHECK(valid > 300);
     CHECK(constrained > 60);
+}
+
+// INVARIANT: scan-by-feature-matches-lane-scan
+// find scans one feature at a time only on an x86-64 host without AVX2, so no
+// test host reaches that scan through find. find_by_feature runs it on every
+// host, and on free and on constrained nodes it returns the reference scan's
+// split and find's, to the bit.
+TEST_CASE("HistogramNodeSplitFinder: the scan by feature matches the lanes to the bit",
+          "[split][edge]")
+{
+    std::mt19937 rng(1125);
+    bool         constrain = false;
+    SECTION("free features") {}
+    SECTION("constrained features under leaf value bounds")
+    {
+        constrain = true;
+    }
+    size_t valid = 0;
+    for (int trial = 0; trial < 400; ++trial)
+    {
+        SplitInput node = random_node(rng);
+        TreeConfig cfg  = random_rule(rng);
+        if (constrain)
+        {
+            constrain_at_random(node, cfg, rng);
+        }
+        SplitOutput const got = HistogramNodeSplitFinder::find_by_feature(node, cfg);
+        REQUIRE(same_split(got, scalar_scan(node, cfg)));
+        REQUIRE(same_split(got, HistogramNodeSplitFinder::find(node, cfg)));
+        valid += got.valid ? 1 : 0;
+    }
+    CHECK(valid > 300);
 }

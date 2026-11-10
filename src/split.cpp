@@ -824,18 +824,25 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
     }
 }
 
+SplitOutput scan_by_feature(SplitInput const &input, feature_id_t f0, feature_id_t f1,
+                            TreeConfig const &config)
+{
+    SplitOutput best;
+    for (feature_id_t fid = f0; fid < f1; ++fid)
+    {
+        update_best_for_feature_for_node(input, fid, config, best);
+    }
+    return best;
+}
+
 SplitOutput scan_features(SplitInput const &input, feature_id_t f0, feature_id_t f1,
                           TreeConfig const &config)
 {
-    SplitOutput best;
     if (!lanes_available())
     {
-        for (feature_id_t fid = f0; fid < f1; ++fid)
-        {
-            update_best_for_feature_for_node(input, fid, config, best);
-        }
-        return best;
+        return scan_by_feature(input, f0, f1, config);
     }
+    SplitOutput              best;
     LaneRule const           rule = node_rule(input, config);
     std::array<LaneGroup, 2> groups;
     groups[0].clear();
@@ -901,17 +908,86 @@ feature_id_t range_begin(size_t r, size_t ranges, size_t n_features)
     return static_cast<feature_id_t>(std::min(n_features, group * k_scan_lanes));
 }
 
-} // namespace
+std::vector<size_t> populated_parents(FrontierInput frontier)
+{
+    std::vector<size_t> populated;
+    for (size_t p = 0; p < frontier.size(); ++p)
+    {
+        if (!frontier[p].hists.empty())
+        {
+            populated.push_back(p);
+        }
+    }
+    return populated;
+}
 
-SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
-                                           TreeConfig const &config)
+SplitOutput scan_level_by_group(LevelParents const &lp, TreeConfig const &config)
+{
+    feature_id_t const       n_features = lp.front().hists.size();
+    size_t const             groups     = lane_groups(n_features);
+    std::vector<SplitOutput> per_group(groups);
+    parallel::for_each_index(
+        groups,
+        [&](size_t g)
+        {
+            auto const f0 = static_cast<feature_id_t>(g * k_scan_lanes);
+            auto const f1 = static_cast<feature_id_t>(
+                std::min<size_t>((g + 1) * k_scan_lanes, n_features));
+            per_group[g] = scan_level_group(lp, f0, f1, config);
+        });
+    return reduce_in_feature_order(per_group);
+}
+
+SplitOutput scan_level_by_feature(LevelParents const &lp, TreeConfig const &config)
+{
+    feature_id_t const       n_features = lp.front().hists.size();
+    std::vector<SplitOutput> per_feature(n_features);
+    parallel::for_each_index(n_features,
+                             [&](size_t fid)
+                             {
+                                 update_best_for_feature_for_level(
+                                     lp, static_cast<feature_id_t>(fid), config,
+                                     per_feature[fid]);
+                             });
+    return reduce_in_feature_order(per_feature);
+}
+
+template <auto &Scan>
+SplitOutput scan_splittable(SplitInput const &input, TreeConfig const &config)
 {
     if (cannot_split(input, config))
     {
         return {};
     }
     feature_id_t const n_features = input.hists.size();
-    return scan_features(input, 0, n_features, config);
+    return Scan(input, 0, n_features, config);
+}
+
+using LevelScan = SplitOutput (&)(LevelParents const &, TreeConfig const &);
+
+SplitOutput scan_populated(FrontierInput frontier, TreeConfig const &config,
+                           LevelScan scan)
+{
+    std::vector<size_t> const populated = populated_parents(frontier);
+    if (populated.empty())
+    {
+        return {};
+    }
+    return scan({.frontier = frontier, .populated = populated}, config);
+}
+
+} // namespace
+
+SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
+                                           TreeConfig const &config)
+{
+    return scan_splittable<scan_features>(input, config);
+}
+
+SplitOutput HistogramNodeSplitFinder::find_by_feature(SplitInput const &input,
+                                                      TreeConfig const &config)
+{
+    return scan_splittable<scan_by_feature>(input, config);
 }
 
 void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
@@ -946,44 +1022,15 @@ void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
 SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
                                             TreeConfig const &config)
 {
-    std::vector<size_t> populated;
-    for (size_t p = 0; p < frontier.size(); ++p)
-    {
-        if (!frontier[p].hists.empty())
-        {
-            populated.push_back(p);
-        }
-    }
-    if (populated.empty())
-    {
-        return {};
-    }
-    LevelParents const lp{.frontier = frontier, .populated = populated};
-    feature_id_t const n_features = lp.front().hists.size();
-    if (lanes_available())
-    {
-        size_t const             groups = lane_groups(n_features);
-        std::vector<SplitOutput> per_group(groups);
-        parallel::for_each_index(
-            groups,
-            [&](size_t g)
-            {
-                auto const f0 = static_cast<feature_id_t>(g * k_scan_lanes);
-                auto const f1 = static_cast<feature_id_t>(
-                    std::min<size_t>((g + 1) * k_scan_lanes, n_features));
-                per_group[g] = scan_level_group(lp, f0, f1, config);
-            });
-        return reduce_in_feature_order(per_group);
-    }
-    std::vector<SplitOutput> per_feature(n_features);
-    parallel::for_each_index(n_features,
-                             [&](size_t fid)
-                             {
-                                 update_best_for_feature_for_level(
-                                     lp, static_cast<feature_id_t>(fid), config,
-                                     per_feature[fid]);
-                             });
-    return reduce_in_feature_order(per_feature);
+    return scan_populated(frontier, config,
+                          lanes_available() ? scan_level_by_group
+                                            : scan_level_by_feature);
+}
+
+SplitOutput HistogramLevelSplitFinder::find_by_feature(FrontierInput     frontier,
+                                                       TreeConfig const &config)
+{
+    return scan_populated(frontier, config, scan_level_by_feature);
 }
 
 } // namespace bonsai
