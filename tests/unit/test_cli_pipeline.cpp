@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -8,6 +9,7 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -23,6 +25,23 @@ namespace
 {
 
 std::string const k_tiny_path = std::string{BONSAI_TESTS_DATA_DIR} + "/tiny.csv";
+
+// One feature, `reps` rows per class, class c at c + 0.1 + rep / 100, so the
+// classes separate on f1. `tail` follows the rows verbatim.
+void write_separable_classes(std::filesystem::path const &path, int n_classes, int reps,
+                             std::string_view tail = {})
+{
+    std::ofstream out(path);
+    out << "label,f1\n";
+    for (int rep = 0; rep < reps; ++rep)
+    {
+        for (int label = 0; label < n_classes; ++label)
+        {
+            out << label << "," << label + 0.1 + rep * 0.01 << "\n";
+        }
+    }
+    out << tail;
+}
 
 Config make_tiny_config()
 {
@@ -454,24 +473,12 @@ TEST_CASE("train_with_progress: multiclass early stopping truncates whole rounds
     auto const dir        = std::filesystem::temp_directory_path();
     auto const train_path = dir / "bonsai_mc_train.csv";
     auto const valid_path = dir / "bonsai_mc_valid.csv";
-    {
-        std::ofstream out(train_path);
-        out << "label,f1\n";
-        for (int rep = 0; rep < 4; ++rep)
-        {
-            out << "0," << 0.1 + rep * 0.01 << "\n";
-            out << "1," << 1.1 + rep * 0.01 << "\n";
-            out << "2," << 2.1 + rep * 0.01 << "\n";
-        }
-    }
-    {
-        // One contradictory label: as the model's margins grow, this row's
-        // logloss grows with them, so the valid loss eventually rises and
-        // patience can fire (a perfectly separable valid set improves
-        // monotonically forever under logloss).
-        std::ofstream out(valid_path);
-        out << "label,f1\n0,0.1\n1,1.1\n2,2.1\n1,0.11\n";
-    }
+    write_separable_classes(train_path, 3, 4);
+    // One contradictory label: as the model's margins grow, this row's
+    // logloss grows with them, so the valid loss eventually rises and
+    // patience can fire (a perfectly separable valid set improves
+    // monotonically forever under logloss).
+    write_separable_classes(valid_path, 3, 1, "1,0.11\n");
     Config cfg;
     cfg.data.train              = train_path.string();
     cfg.data.valid              = {valid_path.string()};
@@ -554,15 +561,7 @@ TEST_CASE("multiclass warm start keeps the loaded class priors",
     // warm round count must reproduce the loaded model's logloss exactly —
     // the pre-fix lazy init zeroed init_scores_, shifting every class base.
     auto const path = std::filesystem::temp_directory_path() / "bonsai_mc_prior.csv";
-    {
-        std::ofstream out(path);
-        out << "label,f1\n";
-        for (int rep = 0; rep < 8; ++rep)
-        {
-            out << "0," << 0.1 + rep * 0.01 << "\n";
-        }
-        out << "1,1.1\n2,2.1\n1,1.11\n2,2.11\n";
-    }
+    write_separable_classes(path, 1, 8, "1,1.1\n2,2.1\n1,1.11\n2,2.11\n");
     Config cfg;
     cfg.data.train                   = path.string();
     cfg.dispatch.objective_name      = "softmax";
