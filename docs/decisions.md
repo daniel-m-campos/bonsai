@@ -939,6 +939,8 @@ That reframed the question from kernel speed to the whole **accuracy-vs-time fro
 
 ## 66. Prebuilt wheels from native runners, not manylinux containers (adopted)
 
+*Status 2026-11-10: GitHub retired the macos-14 runner image on 2026-11-02, so from 2.11.0 the macOS leg builds on macos-15 and its wheel carries the `macosx_15_0` tag; the rest of the matrix stands.*
+
 **Decision.** PR #94 + #98, shipped in v1.2.0: 15 wheels + sdist attach to the GitHub Release automatically on `release: published`. Matrix is {ubuntu-22.04, ubuntu-22.04-arm, macos-14} × py{3.9–3.13}, CPU-only.
 
 **Why not cibuildwheel/manylinux.** bonsai requires LLVM ≥ 20 with libc++ (C++23 `std::print`/`std::mdspan`). The official LLVM release binaries need a newer glibc than the `manylinux_2_28` container ships, so wheels build on plain runners with apt.llvm.org LLVM 21 (Linux) / brew `llvm@21` (macOS) instead. `auditwheel`/`delocate` vendor libc++ (+ libc++abi/libunwind) into each wheel; OpenMP is statically linked via the pre-existing `BONSAI_OPENMP_STATIC`, so zero C++ changes were needed to make this work. `auditwheel` tagged the result `manylinux_2_34` (dual-tagged `2_35`): actual glibc floor 2.34, so RHEL 9/Alma 9 are covered, a better floor than the Ubuntu 22.04+ design target implied.

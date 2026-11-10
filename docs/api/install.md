@@ -18,9 +18,9 @@ To install a specific release, run `pip install bonsai-gbt==1.7.0`. To install f
 |---|---|---|---|
 | Linux | x86_64 | **yes** | `manylinux_2_34` (also tagged `2_35`), ~5.4MB |
 | Linux | aarch64 | no (CPU) | `manylinux_2_34` (also tagged `2_35`) |
-| macOS | arm64 | no (CPU) | `macosx_14_0` |
+| macOS | arm64 | no (CPU) | `macosx_15_0` |
 
-Every platform covers CPython 3.9 through 3.13. The Linux wheels need glibc 2.34 or newer (Ubuntu 22.04 or Debian 12 and later). They bundle libc++ and the OpenMP runtime inside the wheel, so the only packages you install are numpy and typing_extensions, which pip adds for you.
+Every platform covers CPython 3.9 through 3.13. The macOS wheel needs macOS 15 or newer. The Linux wheels need glibc 2.34 or newer (Ubuntu 22.04 or Debian 12 and later). They bundle libc++ and the OpenMP runtime inside the wheel, so the only packages you install are numpy and typing_extensions, which pip adds for you.
 
 ## GPU support in the Linux x86_64 wheel
 
@@ -61,4 +61,4 @@ docker run --gpus all ghcr.io/daniel-m-campos/bonsai:cuda python3 -c "import bon
 
 ## No wheel for your platform?
 
-Wheels cover only the three platforms in the table above, so Windows and Intel macOS have no wheel. The release page also carries the sdist (the source archive, `bonsai_gbt-<version>.tar.gz`), and `pip install` on it compiles bonsai on your machine. That build needs the LLVM 20+ and libc++ toolchain, so install it first. [Building from source](building.md) lists the supported Linux and macOS setups, and also covers the CLI binary and CUDA source builds.
+Wheels cover only the three platforms in the table above, so Windows, Intel macOS and macOS 14 or older have no wheel. The release page also carries the sdist (the source archive, `bonsai_gbt-<version>.tar.gz`), and `pip install` on it compiles bonsai on your machine. That build needs the LLVM 20+ and libc++ toolchain, so install it first. [Building from source](building.md) lists the supported Linux and macOS setups, and also covers the CLI binary and CUDA source builds.
