@@ -118,6 +118,8 @@ concept ParallelNodeSplitFinder =
 struct HistogramNodeSplitFinder
 {
     static SplitOutput find(SplitInput const &input, TreeConfig const &config);
+    static SplitOutput find_by_feature(SplitInput const &input,
+                                       TreeConfig const &config);
     static void        find_parallel(std::span<SplitInput const> nodes,
                                      TreeConfig const &config, std::span<SplitOutput> out);
 };
@@ -132,6 +134,8 @@ concept LevelSplitFinder = requires(FrontierInput frontier, TreeConfig const &co
 struct HistogramLevelSplitFinder
 {
     static SplitOutput find(FrontierInput frontier, TreeConfig const &config);
+    static SplitOutput find_by_feature(FrontierInput     frontier,
+                                       TreeConfig const &config);
 };
 
 // Soft-threshold on the gradient sum: XGBoost's L1 treatment.

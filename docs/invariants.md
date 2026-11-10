@@ -194,6 +194,12 @@ A feature the tree's sample left out is an empty histogram slot on every frontie
 
 - enforced by: [`HistogramLevelSplitFinder: a feature's empty slot is skipped, not read`](../tests/unit/test_split_level.cpp)
 
+### level-scan-by-feature-matches-lane-scan
+
+The level finder's scan by feature is find's path only on an x86-64 host without AVX2. find_by_feature runs it on every host, and over frontiers with empty parents and empty feature slots it returns the reference scan's split and find's, to the bit.
+
+- enforced by: [`HistogramLevelSplitFinder: the scan by feature matches the lanes to the bit`](../tests/unit/test_split_level.cpp)
+
 ### levelwise-monotone-holds
 
 A levelwise fit under a monotone constraint produces predictions ordered by that feature, on both the CPU and CUDA engines. The mechanism is a projection of the finished leaf table onto the monotone cone (project_monotone), not a veto during growth, so the tree's structure is whatever the unconstrained search would have chosen.
@@ -241,6 +247,12 @@ A depthwise or leafwise fit under a monotone constraint stays ordered by that fe
 The row list a round trains on belongs to the fit it was materialized for, keyed on the fit's minted token and never on its size: a second fit on a same-sized view of different rows grows the tree those rows grow, not the previous view's.
 
 - enforced by: [`Booster: a same-sized view of other rows refills the row list`](../tests/unit/test_booster.cpp)
+
+### scan-by-feature-matches-lane-scan
+
+find scans one feature at a time only on an x86-64 host without AVX2, so no test host reaches that scan through find. find_by_feature runs it on every host, and on free and on constrained nodes it returns the reference scan's split and find's, to the bit.
+
+- enforced by: [`HistogramNodeSplitFinder: the scan by feature matches the lanes to the bit`](../tests/unit/test_split_node.cpp)
 
 ### smaller-child-tie-break-agrees
 

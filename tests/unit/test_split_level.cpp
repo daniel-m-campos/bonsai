@@ -496,3 +496,26 @@ TEST_CASE("HistogramLevelSplitFinder: lanes match the scalar level scan to the b
     }
     CHECK(valid > 200);
 }
+
+// INVARIANT: level-scan-by-feature-matches-lane-scan
+// The level finder's scan by feature is find's path only on an x86-64 host
+// without AVX2. find_by_feature runs it on every host, and over frontiers
+// with empty parents and empty feature slots it returns the reference scan's
+// split and find's, to the bit.
+TEST_CASE("HistogramLevelSplitFinder: the scan by feature matches the lanes to the bit",
+          "[split][level][edge]")
+{
+    std::mt19937 rng(1125);
+    size_t       valid = 0;
+    for (int trial = 0; trial < 300; ++trial)
+    {
+        std::vector<SplitInput> const frontier = random_frontier(rng);
+        TreeConfig const              cfg      = random_rule(rng);
+        SplitOutput const             got =
+            HistogramLevelSplitFinder::find_by_feature(frontier, cfg);
+        REQUIRE(same_split(got, scalar_level_scan(frontier, cfg)));
+        REQUIRE(same_split(got, HistogramLevelSplitFinder::find(frontier, cfg)));
+        valid += got.valid ? 1 : 0;
+    }
+    CHECK(valid > 200);
+}
