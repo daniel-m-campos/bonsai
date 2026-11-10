@@ -187,6 +187,24 @@ def test_early_stopping_stops():
     assert m.n_iters_ < 400
 
 
+def test_early_stopping_keeps_the_best_round_when_the_budget_ends_first():
+    """A round budget that ends before patience fires still returns the model
+    at its best eval-set round, so the model's eval loss is ``best_score``."""
+    rng = np.random.default_rng(2)
+    X = rng.normal(size=(900, 4)).astype(np.float32)
+    y = (X[:, 0] + 2 * rng.normal(size=900)).astype(np.float32)
+    Xt, yt, Xv, yv = X[:600], y[:600], X[600:], y[600:]
+
+    n_iters = 40
+    m = bonsai.BonsaiRegressor(
+        n_iters=n_iters, learning_rate=0.3, early_stopping_rounds=n_iters + 1, n_threads=2
+    ).fit(Xt, yt, eval_set=(Xv, yv))
+
+    assert 0 < m.best_iteration < n_iters - 1
+    assert m.n_iters_ == m.best_iteration + 1
+    assert float(np.mean((m.predict(Xv) - yv) ** 2)) == pytest.approx(m.best_score, rel=1e-5)
+
+
 _EARLY_STOPPING_FIT = """
 import numpy as np
 

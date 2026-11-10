@@ -136,9 +136,10 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     parameters.md). bonsai bins the eval set inside train, with the
     Dataset's own mappers, so that one-time cost lands in train_s where the
     reference libraries' lands in ingest_s; fit_s, the outer wall clock, is
-    the fencepost-free number the overhead ratio is quoted on. On a stop the
-    model is truncated to its best iteration, so n_iters is both the
-    retained round count and the model the reported metric comes from.
+    the fencepost-free number the overhead ratio is quoted on. With the stop
+    armed the model is truncated to its best iteration, whether patience
+    fired or the cap ended the fit, so n_iters is both the retained round
+    count and the model the reported metric comes from.
     """
     import bonsai
 

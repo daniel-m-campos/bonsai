@@ -494,7 +494,8 @@ class _BonsaiEstimator:
         """int: 0-based absolute model round with the best eval-set loss.
 
         Defined only when fit ran with early stopping and an ``eval_set``: it
-        is the round early stopping kept. After an ``init_model`` warm start
+        is the last round the fit kept, whether patience fired or ``n_iters``
+        ended the fit first. After an ``init_model`` warm start
         the index counts the warm-start rounds too, so it lines up with
         ``n_iters_`` and ``predict(num_iteration=best_iteration + 1)``.
 
@@ -957,8 +958,9 @@ class BonsaiRegressor(_BonsaiEstimator):
         One of bonsai's own: ``"mse"``, ``"mae"``, ``"huber"``,
         ``"quantile"`` (with ``quantile_alpha``), or ``"poisson"``.
     early_stopping_rounds
-        Patience in rounds before stopping on eval-set loss; 0 disables
-        early stopping.
+        Patience in rounds before stopping on eval-set loss. The fit keeps
+        the rounds up to its best eval-set loss, whether it stopped or ran
+        out its ``n_iters``. 0 disables early stopping.
     n_threads
         Worker thread count; 0 uses every available core.
     random_seed
@@ -1136,8 +1138,9 @@ class BonsaiClassifier(_BonsaiEstimator):
     sampler
         Row sampler name; ``"all_rows"`` trains on every row.
     early_stopping_rounds
-        Patience in rounds before stopping on eval-set loss; 0 disables
-        early stopping.
+        Patience in rounds before stopping on eval-set loss. The fit keeps
+        the rounds up to its best eval-set loss, whether it stopped or ran
+        out its ``n_iters``. 0 disables early stopping.
     n_threads
         Worker thread count; 0 uses every available core.
     random_seed

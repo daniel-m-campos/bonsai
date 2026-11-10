@@ -100,13 +100,13 @@ Config reconcile_warm_start(Config cfg, Config const &loaded_cfg,
 // Full training entry point used by `bonsai fit`. Runs n_iters of
 // update_one_iter on train; when log_intervals > 0, invokes on_tick at iter 0
 // (init_score baseline), every floor(n_iters/log_intervals) iters, and at the
-// final iter. Predictions live in scratch buffers owned by this function;
-// callbacks must not retain references past the call.
-// `initial` continues training an existing booster (warm start) instead of
-// constructing a fresh one from cfg; cfg still drives n_iters / ticks /
-// early stopping for the continuation.
-// on_tick doubles as the consent to write to stdout: a call without it prints
-// nothing at all, including the early-stop notice.
+// final iter. Scratch prediction buffers are owned here; callbacks must not
+// retain references past the call. `initial` continues an existing booster
+// (warm start); cfg still drives n_iters, ticks and early stopping for it.
+// With early stopping on, the returned booster holds the rounds up to its
+// best validation loss, whether patience fired or the round budget ended
+// first (invariants: early-stopping-keeps-best-round). on_tick doubles as the
+// consent to write to stdout: a call without it prints nothing at all.
 std::unique_ptr<ITrainableBooster>
 train_with_progress(Config const &cfg, LoadedTrainValidation const &loaded,
                     FitTickFn const                   &on_tick      = {},
