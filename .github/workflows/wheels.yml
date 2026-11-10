@@ -386,7 +386,7 @@ jobs:
       - name: Ephemeral SSH keypair
         run: ssh-keygen -t ed25519 -N "" -f /tmp/podkey
 
-      - name: Rent an L40S on the candidate image
+      - name: Rent a GPU pod on the candidate image
         id: pod
         env:
           IMG: ${{ needs.runtime-image-candidate.outputs.image }}:candidate-${{ needs.runtime-image-candidate.outputs.tag }}

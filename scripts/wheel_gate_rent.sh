@@ -16,24 +16,43 @@ create() {
     curl -sf https://rest.runpod.io/v1/pods \
         -H "Authorization: Bearer $RUNPOD_KEY" -H 'content-type: application/json' \
         -d "{\"name\": \"$POD_NAME\", \"imageName\": \"$IMG\",
-             \"gpuTypeIds\": [\"NVIDIA L40S\"], \"gpuCount\": 1,
+             \"gpuTypeIds\": [\"$1\"], \"gpuCount\": 1,
              \"cloudType\": \"SECURE\", \"containerDiskInGb\": 20,
              \"ports\": [\"22/tcp\"], \"env\": {\"PUBLIC_KEY\": \"$PUB\"}}" \
         | jq -r .id
 }
 
+# A create places exactly the card it names and is refused when that card has
+# no stock, so the cards go one per create, in order. The L40S leads. Each card
+# after it has passed this job's validation on a released image, and the wheel
+# carries machine code for its architecture.
+CARDS=(
+    "NVIDIA L40S"
+    "NVIDIA GeForce RTX 4090"
+    "NVIDIA GeForce RTX 5090"
+)
+
 # Five attempts, because capacity churns on ~10-minute cycles: two quick tries
-# can both land in the same empty window, so failed creates back off 150s to
-# spread the attempts across a full cycle. Each successful create polls up to
-# 6 minutes on the GraphQL runtime, the only truthful liveness signal.
+# can both land in the same empty window, so an attempt whose every card is
+# refused backs off 150s to spread the attempts across a full cycle. Each
+# successful create polls up to 6 minutes on the GraphQL runtime, the only
+# truthful liveness signal.
 for attempt in 1 2 3 4 5; do
-    POD="$(create || true)"
-    if [ -z "${POD}" ] || [ "${POD}" = "null" ]; then
-        echo "attempt ${attempt}: pod create call failed"
+    POD=""
+    for card in "${CARDS[@]}"; do
+        POD="$(create "$card" || true)"
+        if [ -n "${POD}" ] && [ "${POD}" != "null" ]; then
+            echo "attempt ${attempt}: pod ${POD} on ${card}"
+            break
+        fi
+        echo "attempt ${attempt}: ${card} create refused"
+        POD=""
+    done
+    if [ -z "${POD}" ]; then
+        echo "attempt ${attempt}: every card refused"
         sleep 150
         continue
     fi
-    echo "attempt ${attempt}: pod ${POD}"
     echo "pod_id=${POD}" >> "$GITHUB_OUTPUT"
     for i in $(seq 1 36); do
         sleep 10

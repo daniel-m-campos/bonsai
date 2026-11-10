@@ -26,7 +26,7 @@ Every platform covers CPython 3.9 through 3.13. The macOS wheel needs macOS 15 o
 
 The x86_64 wheel includes the full CUDA backend ([decision 70](../decisions.md)). It has precompiled GPU code for NVIDIA architectures sm_70 (Volta), sm_75, sm_80, sm_86, sm_89, sm_90 and sm_120 (Blackwell consumer). It also embeds compute_90 PTX (NVIDIA's portable intermediate GPU code), which the driver compiles when the program loads, so GPUs newer than those, such as sm_100, still run. The CUDA runtime is statically linked, so you need no CUDA toolkit, only an NVIDIA driver at R525 or newer. On a machine without a GPU the same wheel behaves exactly like a CPU wheel: it imports, trains on CPU, and `bonsai.cuda_available()` reports `False`.
 
-Every release's CUDA wheel is checked on a rented NVIDIA L40S GPU before it attaches to the release: the cuda_depthwise and cuda_levelwise growers (tree-growing strategies) each train 30 trees, their predictions must match the CPU depthwise and levelwise fits within 1e-3, and a saved model must reload with identical predictions (`scripts/wheel_smoke_cuda.py`, run by the `validate-cuda` job in `.github/workflows/wheels.yml`).
+Every release's CUDA wheel is checked on a rented NVIDIA GPU before it attaches to the release (an L40S when one is in stock, otherwise an RTX 4090 or an RTX 5090): the cuda_depthwise and cuda_levelwise growers (tree-growing strategies) each train 30 trees, their predictions must match the CPU depthwise and levelwise fits within 1e-3, and a saved model must reload with identical predictions (`scripts/wheel_smoke_cuda.py`, run by the `validate-cuda` job in `.github/workflows/wheels.yml`).
 
 ## Check it works
 

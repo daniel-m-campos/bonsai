@@ -2,7 +2,8 @@
 
 The script runs with a fake ``curl`` and ``sleep`` first on ``PATH``. The fake curl answers
 each pod create from a scripted list, reports a public SSH endpoint only for the pods a test
-names, and logs every create, delete and wait, so a test reads what the script asked for.
+names, and logs every create, delete and wait, so a test reads which card each create named
+and what the script did between them.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -20,6 +22,10 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 RENT_SCRIPT = REPO_ROOT / "scripts" / "wheel_gate_rent.sh"
 IMAGE = "ghcr.io/example/bonsai:candidate-v0.0.0"
 PUBLIC_KEY = "ssh-ed25519 AAAAFAKE gate"
+L40S = "NVIDIA L40S"
+RTX_4090 = "NVIDIA GeForce RTX 4090"
+RTX_5090 = "NVIDIA GeForce RTX 5090"
+CARDS = [L40S, RTX_4090, RTX_5090]
 REFUSED = "refused"
 NULL_ID = "nullid"
 BACKOFF_SECONDS = "150"
@@ -74,11 +80,17 @@ class Rental:
     waits: list[str]
     outputs: list[str]
 
+    @property
+    def cards(self) -> list[str]:
+        """The card each create named, in order."""
+        return [_card_named(create) for create in self.creates]
+
 
 def test_wheel_gate_rent_writes_the_pod_and_its_public_ssh_endpoint(tmp_path):
     rental = _rent(tmp_path, create_answers=["ok:podA"], pods_with_ssh=["podA"])
     assert rental.exit_code == 0
     assert rental.outputs == ["pod_id=podA", *SSH_ENDPOINT]
+    assert rental.cards == [L40S]
     assert rental.waits == [POLL_SECONDS]
     assert rental.deleted_pods == []
 
@@ -93,24 +105,36 @@ def test_wheel_gate_rent_asks_for_the_image_under_the_gate_pod_name(tmp_path):
     assert "Authorization: Bearer fake-key" in create
 
 
-def test_wheel_gate_rent_backs_off_after_a_refused_create(tmp_path):
+def test_wheel_gate_rent_asks_for_the_next_card_when_one_is_refused(tmp_path):
     rental = _rent(tmp_path, create_answers=[REFUSED, "ok:podB"], pods_with_ssh=["podB"])
     assert rental.exit_code == 0
-    assert rental.waits == [BACKOFF_SECONDS, POLL_SECONDS]
+    assert rental.cards == [L40S, RTX_4090]
+    assert rental.waits == [POLL_SECONDS]
     assert rental.outputs == ["pod_id=podB", *SSH_ENDPOINT]
 
 
 def test_wheel_gate_rent_reads_a_null_pod_id_as_a_refused_create(tmp_path):
-    rental = _rent(tmp_path, create_answers=[NULL_ID, "ok:podB"], pods_with_ssh=["podB"])
+    answers = [NULL_ID, REFUSED, "ok:podC"]
+    rental = _rent(tmp_path, create_answers=answers, pods_with_ssh=["podC"])
     assert rental.exit_code == 0
+    assert rental.cards == CARDS
+    assert rental.waits == [POLL_SECONDS]
+    assert rental.outputs == ["pod_id=podC", *SSH_ENDPOINT]
+
+
+def test_wheel_gate_rent_backs_off_only_after_every_card_is_refused(tmp_path):
+    answers = [REFUSED, REFUSED, REFUSED, "ok:podB"]
+    rental = _rent(tmp_path, create_answers=answers, pods_with_ssh=["podB"])
+    assert rental.exit_code == 0
+    assert rental.cards == [*CARDS, L40S]
     assert rental.waits == [BACKOFF_SECONDS, POLL_SECONDS]
     assert rental.outputs == ["pod_id=podB", *SSH_ENDPOINT]
 
 
-def test_wheel_gate_rent_fails_after_five_refused_creates(tmp_path):
+def test_wheel_gate_rent_fails_after_five_rounds_of_refused_cards(tmp_path):
     rental = _rent(tmp_path, create_answers=[], pods_with_ssh=[])
     assert rental.exit_code == 1
-    assert len(rental.creates) == 5
+    assert rental.cards == CARDS * 5
     assert rental.waits == [BACKOFF_SECONDS] * 5
     assert rental.outputs == []
     assert rental.deleted_pods == []
@@ -118,9 +142,11 @@ def test_wheel_gate_rent_fails_after_five_refused_creates(tmp_path):
 
 
 def test_wheel_gate_rent_deletes_a_pod_with_no_ssh_endpoint_and_rents_again(tmp_path):
-    rental = _rent(tmp_path, create_answers=["ok:podD", "ok:podE"], pods_with_ssh=["podE"])
+    answers = ["ok:podD", REFUSED, "ok:podE"]
+    rental = _rent(tmp_path, create_answers=answers, pods_with_ssh=["podE"])
     assert rental.exit_code == 0
     assert rental.deleted_pods == ["podD"]
+    assert rental.cards == [L40S, L40S, RTX_4090]
     assert rental.waits == [POLL_SECONDS] * (POLLS_PER_POD + 1)
     assert rental.outputs == ["pod_id=podD", "pod_id=podE", *SSH_ENDPOINT]
 
@@ -130,7 +156,7 @@ def test_wheel_gate_rent_fails_after_five_pods_without_an_ssh_endpoint(tmp_path)
     rental = _rent(tmp_path, create_answers=[f"ok:{pod}" for pod in pods], pods_with_ssh=[])
     assert rental.exit_code == 1
     assert rental.deleted_pods == pods
-    assert len(rental.creates) == 5
+    assert rental.cards == [L40S] * 5
 
 
 def test_wheel_gate_rent_refuses_to_run_without_the_image(tmp_path):
@@ -191,6 +217,12 @@ def _rent(
         waits=_read_lines(fake_dir / "sleeps"),
         outputs=_read_lines(outputs),
     )
+
+
+def _card_named(create: str) -> str:
+    named = re.search(r'"gpuTypeIds": \["([^"]*)"\]', create)
+    assert named is not None, create
+    return named.group(1)
 
 
 def _runtime_with_ssh() -> dict:
