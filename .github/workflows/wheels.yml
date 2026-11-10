@@ -54,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-14]
+        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15]
         # PRs build one python leg per OS (the ci python job already covers
         # the 3.9 floor); releases and dispatches build the full fan.
         python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.9", "3.10", "3.11", "3.12", "3.13"]') }}
@@ -98,7 +98,7 @@ jobs:
             export CXX="$(brew --prefix llvm@21)/bin/clang++"
             # llvm@21 bottle's libc++ mislabels float from_chars availability
             export CXXFLAGS="-D_LIBCPP_DISABLE_AVAILABILITY"
-            export MACOSX_DEPLOYMENT_TARGET="14.0"
+            export MACOSX_DEPLOYMENT_TARGET="15.0"
           fi
           if [ "${{ matrix.cuda }}" = "true" ]; then
             # Fat SASS for every real arch, one PTX floor for forward-JIT
