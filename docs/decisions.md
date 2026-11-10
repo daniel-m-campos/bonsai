@@ -2618,7 +2618,26 @@ The third pod (EPYC 4564P, AVX2 and AVX-512F, cpuset of 16, no quota) read main,
 
 The copy of main is the noise floor: it read -1.4% to +1.0% of main on the fit and -1.4% to +1.1% on the find. Every wide and constrained cell is under main by more than that. The tall cells sit inside it except leafwise, +2.6% on the minimum and +4.1% on the median (3.900 to 4.059 s), where the copy of main itself read +1.0% and +2.4%. Nothing the branch changes runs long enough in that cell to carry the difference: its find is 0.06 s of a 3.9 s fit in every arm, its populate bucket read 2.32 to 2.40 s and its partition bucket 0.37 to 0.41 s in every arm, and the same cell read -0.7% on the second pod. It is read as noise and has not been rerun. The mixed levelwise cell moves like the unconstrained one because the level finder never reads a constraint (decision 115). On the same pod the prefetch alone took the 16,384-feature find from 1.31 to 1.12 s leafwise and 3.45 to 2.96 s depthwise; the variant that requests the lines into L2 only read 3.13 s depthwise, outside the L1 variant's rep range, and was not kept.
 
-What is not measured: on the 4565P, before the prefetch existed, the 16,384-feature leafwise find read +8.3% over main with the fit tied at -0.7%, and the third pod drew a 4564P, where that same stack read -6.4% before the prefetch. The prefetch has been timed on neither a 4565P nor any Xeon. The release A/B against the 2.10.0 wheel is the next reading.
+A fourth pod read the same three arms on a Xeon: an Intel Xeon 6760P host (two sockets, AVX2 and AVX-512F) behind a 27.2-core quota, 16 threads a fit under the default OpenMP wait policy, the arms installed from wheels built at main b4c3b9c6 and at the branch, five reps on the wide and tall shapes and three on mixed:
+
+| cell | fit s, main | fit s, main copy | fit s, branch | fit | find s, main | find s, main copy | find s, branch | find |
+|---|---|---|---|---|---|---|---|---|
+| 16,384 x 16,384 depthwise | 6.783 | 6.906 | 6.569 | -3.1% | 2.69 | 2.71 | 2.26 | -16.0% |
+| 16,384 x 16,384 levelwise | 7.935 | 7.756 | 7.349 | -7.4% | 5.74 | 5.71 | 4.42 | -23.0% |
+| 16,384 x 16,384 leafwise | 3.125 | 3.223 | 3.165 | +1.3% | 0.99 | 1.00 | 0.86 | -13.1% |
+| 20,000 x 2000 depthwise | 2.652 | 2.367 | 2.249 | -15.2% | 0.93 | 0.95 | 0.79 | -15.1% |
+| 20,000 x 2000 levelwise | 2.566 | 2.382 | 2.307 | -10.1% | 1.64 | 1.61 | 1.08 | -34.1% |
+| 20,000 x 2000 leafwise | 1.394 | 1.314 | 1.304 | -6.4% | 0.87 | 0.84 | 0.76 | -12.6% |
+| mixed depthwise | 4.881 | 4.590 | 2.826 | -42.1% | 4.29 | 4.29 | 1.16 | -73.0% |
+| mixed levelwise | 2.403 | 2.544 | 2.377 | -1.1% | 1.67 | 1.61 | 1.13 | -32.3% |
+| mixed leafwise | 3.094 | 3.546 | 1.458 | -52.9% | 3.72 | 3.84 | 1.06 | -71.5% |
+| 2M x 128 depthwise | 3.748 | 3.754 | 3.782 | +0.9% | 0.05 | 0.05 | 0.04 | |
+| 2M x 128 levelwise | 3.599 | 3.606 | 3.620 | +0.6% | 0.07 | 0.08 | 0.06 | |
+| 2M x 128 leafwise | 3.934 | 3.982 | 3.935 | +0.0% | 0.07 | 0.07 | 0.08 | |
+
+That host was shared and busy: its load average ran 22 to 36 against the 27-core quota and the container's throttled periods rose from 3 to 223 across the run, so the copy of main read -10.8% to +14.6% of main on the fit, and the fit column resolves only the two constrained cells (-42.1% and -52.9%). The find bucket is the reading: the copy of main sits within -3.6% to +3.2% of main on it, and every wide and constrained find is under main by 12.6 to 73.0%. The 16,384-feature leafwise find, the cell that read +8.3% on the 4565P before the prefetch, reads -13.1%. The tall cells read +0.9%, +0.6% and +0.0% where the copy of main read +0.2%, +0.2% and +1.2%, so the third pod's leafwise +2.6% did not repeat. No cell is slower than the copy-of-main band on either bucket.
+
+What is not measured: on the 4565P, before the prefetch existed, the 16,384-feature leafwise find read +8.3% over main with the fit tied at -0.7%, and the third pod drew a 4564P, where that same stack read -6.4% before the prefetch. The prefetch has not been timed on a 4565P, and the one Xeon reading is a quota-capped pod on a shared 6760P, not a bare-metal host. The release A/B against the 2.10.0 wheel is the next reading.
 
 **Rejected alternatives.** Rejecting only a candidate whose side holds no occupied cell: the disagreement lands on every tail cut, not only the empty one, and when the lowest selected feature is the low-cardinality one its error reaches every other feature's tail with real rows on it. Accumulating the cells in double or in row blocks merged in double: this is the root cause, and it would also take the rounding out of the gains a block-ordered fit chooses on, but it changes the fill, the hottest loop in the host tree, for a defect the finder can close exactly; it is the reopener below. Shuffling rows inside `Dataset`: a permutation gather of the binned matrix on every construction, every row-indexed output remapped, and every model hash moved for a defect in the finder's reading. Documenting that rows must be shuffled: the fit is the library's to get right.
 
