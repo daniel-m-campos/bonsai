@@ -78,7 +78,7 @@ EFFECTS = {
     "booster.learning_rate": "Shrinks each tree's contribution. Lower values need more rounds but generalize better, the classic accuracy-versus-iterations trade.",
     "booster.random_seed": "Seeds every draw the fit makes: row sampling, DART drops and, together with tree.feature_seed, the feature_fraction draws. Fixing it makes a run reproducible bit for bit.",
     "booster.log_intervals": "Progress-logging frequency during `bonsai fit`. 0 is silent; higher prints more metric ticks. CLI-only: the Python API prints nothing and records the objective's loss on the eval set in `eval_history` instead. No effect on the trained model.",
-    "booster.early_stopping_rounds": "Stop when the first validation objective stalls this many rounds, keeping the best iteration. 0 disables it; needs a valid set.",
+    "booster.early_stopping_rounds": "Stop when the first validation objective stalls this many rounds. The fit keeps the rounds up to its best validation loss, whether it stopped or ran out its n_iters. 0 disables it; needs a valid set.",
     "booster.dart_drop_rate": "DART: probability of dropping each existing tree per round. Above 0 enables DART regularization; incompatible with early stopping.",
     # tree
     "tree.min_child_hess": "Minimum hessian each child of a split must hold, or the candidate is rejected. Under squared error a row weighs 1, so this counts rows.",

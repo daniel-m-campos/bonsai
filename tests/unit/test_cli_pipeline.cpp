@@ -625,3 +625,62 @@ TEST_CASE("train_with_progress: DART and early stopping refuse to combine",
             train_with_progress(cfg, loaded.train, loaded.validation.value()));
     }
 }
+
+// INVARIANT: early-stopping-keeps-best-round
+// A fit with early stopping returns the rounds up to its best validation
+// loss, whether patience fired or the round budget ended first. A model
+// that kept the rounds after its best one would not be the model the
+// reported best loss was measured on.
+TEST_CASE("train_with_progress: early stopping keeps the best round",
+          "[cli_pipeline][early_stop][invariant]")
+{
+    auto const dir        = std::filesystem::temp_directory_path();
+    auto const train_path = dir / "bonsai_es_best_train.csv";
+    auto const valid_path = dir / "bonsai_es_best_valid.csv";
+    write_separable_classes(train_path, 2, 6);
+    // Eight rows agree with the training data and the last contradicts it:
+    // the eight pull the validation loss down for the first rounds, then the
+    // growing margins on the ninth turn it upward.
+    write_separable_classes(valid_path, 2, 4, "1,0.11\n");
+    uint32_t const n_iters = 40;
+    Config         cfg;
+    cfg.data.train                   = train_path.string();
+    cfg.data.valid                   = {valid_path.string()};
+    cfg.dispatch.objective_name      = "logloss";
+    cfg.bin_mapper.max_bin           = 100;
+    cfg.bin_mapper.n_samples         = 100;
+    cfg.booster_config.n_iters       = n_iters;
+    cfg.booster_config.learning_rate = 0.1F;
+    cfg.tree_config.min_data_in_leaf = 0;
+    cfg.tree_config.min_child_hess   = 0.0F;
+
+    auto const kept_and_best = [&](uint32_t patience)
+    {
+        cfg.booster_config.early_stopping_rounds = patience;
+        auto const loaded = load_train_and_validation_from_csv(cfg);
+        REQUIRE(loaded.validation.has_value());
+        std::vector<float> history;
+        auto const booster = train_with_progress(cfg, loaded.train, *loaded.validation,
+                                                 {}, {}, std::ref(history));
+        auto const best =
+            static_cast<size_t>(std::ranges::min_element(history) - history.begin());
+        return std::pair{booster->n_iters(), best + 1};
+    };
+
+    SECTION("the round budget ends before patience fires")
+    {
+        auto const [kept, best_rounds] = kept_and_best(n_iters + 1);
+        REQUIRE(best_rounds > 1);
+        REQUIRE(best_rounds < n_iters);
+        CHECK(kept == best_rounds);
+    }
+    SECTION("patience fires before the round budget ends")
+    {
+        auto const [kept, best_rounds] = kept_and_best(3);
+        REQUIRE(best_rounds > 1);
+        REQUIRE(best_rounds + 3 < n_iters);
+        CHECK(kept == best_rounds);
+    }
+    std::filesystem::remove(train_path);
+    std::filesystem::remove(valid_path);
+}

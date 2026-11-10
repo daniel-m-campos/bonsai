@@ -446,11 +446,11 @@ class EarlyStopping
     {
         if (i == 0 || loss < best_loss_)
         {
-            best_loss_ = loss;
-            best_iter_ = i;
+            best_loss_   = loss;
+            kept_rounds_ = i + 1;
             return false;
         }
-        return i - best_iter_ >= rounds_;
+        return i + 1 - kept_rounds_ >= rounds_;
     }
 
     float best_loss() const
@@ -458,15 +458,15 @@ class EarlyStopping
         return best_loss_;
     }
 
-    uint32_t best_iter() const
+    uint32_t kept_rounds() const
     {
-        return best_iter_;
+        return kept_rounds_;
     }
 
   private:
     uint32_t rounds_;
-    float    best_loss_ = 0.0F;
-    uint32_t best_iter_ = 0;
+    float    best_loss_   = 0.0F;
+    uint32_t kept_rounds_ = 0;
 };
 
 class FitTicker
@@ -609,11 +609,17 @@ void record_eval(std::vector<float> &history, ValidationScorer const &scorer,
     history.push_back(loss);
 }
 
-void announce_early_stop(Config const &cfg, uint32_t i, EarlyStopping const &stopper)
+void keep_best_rounds(Config const &cfg, ITrainableBooster &booster, size_t base,
+                      EarlyStopping const &stopper, bool announce)
 {
-    std::println("fit: early stop at iter {} (best iter {}, valid {} loss {})", i + 1,
-                 stopper.best_iter() + 1, cfg.dispatch.objective_name,
-                 stopper.best_loss());
+    size_t const grown = booster.n_iters() - base;
+    booster.truncate(base + stopper.kept_rounds());
+    if (announce && stopper.kept_rounds() < grown)
+    {
+        std::println("fit: early stopping kept {} of {} rounds (valid {} loss {})",
+                     stopper.kept_rounds(), grown, cfg.dispatch.objective_name,
+                     stopper.best_loss());
+    }
 }
 
 } // namespace
@@ -664,13 +670,12 @@ train_with_progress(Config const &cfg, LabeledData const &train,
         }
         if (plan.early_stop && stopper.stops_after(i, loss))
         {
-            booster->truncate(scorer->base() + stopper.best_iter() + 1);
-            if (on_tick)
-            {
-                announce_early_stop(cfg, i, stopper);
-            }
             break;
         }
+    }
+    if (plan.early_stop)
+    {
+        keep_best_rounds(cfg, *booster, scorer->base(), stopper, on_tick != nullptr);
     }
 
     return booster;

@@ -104,6 +104,12 @@ A device root carries a host row list only until the engine stages it; from begi
 
 - enforced by: [`Resident: a one-leaf tree on a view matches the host path`](../tests/unit/test_cuda_resident.cpp)
 
+### early-stopping-keeps-best-round
+
+A fit with early stopping returns the rounds up to its best validation loss, whether patience fired or the round budget ended first. A model that kept the rounds after its best one would not be the model the reported best loss was measured on.
+
+- enforced by: [`train_with_progress: early stopping keeps the best round`](../tests/unit/test_cli_pipeline.cpp)
+
 ### finder-reads-own-feature-totals
 
 Every feature's right side and node score are read from that feature's own histogram totals, never from another feature's. Float cells summed over a long same-sign run disagree across features by hundreds; read against one shared total, a feature's empty right side inherits the difference and an 800k-row label-sorted classification fit took that phantom cut at the root of every tree from round three on (issue 549). The free lane scan and the bounded one a monotone constraint selects both hold it.

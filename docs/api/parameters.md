@@ -23,7 +23,7 @@ The boosting loop: how many trees, how strongly each contributes, when to stop.
 | parameter | type | default | effect |
 |---|---|---|---|
 | [`dart_drop_rate`](#booster.dart_drop_rate){ #booster.dart_drop_rate .bz-param } | float | `0.0` | DART: probability of dropping each existing tree per round. Above 0 enables DART regularization; incompatible with early stopping. |
-| [`early_stopping_rounds`](#booster.early_stopping_rounds){ #booster.early_stopping_rounds .bz-param } | integer | `0` | Stop when the first validation objective stalls this many rounds, keeping the best iteration. 0 disables it; needs a valid set. |
+| [`early_stopping_rounds`](#booster.early_stopping_rounds){ #booster.early_stopping_rounds .bz-param } | integer | `0` | Stop when the first validation objective stalls this many rounds. The fit keeps the rounds up to its best validation loss, whether it stopped or ran out its n_iters. 0 disables it; needs a valid set. |
 | [`learning_rate`](#booster.learning_rate){ #booster.learning_rate .bz-param } | float | `0.05` | Shrinks each tree's contribution. Lower values need more rounds but generalize better, the classic accuracy-versus-iterations trade. |
 | [`log_intervals`](#booster.log_intervals){ #booster.log_intervals .bz-param } | integer | `0` | Progress-logging frequency during `bonsai fit`. 0 is silent; higher prints more metric ticks. CLI-only: the Python API prints nothing and records the objective's loss on the eval set in `eval_history` instead. No effect on the trained model. |
 | [`n_iters`](#booster.n_iters){ #booster.n_iters .bz-param } | integer | `100` | Number of boosting rounds. More rounds lower training loss but risk overfitting; pair with a smaller learning_rate. |
