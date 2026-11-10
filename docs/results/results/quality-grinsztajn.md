@@ -12,24 +12,24 @@ The [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) at t
 | library | mean rank | outright wins |
 |---|--:|--:|
 | bonsai | 1.49 | 35 |
-| lgbm | 2.40 | 6 |
-| xgb | 2.93 | 5 |
+| lgbm | 2.42 | 6 |
+| xgb | 2.91 | 5 |
 | catboost | 3.18 | 9 |
 
 Per-suite mean rank:
 
 | library | cat_clf | cat_reg | num_clf | num_reg |
 |---|--:|--:|--:|--:|
-| bonsai | 1.43 | 1.46 | 1.80 | 1.30 |
-| lgbm | 2.00 | 2.69 | 2.53 | 2.25 |
-| xgb | 3.86 | 2.62 | 2.73 | 2.95 |
+| bonsai | 1.29 | 1.62 | 1.80 | 1.25 |
+| lgbm | 2.14 | 2.62 | 2.53 | 2.30 |
+| xgb | 3.86 | 2.54 | 2.73 | 2.95 |
 | catboost | 2.71 | 3.23 | 2.93 | 3.50 |
 
 XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the knob-translation bracket recorded in decision 68). The other end of that bracket, the same suite with XGBoost at `min_child_weight=1`, was measured: bonsai keeps the lead at mean rank 1.78 and XGBoost rises to second. Those rows are closed evidence now, listed in the archive.
 
 Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite (hours; datasets fetch from OpenML), then `--report` on the same file to render the standings from the jsonl.
 
-*Source: [`quality-grinsztajn-2026-10.jsonl`](../../../benchmarks/results/quality-grinsztajn-2026-10.jsonl). As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.*
+*Source: [`quality-grinsztajn-2026-11.jsonl`](../../../benchmarks/results/quality-grinsztajn-2026-11.jsonl). As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.*
 
 ### Device standings: the same suite on the GPU
 
@@ -56,7 +56,7 @@ Per-suite mean rank:
 
 Reproduce: `python -m bonsai.bench.grinsztajn --device cuda out.jsonl` on a CUDA host, then `--report` on the same file.
 
-*Source: [`quality-grinsztajn-gpu-2026-10.jsonl`](../../../benchmarks/results/quality-grinsztajn-gpu-2026-10.jsonl). As-run on one GPU host; the arm placement is pinned by python/tests/bench/test_grinsztajn.py.*
+*Source: [`quality-grinsztajn-gpu-2026-11.jsonl`](../../../benchmarks/results/quality-grinsztajn-gpu-2026-11.jsonl). As-run on one GPU host; the arm placement is pinned by python/tests/bench/test_grinsztajn.py.*
 
 ### Device drift: each GPU arm against its CPU rows
 
@@ -64,14 +64,14 @@ Every arm of the device sweep read against the CPU row of the same suite, datase
 
 | device arm | CPU partner | pairs | mean gap | worst gap | host spread | worst task | verdict |
 |---|---|---|---|---|---|---|---|
-| bonsai_cuda_depthwise | bonsai_dw | 165 | -2.94e-05 | 3.56e-06 | 1.77e-05 | SGEMM_GPU_kernel_performance s2 | held |
-| bonsai_cuda_leafwise | bonsai_lw | 165 | -4.08e-05 | 4.37e-06 | 1.17e-05 | SGEMM_GPU_kernel_performance s0 | held |
-| bonsai_cuda_levelwise | bonsai_obl | 165 | -1.24e-05 | 1.40e-04 | 1.33e-04 | Bike_Sharing_Demand s1 | held |
+| bonsai_cuda_depthwise | bonsai_dw | 165 | -3.54e-05 | 2.87e-06 | 1.79e-05 | visualizing_soil s0 | held |
+| bonsai_cuda_leafwise | bonsai_lw | 165 | -3.16e-05 | 4.19e-06 | 1.05e-05 | SGEMM_GPU_kernel_performance s0 | held |
+| bonsai_cuda_levelwise | bonsai_obl | 165 | -3.69e-06 | 0.00e+00 | 1.21e-05 | Bike_Sharing_Demand s0 | held |
 | xgb_cuda | xgb | 165 | -5.79e-04 | 1.08e-03 | 2.91e-04 | covertype s2 | moved (not gated) |
-| lgbm_cuda | lgbm | 165 | +6.49e-03 | 2.62e-02 | 8.28e-03 | compass s0 | moved (not gated) |
-| catboost_gpu | catboost | 165 | +2.40e-04 | 5.89e-03 | 2.21e-03 | cpu_act s2 | moved (not gated) |
+| lgbm_cuda | lgbm | 165 | +6.54e-03 | 2.62e-02 | 8.28e-03 | compass s0 | moved (not gated) |
+| catboost_gpu | catboost | 165 | +2.43e-04 | 5.89e-03 | 2.21e-03 | cpu_act s2 | moved (not gated) |
 
-*Source: [`quality-grinsztajn-gpu-2026-10.jsonl`](../../../benchmarks/results/quality-grinsztajn-gpu-2026-10.jsonl). The allowance and the pairing rule live in scripts/check_standings.py.*
+*Source: [`quality-grinsztajn-gpu-2026-11.jsonl`](../../../benchmarks/results/quality-grinsztajn-gpu-2026-11.jsonl). The allowance and the pairing rule live in scripts/check_standings.py.*
 
 ### Head to head: bonsai leafwise against LightGBM at 63 leaves
 
@@ -96,12 +96,12 @@ Task by task: the gap is bonsai's mean over seeds minus LightGBM's (r2 or AUC), 
 
 | suite | tasks | bonsai wins | lightgbm wins | ties | mean gap | widest lead | widest deficit |
 |---|---|---|---|---|---|---|---|
-| cat_clf | 7 | 5 | 2 | 0 | +0.0023 | +0.0090 | -0.0004 |
-| cat_reg | 13 | 5 | 8 | 0 | -0.0014 | +0.0023 | -0.0108 |
-| num_clf | 15 | 9 | 6 | 0 | +0.0007 | +0.0052 | -0.0024 |
-| num_reg | 20 | 13 | 7 | 0 | +0.0014 | +0.0255 | -0.0131 |
-| all | 55 | 32 | 23 | 0 | +0.0006 | +0.0255 | -0.0131 |
+| cat_clf | 7 | 5 | 2 | 0 | +0.0023 | +0.0091 | -0.0004 |
+| cat_reg | 13 | 5 | 8 | 0 | -0.0015 | +0.0019 | -0.0108 |
+| num_clf | 15 | 9 | 6 | 0 | +0.0007 | +0.0053 | -0.0024 |
+| num_reg | 20 | 13 | 7 | 0 | +0.0014 | +0.0253 | -0.0131 |
+| all | 55 | 32 | 23 | 0 | +0.0006 | +0.0253 | -0.0131 |
 
 Reproduce: `python -m bonsai.bench.grinsztajn --device cuda --regime leaf-capped out.jsonl` on a CUDA host, then `--report` on the same file.
 
-*Source: [`quality-grinsztajn-leaf-capped-gpu-2026-10.jsonl`](../../../benchmarks/results/quality-grinsztajn-leaf-capped-gpu-2026-10.jsonl). As-run on one GPU host; the regime's knobs and arms are pinned by python/tests/bench/test_grinsztajn.py.*
+*Source: [`quality-grinsztajn-leaf-capped-gpu-2026-11.jsonl`](../../../benchmarks/results/quality-grinsztajn-leaf-capped-gpu-2026-11.jsonl). As-run on one GPU host; the regime's knobs and arms are pinned by python/tests/bench/test_grinsztajn.py.*
