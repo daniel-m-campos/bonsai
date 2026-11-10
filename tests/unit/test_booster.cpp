@@ -1,8 +1,10 @@
+#include <array>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <cmath>
+#include <concepts>
 #include <cstddef>
 #include <utility>
 #include <vector>
@@ -102,6 +104,56 @@ RawFeatures separable_raw_midpoints()
 {
     std::vector<float> const data = {0.05F, 0.05F, 0.95F, 0.95F};
     return RawFeatures{.data = data, .n_rows = 4, .n_features = 1};
+}
+
+using HostGrowers = TypeList<DepthwiseGrower<>, LeafwiseGrower<>, ObliviousGrower<>>;
+
+constexpr size_t k_stepped_rows = 16;
+
+// Sixteen rows on one feature whose labels rise in steps a depth-2 tree can
+// cut between. A binary objective reads the two highest steps as positives.
+template <typename Obj> detail::ColumnBatch stepped_batch()
+{
+    constexpr std::array k_steps{0.0F, 0.0F, 1.0F, 1.0F, 3.0F, 3.0F, 6.0F, 6.0F};
+    detail::ColumnBatch  batch{
+         .features      = {std::vector<float>(k_stepped_rows)},
+         .labels        = std::vector<float>(k_stepped_rows),
+         .weights       = {},
+         .feature_names = {"a"},
+    };
+    for (size_t r = 0; r < k_stepped_rows; ++r)
+    {
+        float const step     = k_steps[r / 2];
+        batch.features[0][r] = static_cast<float>(r);
+        batch.labels[r]      = std::same_as<Obj, LogLossObjective>
+                                   ? static_cast<float>(step > 1.0F)
+                                   : step;
+    }
+    return batch;
+}
+
+template <typename Obj, typename G>
+std::vector<float> fitted_predictions(Config const              &cfg,
+                                      detail::ColumnBatch const &batch)
+{
+    Dataset const                   train = make_dataset(batch);
+    auto const                      raw   = to_raw(batch);
+    Booster<Obj, G, AllRowsSampler> booster{cfg};
+    for (int round = 0; round < 3; ++round)
+    {
+        booster.update_one_iter(train);
+    }
+    std::vector<float> pred(raw.n_rows);
+    booster.predict(raw.view(), pred);
+    return pred;
+}
+
+Config stepped_cfg()
+{
+    Config cfg                       = tiny_cfg();
+    cfg.booster_config.learning_rate = 0.5F;
+    cfg.objective.quantile_alpha     = 0.8F;
+    return cfg;
 }
 
 } // namespace
@@ -217,6 +269,25 @@ TEMPLATE_LIST_TEST_CASE("Booster: weights scale grad/hess and shift leaf values"
     CHECK(pred_w[1] < pred_unw[1]);
     CHECK(pred_w[2] > pred_unw[2]);
     CHECK(pred_w[3] > pred_unw[3]);
+}
+
+TEMPLATE_TEST_CASE("Booster: unit weights reproduce the unweighted fit",
+                   "[booster][fit][weights]", MSEObjective, LogLossObjective,
+                   PoissonObjective, MAEObjective, QuantileObjective)
+{
+    Config const              cfg   = stepped_cfg();
+    detail::ColumnBatch const plain = stepped_batch<TestType>();
+    detail::ColumnBatch       unit  = plain;
+    unit.weights.assign(k_stepped_rows, 1.0F);
+
+    for_each_type<HostGrowers>(
+        [&]<typename G>()
+        {
+            INFO(name_of<G>);
+            auto const unweighted = fitted_predictions<TestType, G>(cfg, plain);
+            CHECK(unweighted.front() != unweighted.back());
+            CHECK(fitted_predictions<TestType, G>(cfg, unit) == unweighted);
+        });
 }
 
 TEMPLATE_LIST_TEST_CASE("Booster: predict matches analytic leaf after 1 iter",
