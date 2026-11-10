@@ -78,7 +78,7 @@ Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bon
 
 ### Perf
 
-A fit total is ingest plus train time. On GPU at the tall scenario (16M rows x 128 features), fit totals run depthwise 3.3s vs XGBoost 27.7s; leafwise 3.3s vs LightGBM 29.0s; levelwise 3.1s vs CatBoost 19.3s. On CPU at the tall scenario (2M rows x 128 features): depthwise 9.5s vs XGBoost 18.3s; leafwise 10.4s vs LightGBM 23.4s; levelwise 9.0s vs CatBoost 17.1s. The wide and extreme scenarios, memory use on the host and the device, and early stopping are on [the scenario panels](https://daniel-m-campos.github.io/bonsai/results/results/perf/).
+A fit total is ingest plus train time. On GPU at the tall scenario (16M rows x 128 features), fit totals run depthwise 3.8s vs XGBoost 20.9s; leafwise 4.2s vs LightGBM 31.6s; levelwise 5.4s vs CatBoost 18.3s. On CPU at the tall scenario (2M rows x 128 features): depthwise 10.1s vs XGBoost 13.2s; leafwise 10.2s vs LightGBM 17.6s; levelwise 9.7s vs CatBoost 13.3s. The wide and extreme scenarios, memory use on the host and the device, and early stopping are on [the scenario panels](https://daniel-m-campos.github.io/bonsai/results/results/perf/).
 
 The panels, and the closed campaigns behind them, are in [the ledger](https://daniel-m-campos.github.io/bonsai/results/results/).
 
@@ -89,8 +89,8 @@ On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) (
 | library | mean rank | outright wins |
 |---|--:|--:|
 | **bonsai** | **1.49** | **35** |
-| lightgbm | 2.40 | 6 |
-| xgboost | 2.93 | 5 |
+| lightgbm | 2.42 | 6 |
+| xgboost | 2.91 | 5 |
 | catboost | 3.18 | 9 |
 
 The same suite with every library on its GPU build:
