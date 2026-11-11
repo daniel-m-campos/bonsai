@@ -193,10 +193,10 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
     {
         if constexpr (has_device_objective<Obj> && !sampler_traits<Sa>::reads_gradients)
         {
-            bool const open =
-                resident_round_open(this->config().dart_drop_rate,
-                                    reproject_monotone_on_host<tree_type>(
-                                        has_renew_leaf, monotone_constraints_));
+            bool const open = resident_round_open(
+                this->config().dart_drop_rate,
+                renew_leaf_on_host<tree_type>(has_renew_leaf, monotone_constraints_,
+                                              train.weights()));
             if (resident_.sync(this->grower(), train, open,
                                std::span<float>{this->scores()}, objective_,
                                this->config().learning_rate))

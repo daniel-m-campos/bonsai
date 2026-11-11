@@ -805,6 +805,27 @@ TEST_CASE("An oblivious monotone fit under a renewal objective stays on the host
     REQUIRE(max_abs_diff(def, forced) == 0.0F);
 }
 
+TEST_CASE("A weighted renewal fit stays on the host", "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident renewal needs a usable CUDA device");
+    }
+    auto const data = make_regression(8192, 6, 83, /*binary=*/false, /*weighted=*/true);
+    auto const cfg  = reg_cfg();
+    // The device selection counts every row once, so weights keep the renewal
+    // on the host and the booster never arms: the escape hatch has nothing to
+    // toggle and the two models are identical bytes.
+    auto const stays_on_host = [&]<typename BoosterT>()
+    {
+        return max_abs_diff(fit_predict<BoosterT>(cfg, data, 20, false),
+                            fit_predict<BoosterT>(cfg, data, 20, true)) == 0.0F;
+    };
+    REQUIRE(stays_on_host.template operator()<MaeBooster<CudaDepthwiseGrower>>());
+    REQUIRE(stays_on_host.template operator()<HuberBooster<CudaDepthwiseGrower>>());
+    REQUIRE(stays_on_host.template operator()<QuantileBooster<CudaObliviousGrower>>());
+}
+
 TEST_CASE("Resident labels follow the Dataset, not the shared ingest plane",
           "[cuda][resident][ingest]")
 {
