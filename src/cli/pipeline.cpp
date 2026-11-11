@@ -673,7 +673,7 @@ train_with_progress(Config const &cfg, LabeledData const &train,
             break;
         }
     }
-    if (plan.early_stop)
+    if (plan.early_stop && scorer)
     {
         keep_best_rounds(cfg, *booster, scorer->base(), stopper, on_tick != nullptr);
     }
