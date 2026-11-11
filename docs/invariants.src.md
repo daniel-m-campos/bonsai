@@ -35,7 +35,7 @@ The cuda growers are registered in every build; without a device, construction a
 
 ### resident-objective-eligibility
 
-The device-resident objective arms for MSE, LogLoss, Poisson, MAE, Huber and Quantile, weighted or not, with no DART and a sampler that never reads gradient values; everything else takes the host path, as does an oblivious tree under a monotone constraint with a renewal objective (its leaf table is reprojected on the host). `BONSAI_HOST_OBJECTIVE=1` forces the host path. A K-target regression fit arms under the same rules, once with the whole label and score blocks, and grows tree k from the device's column k.
+The device-resident objective arms for MSE, LogLoss, Poisson, MAE, Huber and Quantile with no DART and a sampler that never reads gradient values; everything else takes the host path. MSE, LogLoss and Poisson arm weighted or not. MAE, Huber and Quantile renew their leaves, and a renewal fit takes the host path when its rows carry weights (the device selection counts every row once) or when an oblivious tree is under a monotone constraint (its leaf table is reprojected on the host). `BONSAI_HOST_OBJECTIVE=1` forces the host path. A K-target regression fit arms under the same rules, once with the whole label and score blocks, and grows tree k from the device's column k.
 
 - code: `include/bonsai/booster.hpp` : `resident_begin`
 - code: `include/bonsai/multi_output_booster.hpp` : `try_resident_round`
