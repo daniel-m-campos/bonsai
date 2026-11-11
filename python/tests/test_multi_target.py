@@ -15,6 +15,7 @@ import pytest
 
 K = 3
 N_ITERS = 12
+_WARM_START_PAIRS = {"booster.n_iters": 3, "parallel.n_threads": 2}
 
 requires_cuda = pytest.mark.skipif(
     not bonsai.cuda_available(), reason="no CUDA build or no visible device"
@@ -150,6 +151,53 @@ def test_dataset_api_refuses_a_width_that_disagrees_with_the_config():
     binary = (Y > 0).astype(np.float32)
     with pytest.raises((ValueError, RuntimeError), match="regression objectives"):
         bonsai.train({"dispatch.objective_name": "logloss"}, bonsai.Dataset(X, binary))
+
+
+def _saved_model(tmp_path, X, y) -> str:
+    """Three rounds on (X, y), saved; the path a warm start continues from."""
+    path = str(tmp_path / "base.bonsai")
+    bonsai.train(_WARM_START_PAIRS, X, y).save(path)
+    return path
+
+
+@pytest.mark.parametrize("as_dataset", [False, True], ids=["arrays", "dataset"])
+@pytest.mark.parametrize(
+    ("model_width", "y_width", "message"),
+    [
+        (1, K, r"objective\.n_targets is 1 and y carries 3 targets per row"),
+        (K, 1, r"objective\.n_targets is 3 and y carries 1 target per row"),
+    ],
+)
+def test_warm_start_refuses_a_y_of_another_target_count(
+    tmp_path, as_dataset, model_width, y_width, message
+):
+    X, Y = _data()
+    labels = {1: Y[:, 0], K: Y}
+    path = _saved_model(tmp_path, X, labels[model_width])
+    y = labels[y_width]
+    data = (bonsai.Dataset(X, y),) if as_dataset else (X, y)
+    with pytest.raises(ValueError, match=message):
+        bonsai.train(_WARM_START_PAIRS, *data, init_model=path)
+
+
+def test_regressor_warm_start_refuses_a_y_of_another_target_count(tmp_path):
+    X, Y = _data()
+    one = _saved_model(tmp_path, X, Y[:, 0])
+    with pytest.raises(ValueError, match=r"objective\.n_targets=3 disagrees with the model's 1"):
+        bonsai.BonsaiRegressor(n_iters=3, n_threads=2).fit(X, Y, init_model=one)
+    wide = _saved_model(tmp_path, X, Y)
+    with pytest.raises(ValueError, match=r"objective\.n_targets is 3 and y carries 1 target"):
+        bonsai.BonsaiRegressor(n_iters=3, n_threads=2).fit(X, Y[:, 0], init_model=wide)
+
+
+def test_warm_start_continues_a_k_target_model_on_a_k_wide_y(tmp_path):
+    X, Y = _data()
+    path = _saved_model(tmp_path, X, Y)
+    warm = bonsai.train(_WARM_START_PAIRS, X, Y, init_model=path)
+    assert warm.n_targets == K
+    np.testing.assert_array_equal(warm.predict(X, num_iteration=3), bonsai.load(path).predict(X))
+    est = bonsai.BonsaiRegressor(n_iters=3, n_threads=2).fit(X, Y, init_model=path)
+    np.testing.assert_array_equal(est.predict(X), warm.predict(X))
 
 
 def test_an_eval_dataset_of_another_target_count_is_refused():

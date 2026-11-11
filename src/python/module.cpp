@@ -1878,14 +1878,16 @@ bonsai::Config reconcile_init(bonsai::Config                                  cf
                                              stated_keys(items));
 }
 
-void reconcile_targets(bonsai::Config &cfg, bonsai::Dataset const &train)
+void adopt_label_width(bonsai::Config &cfg, size_t width)
 {
-    size_t const width = train.n_targets();
-    if (cfg.objective.n_targets == 1 && width > 1)
+    if (cfg.objective.n_targets == 1)
     {
         cfg.objective.n_targets = static_cast<uint32_t>(width);
-        return;
     }
+}
+
+void require_label_width(bonsai::Config const &cfg, size_t width)
+{
     if (cfg.objective.n_targets != width)
     {
         throw std::invalid_argument(
@@ -1923,7 +1925,12 @@ Model run_fit(bonsai::Config cfg, bonsai::cli::LabeledData const &train,
               std::optional<bonsai::io::LoadedBooster> init)
 {
     require_built_in_metrics(cfg);
-    reconcile_targets(cfg, train.dataset);
+    size_t const width = train.dataset.n_targets();
+    if (!init)
+    {
+        adopt_label_width(cfg, width);
+    }
+    require_label_width(cfg, width);
     std::optional<bonsai::cli::LabeledData> owned;
     bonsai::cli::ValidationRef const        validation =
         resolve_eval_set(eval_set, cfg, mappers, init.has_value(), owned);
