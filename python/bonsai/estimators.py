@@ -237,8 +237,12 @@ class _BonsaiEstimator:
             ``0..K-1`` internally and decoded back to the original
             ``classes_`` values by ``predict``.
         sample_weight
-            Per-row weights that scale each row's gradient and hessian
-            (sklearn's convention). None weights every row equally.
+            Per-row weights, finite and non-negative with at least one
+            positive (sklearn's convention). A weight scales its row's
+            gradient and hessian and counts the row in the base score and
+            in the leaf values MAE, Huber and Quantile renew, so the label
+            of a zero-weight row never reaches the fit. None weights every
+            row equally.
         eval_set
             One bare ``(X, y)`` tuple, Dataset, or None. A ``bonsai.Dataset``
             must be built with ``reference=`` the training dataset, which
@@ -271,10 +275,11 @@ class _BonsaiEstimator:
             If ``eval_set`` is a list, or given at all with
             ``dart_drop_rate > 0``; if ``X`` has no rows or no columns,
             ``y`` holds a non-finite value, or ``sample_weight`` a
-            non-finite or negative one; for a classifier also if ``y``
-            contains NaN (in any dtype), holds floats that are not finite
-            integers (a continuous target), or has fewer than 2 classes,
-            or an eval-set label was not seen in the training classes.
+            non-finite or negative one or no positive one; for a classifier
+            also if ``y`` contains NaN (in any dtype), holds floats that are
+            not finite integers (a continuous target), or has fewer than 2
+            classes, or an eval-set label was not seen in the training
+            classes.
         """
         _reject_eval_set_list(eval_set)
         y_enc, targets = self._encode_targets(y)

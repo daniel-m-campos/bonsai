@@ -133,11 +133,10 @@ template <typename Obj> detail::ColumnBatch stepped_batch()
 }
 
 template <typename Obj, typename G>
-std::vector<float> fitted_predictions(Config const              &cfg,
+std::vector<float> fitted_predictions(Config const &cfg, Dataset const &train,
                                       detail::ColumnBatch const &batch)
 {
-    Dataset const                   train = make_dataset(batch);
-    auto const                      raw   = to_raw(batch);
+    auto const                      raw = to_raw(batch);
     Booster<Obj, G, AllRowsSampler> booster{cfg};
     for (int round = 0; round < 3; ++round)
     {
@@ -146,6 +145,13 @@ std::vector<float> fitted_predictions(Config const              &cfg,
     std::vector<float> pred(raw.n_rows);
     booster.predict(raw.view(), pred);
     return pred;
+}
+
+template <typename Obj, typename G>
+std::vector<float> fitted_predictions(Config const              &cfg,
+                                      detail::ColumnBatch const &batch)
+{
+    return fitted_predictions<Obj, G>(cfg, make_dataset(batch), batch);
 }
 
 Config stepped_cfg()
@@ -288,6 +294,146 @@ TEMPLATE_TEST_CASE("Booster: unit weights reproduce the unweighted fit",
             CHECK(unweighted.front() != unweighted.back());
             CHECK(fitted_predictions<TestType, G>(cfg, unit) == unweighted);
         });
+}
+
+// INVARIANT: zero-weight-labels-never-reach-the-fit
+// The label of a row whose weight is zero never reaches the fit: two fits
+// whose labels differ only on such rows predict the same on every row, on
+// each host grower and under each objective, for the base score, the splits
+// and the renewed leaves alike.
+TEMPLATE_TEST_CASE("Booster: a zero-weight row's label never reaches the fit",
+                   "[booster][fit][weights]", MSEObjective, LogLossObjective,
+                   PoissonObjective, MAEObjective, HuberObjective, QuantileObjective)
+{
+    Config const        cfg  = stepped_cfg();
+    detail::ColumnBatch high = stepped_batch<TestType>();
+    high.weights.assign(k_stepped_rows, 1.0F);
+    detail::ColumnBatch low = high;
+    for (size_t r = 1; r < k_stepped_rows; r += 2)
+    {
+        high.weights[r] = 0.0F;
+        low.weights[r]  = 0.0F;
+        high.labels[r]  = std::same_as<TestType, LogLossObjective> ? 1.0F : 9.0F;
+        low.labels[r]   = 0.0F;
+    }
+
+    for_each_type<HostGrowers>(
+        [&]<typename G>()
+        {
+            INFO(name_of<G>);
+            auto const fitted = fitted_predictions<TestType, G>(cfg, high);
+            CHECK(fitted.front() != fitted.back());
+            CHECK(fitted_predictions<TestType, G>(cfg, low) == fitted);
+        });
+}
+
+TEST_CASE("Booster: weighted MAE fits the weighted medians",
+          "[booster][renewal][weights]")
+{
+    // The weighted median of the labels is 10 where the plain median is 20.
+    // The one split leaves residuals {-10, -10, 0} on the left, whose weighted
+    // median is 0 where the plain one is -10, and {10, 20, 20, 10} on the
+    // right, whose median is 20 either way.
+    detail::ColumnBatch const batch{
+        .features      = {{0.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F, 1.0F}},
+        .labels        = {0.0F, 0.0F, 10.0F, 20.0F, 30.0F, 30.0F, 20.0F},
+        .weights       = {1.0F, 1.0F, 4.0F, 1.0F, 1.0F, 1.0F, 1.0F},
+        .feature_names = {"a"},
+    };
+    Dataset const train = make_dataset(batch);
+    auto const    raw   = to_raw(batch);
+
+    Config cfg                       = tiny_cfg();
+    cfg.booster_config.learning_rate = 1.0F;
+    cfg.tree_config.lambda_l2        = 1.0F;
+    cfg.tree_config.max_depth        = 1;
+
+    for_each_type<HostGrowers>(
+        [&]<typename G>()
+        {
+            INFO(name_of<G>);
+            Booster<MAEObjective, G, AllRowsSampler> booster{cfg};
+            booster.update_one_iter(train);
+            CHECK(booster.init_score() == 10.0F);
+
+            std::vector<float> pred(raw.n_rows);
+            booster.predict(raw.view(), pred);
+            CHECK(pred == std::vector{10.0F, 10.0F, 10.0F, 30.0F, 30.0F, 30.0F, 30.0F});
+        });
+}
+
+TEMPLATE_TEST_CASE("Booster: a row outside the view weighs what a zero-weight row does",
+                   "[booster][fit][weights]", MSEObjective, MAEObjective,
+                   QuantileObjective)
+{
+    Config const          cfg     = stepped_cfg();
+    detail::ColumnBatch   weighed = stepped_batch<TestType>();
+    std::vector<row_id_t> viewed;
+    for (size_t r = 0; r < k_stepped_rows; ++r)
+    {
+        weighed.weights.push_back(r < k_stepped_rows / 2 ? 4.0F : 1.0F);
+        if (r % 4 != 3)
+        {
+            viewed.push_back(static_cast<row_id_t>(r));
+        }
+    }
+    detail::ColumnBatch masked = weighed;
+    for (size_t r = 3; r < k_stepped_rows; r += 4)
+    {
+        masked.weights[r] = 0.0F;
+    }
+    Dataset const view =
+        make_dataset(weighed).with_rows(RowView::encode(viewed, k_stepped_rows));
+
+    for_each_type<HostGrowers>(
+        [&]<typename G>()
+        {
+            INFO(name_of<G>);
+            auto const on_view = fitted_predictions<TestType, G>(cfg, view, weighed);
+            CHECK(on_view.front() != on_view.back());
+            CHECK(fitted_predictions<TestType, G>(cfg, masked) == on_view);
+        });
+}
+
+TEST_CASE("MulticlassBooster: class priors count each row by its weight",
+          "[booster][multiclass][weights]")
+{
+    Config cfg              = tiny_cfg();
+    cfg.objective.n_classes = 3;
+    detail::ColumnBatch batch{
+        .features      = {{0.0F, 0.1F, 0.5F, 0.6F, 0.9F, 1.0F}},
+        .labels        = {0.0F, 0.0F, 1.0F, 1.0F, 2.0F, 2.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+    auto const priors_under = [&](std::vector<float> labels, std::vector<float> weights)
+    {
+        batch.labels  = std::move(labels);
+        batch.weights = std::move(weights);
+        MulticlassBooster<DepthwiseGrower<>, AllRowsSampler> booster{cfg};
+        booster.update_one_iter(make_dataset(batch));
+        return booster.init_scores();
+    };
+    std::vector<float> const labels{0.0F, 0.0F, 1.0F, 1.0F, 2.0F, 2.0F};
+
+    SECTION("a prior is the log of the class's share of the weight")
+    {
+        auto const priors = priors_under(labels, {3.0F, 0.0F, 1.0F, 1.0F, 1.0F, 2.0F});
+        CHECK(priors == std::vector{static_cast<float>(std::log(3.0 / 8.0)),
+                                    static_cast<float>(std::log(2.0 / 8.0)),
+                                    static_cast<float>(std::log(3.0 / 8.0))});
+    }
+    SECTION("one constant weight gives the unweighted priors, an empty class included")
+    {
+        std::vector<float> const two_classes{0.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F};
+        CHECK(priors_under(two_classes, std::vector<float>(6, 2.0F)) ==
+              priors_under(two_classes, {}));
+    }
+    SECTION("no positive weight is refused")
+    {
+        CHECK_THROWS_AS(priors_under(labels, std::vector<float>(6, 0.0F)),
+                        std::invalid_argument);
+    }
 }
 
 TEMPLATE_LIST_TEST_CASE("Booster: predict matches analytic leaf after 1 iter",

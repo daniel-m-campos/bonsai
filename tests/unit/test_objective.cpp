@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstddef>
 #include <random>
+#include <span>
+#include <stdexcept>
 #include <vector>
 
 #include "bonsai/objective.hpp"
@@ -452,4 +454,251 @@ TEST_CASE("Poisson end to end: recovers rates through the log link",
     }
     CHECK(lo_sum / 200.0 == Catch::Approx(1.0).margin(0.35));
     CHECK(hi_sum / 200.0 == Catch::Approx(8.0).margin(1.5));
+}
+
+namespace
+{
+std::vector<WeightedValue> paired(std::vector<float> const &values,
+                                  std::vector<float> const &weights)
+{
+    std::vector<WeightedValue> out(values.size());
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        out[i] = {.value = values[i], .weight = weights[i]};
+    }
+    return out;
+}
+
+template <typename Obj>
+void check_equal_weights_change_nothing(Obj const                &obj,
+                                        std::vector<float> const &values)
+{
+    std::vector<float> reordered = values;
+    float const        renewed   = obj.renew_leaf(std::span<float>{reordered});
+    for (float const weight : {1.0F, 0.3F, 2.5F})
+    {
+        std::vector<float> const weights(values.size(), weight);
+        CHECK(obj.init_score(values, weights) == obj.init_score(values));
+        std::vector<WeightedValue> residuals = paired(values, weights);
+        CHECK(obj.renew_leaf(std::span<WeightedValue>{residuals}) == renewed);
+    }
+}
+
+template <typename Obj> void check_weightless_rows_are_absent(Obj const &obj)
+{
+    std::vector<float> const kept{0.0F, 1.0F, 1.0F, 0.0F, 1.0F};
+    std::vector<float> const values{0.0F, 0.0F, 1.0F, 0.0F, 1.0F,
+                                    0.0F, 0.0F, 0.0F, 1.0F};
+    std::vector<float> const weights{1.0F, 0.0F, 1.0F, -1.0F, 1.0F,
+                                     0.0F, 1.0F, 0.0F, 1.0F};
+    CHECK(obj.init_score(values, weights) == obj.init_score(kept));
+}
+
+// The weighted quantile rule read off a full sort: the first value, in value
+// order over the rows of positive weight, whose running weight in units of the
+// mean weight, less one half, passes alpha * (n - 1).
+float sorted_scan_quantile(std::vector<WeightedValue> values, float alpha)
+{
+    std::erase_if(values, [](WeightedValue const &v) { return !(v.weight > 0.0F); });
+    std::ranges::sort(values, {}, &WeightedValue::value);
+    double total = 0.0;
+    for (WeightedValue const &v : values)
+    {
+        total += v.weight;
+    }
+    auto const   n       = static_cast<double>(values.size());
+    double const rank    = static_cast<double>(alpha) * (n - 1.0);
+    double       running = 0.0;
+    for (WeightedValue const &v : values)
+    {
+        running += v.weight;
+        if (running / (total / n) - 0.5 > rank)
+        {
+            return v.value;
+        }
+    }
+    return values.back().value;
+}
+
+template <typename Obj> void check_no_positive_weight_is_refused(Obj const &obj)
+{
+    std::vector<float> const values{0.0F, 1.0F, 1.0F};
+    std::vector<float> const weights{0.0F, 0.0F, -2.0F};
+    CHECK_THROWS_AS(obj.init_score(values, weights), std::invalid_argument);
+}
+} // namespace
+
+// INVARIANT: equal-weights-select-the-unweighted-quantile
+// Under one constant weight on every row the weighted quantile is the
+// element the unweighted rule picks, for the base score and for leaf
+// renewal, at every size and every alpha, with ties or without.
+TEST_CASE("Objective: equal weights select the unweighted quantile",
+          "[objective][weights]")
+{
+    std::mt19937 rng{7};
+    for (size_t const n : {1U, 2U, 3U, 4U, 7U, 10U, 64U, 101U})
+    {
+        for (int const distinct : {4, 1000})
+        {
+            std::uniform_int_distribution<int> draw{-distinct, distinct};
+            std::vector<float>                 values(n);
+            std::ranges::generate(values,
+                                  [&] { return static_cast<float>(draw(rng)); });
+            INFO("n = " << n << ", values in +-" << distinct);
+            check_equal_weights_change_nothing(MAEObjective{}, values);
+            for (float const alpha : {0.05F, 0.1F, 0.25F, 0.5F, 0.75F, 0.9F, 0.95F})
+            {
+                Config cfg;
+                cfg.objective.quantile_alpha = alpha;
+                INFO("alpha = " << alpha);
+                check_equal_weights_change_nothing(QuantileObjective{cfg}, values);
+            }
+        }
+    }
+}
+
+TEST_CASE("Objective: a weighted base score is the weighted statistic",
+          "[objective][weights]")
+{
+    SECTION("mse reads the weighted mean")
+    {
+        std::vector<float> const y{1.0F, 2.0F, 10.0F};
+        std::vector<float> const w{1.0F, 1.0F, 2.0F};
+        CHECK(MSEObjective::init_score(y, w) == 5.75F);
+    }
+    SECTION("logloss reads the log-odds of the weighted base rate")
+    {
+        std::vector<float> const y{1.0F, 0.0F, 0.0F, 0.0F};
+        CHECK(LogLossObjective::init_score(y, std::vector{3.0F, 1.0F, 1.0F, 1.0F}) ==
+              0.0F);
+        CHECK(LogLossObjective::init_score(y, std::vector{6.0F, 1.0F, 1.0F, 0.0F}) ==
+              std::log(3.0F));
+    }
+    SECTION("poisson reads the log of the weighted mean")
+    {
+        std::vector<float> const y{0.0F, 4.0F};
+        std::vector<float> const w{1.0F, 3.0F};
+        CHECK(PoissonObjective::init_score(y, w) == static_cast<float>(std::log(3.0)));
+    }
+    SECTION("mae and huber read the weighted median")
+    {
+        std::vector<float> const y{10.0F, 20.0F, 30.0F};
+        std::vector<float> const w{4.0F, 1.0F, 1.0F};
+        CHECK(MAEObjective::init_score(y) == 20.0F);
+        CHECK(MAEObjective::init_score(y, w) == 10.0F);
+        CHECK(HuberObjective::init_score(y, w) == 10.0F);
+    }
+    SECTION("quantile reads the weighted alpha-quantile")
+    {
+        Config cfg;
+        cfg.objective.quantile_alpha = 0.25F;
+        QuantileObjective const  obj{cfg};
+        std::vector<float> const y{1.0F, 2.0F, 3.0F, 4.0F, 5.0F};
+        std::vector<float> const w{1.0F, 1.0F, 1.0F, 1.0F, 8.0F};
+        CHECK(obj.init_score(y) == 2.0F);
+        CHECK(obj.init_score(y, w) == 4.0F);
+    }
+}
+
+TEST_CASE("Objective: a row without positive weight is absent from the base score",
+          "[objective][weights]")
+{
+    Config const cfg;
+    check_weightless_rows_are_absent(MSEObjective{cfg});
+    check_weightless_rows_are_absent(LogLossObjective{cfg});
+    check_weightless_rows_are_absent(PoissonObjective{cfg});
+    check_weightless_rows_are_absent(MAEObjective{cfg});
+    check_weightless_rows_are_absent(HuberObjective{cfg});
+    check_weightless_rows_are_absent(QuantileObjective{cfg});
+
+    // Away from the median the rank depends on how many rows are counted, so
+    // a weightless row that stayed in the count would move the answer to 1.
+    Config low;
+    low.objective.quantile_alpha = 0.2F;
+    QuantileObjective const  quantile{low};
+    std::vector<float> const kept{1.0F, 2.0F, 3.0F, 4.0F};
+    std::vector<float> const values{1.0F, 9.0F, 2.0F, 9.0F, 3.0F, 0.0F, 4.0F, 0.0F};
+    std::vector<float> const weights{1.0F, 0.0F, 1.0F, 0.0F, 1.0F, 0.0F, 1.0F, 0.0F};
+    CHECK(quantile.init_score(kept) == 2.0F);
+    CHECK(quantile.init_score(values, weights) == 2.0F);
+    std::vector<WeightedValue> residuals = paired(values, weights);
+    CHECK(quantile.renew_leaf(std::span<WeightedValue>{residuals}) == 2.0F);
+}
+
+TEST_CASE("Objective: weighted leaf renewal is the weighted statistic",
+          "[objective][weights][renewal]")
+{
+    SECTION("mae renews to the weighted median")
+    {
+        std::vector<WeightedValue> residuals{
+            {-10.0F, 1.0F}, {0.0F, 4.0F}, {-10.0F, 1.0F}, {50.0F, 0.0F}};
+        CHECK(MAEObjective::renew_leaf(std::span<WeightedValue>{residuals}) == 0.0F);
+    }
+    SECTION("quantile renews to the weighted alpha-quantile")
+    {
+        Config cfg;
+        cfg.objective.quantile_alpha = 0.25F;
+        std::vector<WeightedValue> residuals{
+            {5.0F, 8.0F}, {1.0F, 1.0F}, {2.0F, 1.0F}, {3.0F, 1.0F}, {4.0F, 1.0F}};
+        CHECK(QuantileObjective{cfg}.renew_leaf(std::span<WeightedValue>{residuals}) ==
+              4.0F);
+    }
+    SECTION("huber renews to the weighted median plus the weighted clamped mean")
+    {
+        Config const               cfg;
+        std::vector<WeightedValue> residuals{
+            {0.0F, 1.0F}, {4.0F, 2.0F}, {100.0F, 0.0F}, {0.0F, 1.0F}};
+        CHECK(HuberObjective{cfg}.renew_leaf(std::span<WeightedValue>{residuals}) ==
+              3.5F);
+    }
+}
+
+TEST_CASE("Objective: the weighted quantile is the sorted scan's value",
+          "[objective][weights][renewal]")
+{
+    std::mt19937               rng{11};
+    std::array<float, 6> const weight_values{0.0F, 0.25F, 0.5F, 1.0F, 4.0F, 32.0F};
+    std::uniform_int_distribution<size_t> draw_weight{0, weight_values.size() - 1};
+    for (size_t const n : {1U, 2U, 3U, 5U, 16U, 257U, 4096U})
+    {
+        for (int const distinct : {3, 50, 100000})
+        {
+            std::uniform_int_distribution<int> draw_value{-distinct, distinct};
+            std::vector<WeightedValue>         residuals(n);
+            std::ranges::generate(residuals,
+                                  [&]
+                                  {
+                                      return WeightedValue{
+                                          .value  = static_cast<float>(draw_value(rng)),
+                                          .weight = weight_values[draw_weight(rng)]};
+                                  });
+            residuals.front().weight = 1.0F;
+            for (float const alpha : {0.05F, 0.2F, 0.5F, 0.8F, 0.95F})
+            {
+                Config cfg;
+                cfg.objective.quantile_alpha = alpha;
+                INFO("n = " << n << ", values in +-" << distinct
+                            << ", alpha = " << alpha);
+                std::vector<WeightedValue> scratch = residuals;
+                CHECK(QuantileObjective{cfg}.renew_leaf(std::span<WeightedValue>{
+                          scratch}) == sorted_scan_quantile(residuals, alpha));
+            }
+        }
+    }
+}
+
+TEST_CASE("Objective: a fit with no positive weight is refused",
+          "[objective][weights][edge]")
+{
+    Config const cfg;
+    check_no_positive_weight_is_refused(MSEObjective{cfg});
+    check_no_positive_weight_is_refused(LogLossObjective{cfg});
+    check_no_positive_weight_is_refused(PoissonObjective{cfg});
+    check_no_positive_weight_is_refused(MAEObjective{cfg});
+    check_no_positive_weight_is_refused(HuberObjective{cfg});
+    check_no_positive_weight_is_refused(QuantileObjective{cfg});
+
+    CHECK(require_positive_weight(2.5) == 2.5);
+    CHECK_THROWS_AS(require_positive_weight(0.0), std::invalid_argument);
+    CHECK_THROWS_AS(require_positive_weight(std::nan("")), std::invalid_argument);
 }
