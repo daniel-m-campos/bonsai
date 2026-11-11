@@ -395,6 +395,40 @@ TEMPLATE_TEST_CASE("Booster: a row outside the view weighs what a zero-weight ro
         });
 }
 
+// INVARIANT: weighted-renewal-runs-on-host
+// The device renewal selects over rows counted once each, so a renewal fit
+// whose rows carry weights renews on the host, where the weighted selection
+// lives. An oblivious tree under a monotone constraint does too. Either one
+// closes the resident round.
+TEST_CASE("Booster: a weighted renewal fit renews on the host",
+          "[booster][renewal][weights]")
+{
+    std::vector<float> const weights{1.0F, 2.0F};
+    std::vector<int> const   unconstrained{0, 0};
+    std::vector<int> const   rising{+1, 0};
+    SECTION("weights send the renewal of either tree type to the host")
+    {
+        REQUIRE(renew_leaf_on_host<DenseTree>(true, unconstrained, weights));
+        REQUIRE(renew_leaf_on_host<ObliviousTree>(true, unconstrained, weights));
+    }
+    SECTION("an unweighted renewal leaves the device unless the lattice reprojects")
+    {
+        REQUIRE_FALSE(renew_leaf_on_host<DenseTree>(true, unconstrained, {}));
+        REQUIRE_FALSE(renew_leaf_on_host<ObliviousTree>(true, unconstrained, {}));
+        REQUIRE_FALSE(renew_leaf_on_host<DenseTree>(true, rising, {}));
+        REQUIRE(renew_leaf_on_host<ObliviousTree>(true, rising, {}));
+    }
+    SECTION("an objective that renews nothing never asks for the host")
+    {
+        REQUIRE_FALSE(renew_leaf_on_host<DenseTree>(false, unconstrained, weights));
+        REQUIRE_FALSE(renew_leaf_on_host<ObliviousTree>(false, rising, weights));
+    }
+    SECTION("a renewal on the host closes the resident round")
+    {
+        REQUIRE_FALSE(resident_round_open(0.0F, true));
+    }
+}
+
 TEST_CASE("MulticlassBooster: class priors count each row by its weight",
           "[booster][multiclass][weights]")
 {

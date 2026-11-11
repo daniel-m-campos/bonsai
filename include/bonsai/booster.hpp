@@ -779,21 +779,25 @@ struct ResidentState
 };
 
 // The per-fit half of resident-objective-eligibility: no DART, the escape
-// hatch unset, no renewal the host must reproject (an oblivious tree under a
-// monotone constraint with a renewal objective, whose leaf table the host
-// reprojects). A view is eligible: the epilogue walks its rows and leaves
-// the rest untouched.
-inline bool resident_round_open(float dart_drop_rate, bool reproject_on_host)
+// hatch unset, no leaf renewal the host must run (renew_leaf_on_host). A view
+// is eligible: the epilogue walks its rows and leaves the rest untouched.
+inline bool resident_round_open(float dart_drop_rate, bool renewal_on_host)
 {
     bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
-    return dart_drop_rate <= 0.0F && !host_forced && !reproject_on_host;
+    return dart_drop_rate <= 0.0F && !host_forced && !renewal_on_host;
 }
 
+// A renewal objective renews on the host when the rows carry weights (the
+// device selection counts every row once) or when an oblivious tree is under
+// a monotone constraint (the host reprojects its leaf table). Pinned by
+// "Booster: a weighted renewal fit renews on the host".
 template <typename Tree>
-bool reproject_monotone_on_host(bool renews_leaves, std::vector<int> const &constraints)
+bool renew_leaf_on_host(bool renews_leaves, std::vector<int> const &constraints,
+                        floats_view weights)
 {
-    return renews_leaves && std::same_as<Tree, ObliviousTree> &&
-           has_monotone_constraint(constraints);
+    bool const monotone_oblivious =
+        std::same_as<Tree, ObliviousTree> && has_monotone_constraint(constraints);
+    return renews_leaves && (!weights.empty() || monotone_oblivious);
 }
 
 // One boosting round in update_one_iter runs in a fixed order that several
@@ -974,8 +978,9 @@ class Booster final : public Ensemble<Gr, Sa>
                       !sampler_traits<sampler_type>::reads_gradients)
         {
             bool const open = resident_round_open(
-                config().dart_drop_rate, reproject_monotone_on_host<tree_type>(
-                                             has_renew_leaf, monotone_constraints_));
+                config().dart_drop_rate,
+                renew_leaf_on_host<tree_type>(has_renew_leaf, monotone_constraints_,
+                                              train.weights()));
             if (resident_.sync(grower(), train, open, std::span<float>{scores_},
                                objective_, config().learning_rate))
             {
