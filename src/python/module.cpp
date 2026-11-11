@@ -1700,15 +1700,7 @@ ParamItems items_from_params(nb::object params)
 
 std::vector<std::string> stated_keys(ParamItems const &items)
 {
-    std::vector<std::string> keys;
-    for (auto const &[key, value] : items)
-    {
-        if (key.starts_with("dispatch.") || key.starts_with("objective."))
-        {
-            keys.push_back(key);
-        }
-    }
-    return keys;
+    return items | std::views::keys | std::ranges::to<std::vector<std::string>>();
 }
 
 ConfigPairs render_params(ParamItems const &items)
@@ -2504,7 +2496,9 @@ NB_MODULE(_bonsai, m)
           "binned by the fit itself once its rounds have paid for the pass; a "
           "Dataset built with ``reference=`` this one is binned once.\n"
           "init_model : str, optional\n"
-          "    Continue training from this saved model (warm start).\n"
+          "    Continue training from this saved model (warm start). The fit "
+          "owns its rounds, early stopping, logging, data, metrics, and "
+          "parallel keys; any other key must equal the loaded model's.\n"
           "\n"
           "Returns\n"
           "-------\n"
@@ -2546,7 +2540,9 @@ NB_MODULE(_bonsai, m)
           "row-major). A ``cuda_`` grower scores it on the device when the "
           "objective has a device form; otherwise the host scores it.\n"
           "init_model : str, optional\n"
-          "    Continue training from this saved model (warm start).\n"
+          "    Continue training from this saved model (warm start). The fit "
+          "owns its rounds, early stopping, logging, data, metrics, and "
+          "parallel keys; any other key must equal the loaded model's.\n"
           "sample_weight : float32 array, shape (n_rows,), optional\n"
           "    Per-row weights, finite and non-negative, at least one positive. "
           "Each scales its row's gradient and hessian and counts the row in the base "

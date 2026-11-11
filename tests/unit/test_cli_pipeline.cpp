@@ -10,12 +10,15 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "bonsai/cli/pipeline.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/errors.hpp"
+#include "bonsai/config/sections/all.hpp"
 #include "bonsai/io/model.hpp"
 
 using namespace bonsai;      // NOLINT
@@ -202,6 +205,162 @@ TEST_CASE("reconcile_warm_start: inherits the loaded dispatch, refuses a "
         REQUIRE_THROWS_WITH(
             reconcile_warm_start(wrong, loaded, {"objective.n_classes"}),
             Catch::Matchers::ContainsSubstring("objective.n_classes"));
+    }
+}
+
+namespace
+{
+
+template <typename Visit> void for_each_config_field(Visit visit)
+{
+    auto const each_field = [&](auto const &section)
+    {
+        std::apply([&](auto const &...field) { (visit(section, field), ...); },
+                   section.fields);
+    };
+    std::apply([&](auto const &...section) { (each_field(section), ...); },
+               config::internal::all_sections);
+}
+
+void move_off_default(bool &value)
+{
+    value = !value;
+}
+
+void move_off_default(std::string &value)
+{
+    value += "_moved";
+}
+
+template <typename T>
+    requires std::is_arithmetic_v<T>
+void move_off_default(T &value)
+{
+    value = static_cast<T>(value + T{1});
+}
+
+void move_off_default(std::vector<int> &value)
+{
+    value.push_back(1);
+}
+
+void move_off_default(std::vector<std::string> &value)
+{
+    value.emplace_back("0,1");
+}
+
+Config every_field_off_default()
+{
+    Config cfg;
+    for_each_config_field([&](auto const &section, auto const &field)
+                          { move_off_default((cfg.*(section.sub)).*(field.member)); });
+    return cfg;
+}
+
+void check_field_by_field(Config const &actual, Config const &expected)
+{
+    for_each_config_field(
+        [&](auto const &section, auto const &field)
+        {
+            INFO(section.name << "." << field.leaf);
+            CHECK((actual.*(section.sub)).*(field.member) ==
+                  (expected.*(section.sub)).*(field.member));
+        });
+}
+
+} // namespace
+
+// INVARIANT: warm-start-config-is-the-models
+// A warm start's config is the loaded model's in every field the registry
+// holds, except the fit's own: the data, metrics and parallel sections and
+// the booster's n_iters, early_stopping_rounds and log_intervals. The
+// continuation trains through the loaded booster, and predict applies the
+// saved learning rate to every tree, so a field that kept the invocation's
+// value would describe a model that was never fit. The fixture moves every
+// registered field off its default, so a field the registry gains later is
+// held to the same rule without an edit here.
+TEST_CASE("reconcile_warm_start: every field outside the fit's own is the model's",
+          "[cli_pipeline][ctor][invariant]")
+{
+    Config const loaded = every_field_off_default();
+
+    SECTION("an invocation at its defaults inherits every model field")
+    {
+        Config expected                               = loaded;
+        expected.data                                 = {};
+        expected.metrics                              = {};
+        expected.parallel                             = {};
+        expected.booster_config.n_iters               = BoosterConfig{}.n_iters;
+        expected.booster_config.early_stopping_rounds = 0;
+        expected.booster_config.log_intervals         = 0;
+
+        check_field_by_field(reconcile_warm_start(Config{}, loaded), expected);
+    }
+    SECTION("the fit's own fields stay the invocation's when they differ")
+    {
+        Config stated                               = loaded;
+        stated.data.train                           = "continuation.csv";
+        stated.metrics.eval                         = {"mae"};
+        stated.parallel.n_threads                   = 3;
+        stated.booster_config.n_iters               = 7;
+        stated.booster_config.early_stopping_rounds = 5;
+        stated.booster_config.log_intervals         = 2;
+
+        auto const merged = reconcile_warm_start(
+            stated, loaded,
+            {"data.train", "metrics.eval", "parallel.n_threads", "booster.n_iters",
+             "booster.early_stopping_rounds", "booster.log_intervals"});
+        check_field_by_field(merged, stated);
+    }
+}
+
+TEST_CASE("reconcile_warm_start: a model field that disagrees is refused by name",
+          "[cli_pipeline][ctor][edge]")
+{
+    using Catch::Matchers::ContainsSubstring;
+    Config loaded;
+    loaded.tree_config.max_depth            = 4;
+    loaded.tree_config.monotone_constraints = {1, -1};
+
+    SECTION("a stated learning rate")
+    {
+        Config stated                       = loaded;
+        stated.booster_config.learning_rate = 0.1F;
+        REQUIRE_THROWS_WITH(
+            reconcile_warm_start(stated, loaded, {"booster.learning_rate"}),
+            ContainsSubstring(
+                "booster.learning_rate=0.1 disagrees with the model's 0.05"));
+    }
+    SECTION("a stated default, shown as a number")
+    {
+        Config stated                = loaded;
+        stated.tree_config.max_depth = TreeConfig{}.max_depth;
+        REQUIRE_THROWS_WITH(
+            reconcile_warm_start(stated, loaded, {"tree.max_depth"}),
+            ContainsSubstring("tree.max_depth=6 disagrees with the model's 4"));
+    }
+    SECTION("a list, shown whole")
+    {
+        Config stated                           = loaded;
+        stated.tree_config.monotone_constraints = {1, 0};
+        REQUIRE_THROWS_WITH(
+            reconcile_warm_start(stated, loaded, {"tree.monotone_constraints"}),
+            ContainsSubstring("tree.monotone_constraints=[1, 0] disagrees with the "
+                              "model's [1, -1]"));
+    }
+    SECTION("an unstated value off its default")
+    {
+        Config stated                = loaded;
+        stated.tree_config.lambda_l2 = 3.0F;
+        REQUIRE_THROWS_WITH(
+            reconcile_warm_start(stated, loaded),
+            ContainsSubstring("tree.lambda_l2=3 disagrees with the model's 1"));
+    }
+    SECTION("restating the model's own values passes")
+    {
+        auto const merged = reconcile_warm_start(
+            loaded, loaded, {"tree.max_depth", "tree.monotone_constraints"});
+        check_field_by_field(merged, loaded);
     }
 }
 
