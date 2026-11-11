@@ -326,7 +326,7 @@ def test_params_subsample_warm_start_meets_the_subsample_argument_rule(tmp_path)
     by_params = bonsai.BonsaiRegressor(n_iters=3, n_threads=2, params={"sampler.subsample": 0.8})
 
     for est in (by_argument, by_params):
-        with pytest.raises(ValueError, match=r"dispatch\.sampler_name=bernoulli disagrees"):
+        with pytest.raises(ValueError, match=r"sampler\.subsample=0\.8 disagrees"):
             est.fit(X, y, init_model=path)
 
 

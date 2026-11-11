@@ -320,6 +320,12 @@ A row view narrows which rows a fit visits and leaves the plane alone: view_n_ro
 
 - enforced by: [`Dataset: a view narrows its rows and leaves the plane alone`](../tests/unit/test_dataset.cpp)
 
+### warm-start-config-is-the-models
+
+A warm start's config is the loaded model's in every field the registry holds, except the fit's own: the data, metrics and parallel sections and the booster's n_iters, early_stopping_rounds and log_intervals. The continuation trains through the loaded booster, and predict applies the saved learning rate to every tree, so a field that kept the invocation's value would describe a model that was never fit. The fixture moves every registered field off its default, so a field the registry gains later is held to the same rule without an edit here.
+
+- enforced by: [`reconcile_warm_start: every field outside the fit's own is the model's`](../tests/unit/test_cli_pipeline.cpp)
+
 ### zero-cover-branches-are-real
 
 Oblivious trees densify into a perfect shape, so a trained model really does carry leaves no training row reached. TreeSHAP's zero-cover guard therefore protects against an input that occurs, not a theoretical one. The second half matters as much: held-out rows drawn off the training joint distribution still do not route into a dead leaf, so the guard is about weighting those branches at zero rather than about rows landing there.
