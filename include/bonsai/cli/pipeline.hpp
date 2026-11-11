@@ -86,14 +86,14 @@ using EvalHistoryRef = std::optional<std::reference_wrapper<std::vector<float>>>
 // optional<LabeledData>, converts in place.
 using ValidationRef = std::optional<std::reference_wrapper<LabeledData const>>;
 
-// A warm start continues the loaded booster, whose objective and dispatch
-// were fixed when it was first fit. Field by field: a key the invocation
-// stated (config::stated_keys) must equal the loaded value; an unstated
-// field inherits the loaded value when it sits at its config default and
-// refuses otherwise; restating the model's own values always passes. What a
-// mismatch would break: training through the loaded objective while
-// predict, save, and metrics use the stated one. Pinned by
-// "reconcile_warm_start: ..." in test_cli_pipeline.
+// A warm start continues the loaded booster, so the loaded config is the
+// model's: it trains every round and predict reads its learning rate. The
+// invocation owns the data, metrics, and parallel sections and booster
+// n_iters, early_stopping_rounds, and log_intervals. Any other key it
+// stated (config::stated_keys) must equal the loaded value; unstated, it
+// inherits that value at its config default and refuses off it. A mismatch
+// would save a config for a model never fit, whose reload predicts
+// differently. Pinned by "reconcile_warm_start: ..." in test_cli_pipeline.
 Config reconcile_warm_start(Config cfg, Config const &loaded_cfg,
                             std::vector<std::string> const &stated_keys = {});
 

@@ -818,6 +818,100 @@ def test_default_estimator_warm_starts_a_depthwise_model(tmp_path):
     assert est.n_iters_ == 8
 
 
+def _off_default_regressor(n_iters):
+    """A regressor whose learning rate, tree shape, and seed all sit off
+    their defaults."""
+    return bonsai.BonsaiRegressor(
+        n_iters=n_iters, learning_rate=0.2, max_depth=4, max_leaves=9, random_seed=7
+    )
+
+
+def _saved_off_default_model(tmp_path):
+    """The path of a saved ``_off_default_regressor`` fit, with its data."""
+    rng = np.random.default_rng(21)
+    x = rng.standard_normal((400, 5)).astype(np.float32)
+    y = (x[:, 0] * 2 + x[:, 1]).astype(np.float32)
+    path = str(tmp_path / "off_default.bonsai")
+    _off_default_regressor(n_iters=5).fit(x, y).save(path)
+    return path, x, y
+
+
+def _model_keys(model):
+    """The resolved config of ``model`` without the keys a fit owns."""
+    fit_owned = ("booster.n_iters", "booster.early_stopping_rounds", "booster.log_intervals")
+    resolved = bonsai.Params.from_model(model).to_dict()
+    return {
+        key: value
+        for key, value in resolved.items()
+        if key not in fit_owned and not key.startswith(("data.", "metrics.", "parallel."))
+    }
+
+
+def test_warm_start_inherits_every_model_argument_left_at_its_default(tmp_path):
+    """A continuation run by a default estimator keeps the model's own
+    learning rate, tree shape, and seed, and its config says so."""
+    path, x, y = _saved_off_default_model(tmp_path)
+
+    inherited = bonsai.BonsaiRegressor(n_iters=3).fit(x, y, init_model=path)
+    restated = _off_default_regressor(n_iters=3).fit(x, y, init_model=path)
+
+    assert _model_keys(inherited._model) == _model_keys(bonsai.load(path))
+    np.testing.assert_array_equal(inherited.predict(x), restated.predict(x))
+
+
+@pytest.mark.parametrize(
+    ("arguments", "refusal"),
+    [
+        ({"learning_rate": 0.3}, r"booster\.learning_rate=0\.3 disagrees with the model's 0\.2"),
+        ({"max_depth": 3}, r"tree\.max_depth=3 disagrees with the model's 4"),
+        ({"random_seed": 1}, r"booster\.random_seed=1 disagrees with the model's 7"),
+        ({"params": {"tree.lambda_l2": 3.0}}, r"tree\.lambda_l2=3 disagrees with the model's 1"),
+        ({"params": {"tree.feature_fraction": 0.5}}, r"tree\.feature_fraction=0\.5 disagrees"),
+        ({"params": {"booster.dart_drop_rate": 0.1}}, r"booster\.dart_drop_rate=0\.1 disagrees"),
+    ],
+)
+def test_warm_start_refuses_a_model_argument_that_disagrees(tmp_path, arguments, refusal):
+    path, x, y = _saved_off_default_model(tmp_path)
+    with pytest.raises(ValueError, match=refusal):
+        bonsai.BonsaiRegressor(n_iters=3, **arguments).fit(x, y, init_model=path)
+
+
+@pytest.mark.parametrize(
+    ("pairs", "refusal"),
+    [
+        ({"booster.learning_rate": 0.001}, r"booster\.learning_rate=0\.001 disagrees"),
+        ({"tree.max_depth": 6}, r"tree\.max_depth=6 disagrees with the model's 4"),
+        ({"tree.min_data_in_leaf": 5}, r"tree\.min_data_in_leaf=5 disagrees with the model's 20"),
+        ({"bin_mapper.max_bin": 63}, r"bin_mapper\.max_bin=63 disagrees with the model's 255"),
+    ],
+)
+def test_train_warm_start_refuses_a_stated_key_that_disagrees(tmp_path, pairs, refusal):
+    """Every key outside the fit's own is the model's, whatever its section,
+    and a stated default is still stated."""
+    path, x, y = _saved_off_default_model(tmp_path)
+    with pytest.raises(ValueError, match=refusal):
+        bonsai.train({"booster.n_iters": 2, **pairs}, x, y, init_model=path)
+
+
+def test_train_warm_start_reports_the_models_config(tmp_path):
+    path, x, y = _saved_off_default_model(tmp_path)
+    again = bonsai.train({"booster.n_iters": 2}, x, y, init_model=path)
+    assert _model_keys(again) == _model_keys(bonsai.load(path))
+
+
+def test_warm_start_predictions_survive_pickle_and_reload(tmp_path):
+    """The learning rate is applied at predict from the saved config, so a
+    continued model has to save the rate its trees were grown under."""
+    path, x, y = _saved_off_default_model(tmp_path)
+    est = bonsai.BonsaiRegressor(n_iters=3).fit(x, y, init_model=path)
+    expected = est.predict(x)
+
+    np.testing.assert_array_equal(pickle.loads(pickle.dumps(est)).predict(x), expected)
+    saved = str(tmp_path / "continued.bonsai")
+    est.save(saved)
+    np.testing.assert_array_equal(bonsai.load(saved).predict(x), expected)
+
+
 def test_empty_int_list_params_round_trip():
     """An empty list for a vector<int> key crosses the params wire format."""
     rng = np.random.default_rng(14)
