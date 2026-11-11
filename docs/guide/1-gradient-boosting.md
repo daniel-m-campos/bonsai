@@ -42,11 +42,11 @@ A plain boosting round (no DART, no sample weights) is [`Booster::update_one_ite
 3. `grower_.grow(train, grad_, hess_, rows)`: build one tree on those gradients ([chapters 2–4](2-binning-and-histograms.md)).
 4. `scores_[i] += learning_rate * leaf_values[i]`: advance every row's running prediction. `GrowResult.values` carries each row's leaf value, including rows the sampler skipped, which are routed through the finished tree (`route_unsampled` in [`src/grower_impl.hpp`](../../src/grower_impl.hpp); the bug this prevents is [chapter 5's out-of-bag stale-score bug](5-sampling.md#gotchas-war-stories)).
 
-Three legs are left out here: DART drops trees before step 1 ([chapter 7](7-early-stopping-and-dart.md)), sample weights multiply grad and hess after step 1, and constant-hessian objectives renew leaf values between steps 3 and 4 (next section).
+Three legs are left out here: DART drops trees before step 1 ([chapter 7](7-early-stopping-and-dart.md)), sample weights multiply grad and hess after step 1 and weigh the starting point and the renewed leaf values, and constant-hessian objectives renew leaf values between steps 3 and 4 (next section).
 
 The leaf-value formula is `bounded_leaf_weight` in [`include/bonsai/split.hpp`](../../include/bonsai/split.hpp): literally $-T(G, \alpha) / (H + \lambda)$ with $T$ = `l1_thresholded`, clamped to monotone bounds.
 
-The starting point `base` is `Objective::init_score`: the mean for MSE, the median for MAE, the $\alpha$-quantile for quantile loss, log-odds for logloss. During training, scores stay as raw values on the model's internal scale (log-odds for logloss). The sigmoid, which turns log-odds into probabilities, is applied when you call `predict` (`apply_link_inverse_by_name`).
+The starting point `base` is `Objective::init_score`: the mean for MSE, the median for MAE, the $\alpha$-quantile for quantile loss, log-odds for logloss. Under sample weights each is the weighted statistic (a weighted mean, a weighted quantile, the log-odds of the weighted positive share), so a row with zero weight adds nothing to it, and a fit in which no row has a positive weight is refused. During training, scores stay as raw values on the model's internal scale (log-odds for logloss). The sigmoid, which turns log-odds into probabilities, is applied when you call `predict` (`apply_link_inverse_by_name`).
 
 ### The objectives gallery
 
@@ -70,6 +70,8 @@ w^{\ast}_{\text{leaf}} = \arg\min_{w} \sum_{i \in \text{leaf}} \ell(y_i,\; F_i +
 ```
 
 which for MAE is the **median** of the leaf's residuals $y_i - F_i$ (the minimizer of a sum of absolute values), for `quantile` the residuals' $\alpha$-quantile (the pinball loss's minimizer), and for Huber the residual median plus the mean of the deviations from it, each clamped to plus or minus delta. The Huber value is a one-step approximation, not the exact minimizer. The gradient step chose *which rows* belong together; renewal asks the loss itself *what value* serves them best.
+
+Under sample weights the minimized sum is weighted, so the median and the quantile become weighted ones. bonsai's rule: drop the residuals whose weight is not positive, order the $n$ that remain, scale their weights to average one, and take the first residual whose running weight, less one half, exceeds $\alpha (n - 1)$. With equal weights that is the element the unweighted rule takes, index $\mathrm{round}(\alpha (n - 1))$, so a constant weight changes nothing. Huber's clamped mean becomes a weighted mean around the weighted median. The same rule sets the weighted starting point for MAE, Huber and quantile loss.
 
 In bonsai: `renew_leaf` on the objective ([`include/bonsai/objective.hpp`](../../include/bonsai/objective.hpp)) and the booster's `renew_leaves` pass, gated at compile time on the objective providing the method. The compiler removes the renewal call for MSE and logloss, so those objectives pay no runtime cost for it. On Year Prediction MSD (200 iterations, leafwise), renewal lowered bonsai's MAE from 6.81 to 6.094, which matches LightGBM (6.095) and is slightly below XGBoost (6.155) and CatBoost (6.159) ([the feature-gap record](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/feature-gap-2026-07.md), section 10).
 
