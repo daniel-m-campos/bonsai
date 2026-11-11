@@ -110,6 +110,18 @@ A fit with early stopping returns the rounds up to its best validation loss, whe
 
 - enforced by: [`train_with_progress: early stopping keeps the best round`](../tests/unit/test_cli_pipeline.cpp)
 
+### equal-weights-select-the-unweighted-quantile
+
+Under one constant weight on every row the weighted quantile is the element the unweighted rule picks, for the base score and for leaf renewal, at every size and every alpha, with ties or without.
+
+- enforced by: [`Objective: equal weights select the unweighted quantile`](../tests/unit/test_objective.cpp)
+
+### estimators-ignore-zero-weight-rows
+
+The label of a row whose sample_weight is zero never reaches the fit: whatever it says, every estimator predicts the same values, for every objective and for a multi-target y.
+
+- enforced by: [`test_regressor_ignores_the_label_of_a_zero_weight_row`](../python/tests/integration/test_sample_weight.py)
+
 ### finder-reads-own-feature-totals
 
 Every feature's right side and node score are read from that feature's own histogram totals, never from another feature's. Float cells summed over a long same-sign run disagree across features by hundreds; read against one shared total, a feature's empty right side inherits the difference and an 800k-row label-sorted classification fit took that phantom cut at the root of every tree from round three on (issue 549). The free lane scan and the bounded one a monotone constraint selects both hold it.
@@ -313,6 +325,12 @@ Oblivious trees densify into a perfect shape, so a trained model really does car
 An oblivious level's shared split applies to every frontier node, so a node whose rows all routed one way leaves an empty child in the next frontier. That child contributes nothing to any candidate: its parent score and both children's scores are zero, so the level split chosen with it in the frontier is the split chosen without it, gain bit for bit; and a child that carries no histograms at all scans as that parent of zeros, wherever it sits in the frontier.
 
 - enforced by: [`HistogramLevelSplitFinder: a parent of zeros moves no level split`](../tests/unit/test_split_level.cpp)
+
+### zero-weight-labels-never-reach-the-fit
+
+The label of a row whose weight is zero never reaches the fit: two fits whose labels differ only on such rows predict the same on every row, on each host grower and under each objective, for the base score, the splits and the renewed leaves alike.
+
+- enforced by: [`Booster: a zero-weight row's label never reaches the fit`](../tests/unit/test_booster.cpp)
 
 ## Asserted in prose
 

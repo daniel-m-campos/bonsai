@@ -104,8 +104,8 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
             if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
             {
                 detail::renew_round(objective_, tree, leaf_ids, leaf_bounds,
-                                    leaf_values, targets_[k], column_, train.row_view(),
-                                    monotone_constraints_);
+                                    leaf_values, targets_[k], column_, train.weights(),
+                                    train.row_view(), monotone_constraints_);
             }
             this->advance_output(k, n, leaf_values);
             this->mutable_trees().push_back(std::move(tree));
@@ -245,14 +245,10 @@ class MultiOutputBooster final : public MultiOutputEnsemble<Gr, Sa>
 
     void seed_init_scores(Dataset const &train)
     {
-        RowView const     &view = train.row_view();
         std::vector<float> init(n_outputs());
         for (size_t k = 0; k < n_outputs(); ++k)
         {
-            init[k] =
-                view.is_identity()
-                    ? objective_.init_score(targets_[k])
-                    : objective_.init_score(floats_view{view.gather(targets_[k])});
+            init[k] = detail::init_score_over(objective_, targets_[k], train);
         }
         this->set_init_scores(std::move(init));
     }

@@ -578,34 +578,100 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
 
 namespace detail
 {
+// The base score over the rows this fit visits, each counted by its weight
+// when the dataset carries weights.
+template <typename Obj>
+float init_score_over(Obj const &objective, floats_view targets, Dataset const &train)
+{
+    RowView const    &view    = train.row_view();
+    floats_view const weights = train.weights();
+    if (view.is_identity())
+    {
+        return weights.empty() ? objective.init_score(targets)
+                               : objective.init_score(targets, weights);
+    }
+    std::vector<float> const visited = view.gather(targets);
+    if (weights.empty())
+    {
+        return objective.init_score(floats_view{visited});
+    }
+    std::vector<float> const visited_weights = view.gather(weights);
+    return objective.init_score(floats_view{visited}, floats_view{visited_weights});
+}
+
+struct Residuals
+{
+    using value_type = float;
+
+    floats_view labels;
+    floats_view scores;
+
+    static constexpr bool has_weight(row_id_t /*r*/)
+    {
+        return true;
+    }
+    float operator()(row_id_t r) const
+    {
+        return labels[r] - scores[r];
+    }
+};
+
+struct WeightedResiduals
+{
+    using value_type = WeightedValue;
+
+    floats_view labels;
+    floats_view scores;
+    floats_view weights;
+
+    bool has_weight(row_id_t r) const
+    {
+        return weights[r] > 0.0F;
+    }
+    WeightedValue operator()(row_id_t r) const
+    {
+        return {.value = labels[r] - scores[r], .weight = weights[r]};
+    }
+};
+
 // Each leaf's value becomes the objective's optimum over the residuals of
 // the rows it covers, clamped into leaf_bounds[leaf] when the grower left
 // a fence. The rows are the fit's, which for a view is the view's: a row
 // outside it was never carried through this tree, so its leaf id names a
-// leaf it does not belong to. The identity view is every row.
-template <typename Tree, typename Obj>
+// leaf it does not belong to. The identity view is every row. A row with
+// no weight adds no residual, and a leaf holding only such rows keeps the
+// grower's value.
+template <typename Tree, typename Obj, typename Sample>
 void renew_leaves(Obj const &objective, Tree &tree,
                   std::vector<node_id_t> const  &leaf_ids,
                   std::vector<LeafBounds> const &leaf_bounds,
-                  train_leaf_values &leaf_values, floats_view labels,
-                  floats_view scores, RowView const &view)
+                  train_leaf_values &leaf_values, Sample const &residual_of,
+                  RowView const &view)
 {
-    RowIndex const                  rows{view};
-    std::vector<std::vector<float>> residuals(tree.leaf_id_end());
+    using value_type = typename Sample::value_type;
+    RowIndex const                       rows{view};
+    std::vector<std::vector<value_type>> residuals(tree.leaf_id_end());
+    std::vector<float>                   renewed(residuals.size(), 0.0F);
     for (size_t k = 0; k < rows.size(); ++k)
     {
         row_id_t const r = rows[k];
-        residuals[leaf_ids[r]].push_back(labels[r] - scores[r]);
+        if (residual_of.has_weight(r))
+        {
+            residuals[leaf_ids[r]].push_back(residual_of(r));
+        }
+        else
+        {
+            renewed[leaf_ids[r]] = leaf_values[r];
+        }
     }
-    std::vector<float> renewed(residuals.size(), 0.0F);
     for (node_id_t leaf = 0; leaf < residuals.size(); ++leaf)
     {
-        std::vector<float> &res = residuals[leaf];
+        std::vector<value_type> &res = residuals[leaf];
         if (res.empty())
         {
             continue;
         }
-        float v = objective.renew_leaf(std::span<float>{res});
+        float v = objective.renew_leaf(std::span<value_type>{res});
         if (!leaf_bounds.empty())
         {
             v = static_cast<float>(std::clamp(
@@ -654,10 +720,21 @@ void renew_round(Obj const &objective, Tree &tree,
                  std::vector<node_id_t> const  &leaf_ids,
                  std::vector<LeafBounds> const &leaf_bounds,
                  train_leaf_values &leaf_values, floats_view labels, floats_view scores,
-                 RowView const &view, std::vector<int> const &constraints)
+                 floats_view weights, RowView const &view,
+                 std::vector<int> const &constraints)
 {
-    renew_leaves(objective, tree, leaf_ids, leaf_bounds, leaf_values, labels, scores,
-                 view);
+    if (weights.empty())
+    {
+        renew_leaves(objective, tree, leaf_ids, leaf_bounds, leaf_values,
+                     Residuals{.labels = labels, .scores = scores}, view);
+    }
+    else
+    {
+        renew_leaves(
+            objective, tree, leaf_ids, leaf_bounds, leaf_values,
+            WeightedResiduals{.labels = labels, .scores = scores, .weights = weights},
+            view);
+    }
     if constexpr (std::same_as<Tree, ObliviousTree>)
     {
         reproject_monotone(tree, leaf_ids, leaf_values, view, constraints);
@@ -767,7 +844,8 @@ class Booster final : public Ensemble<Gr, Sa>
         hess().resize(train.plane_n_rows());
         if (trees().empty())
         {
-            this->set_init_scores({init_score_over(train)});
+            this->set_init_scores(
+                {detail::init_score_over(objective_, train.labels(), train)});
             scores_.assign(train.plane_n_rows(), init_score());
         }
         else
@@ -842,8 +920,8 @@ class Booster final : public Ensemble<Gr, Sa>
         if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
         {
             detail::renew_round(objective_, tree, leaf_ids, leaf_bounds, leaf_values,
-                                train.labels(), floats_view{scores_}, train.row_view(),
-                                monotone_constraints_);
+                                train.labels(), floats_view{scores_}, train.weights(),
+                                train.row_view(), monotone_constraints_);
         }
         lap(prof.renew_s);
 
@@ -872,17 +950,6 @@ class Booster final : public Ensemble<Gr, Sa>
         // per-tree zero-init; grower.hpp documents the write-before-read
         // contract).
         grower().recycle(std::move(leaf_values), std::move(leaf_ids));
-    }
-
-    float init_score_over(Dataset const &train) const
-    {
-        RowView const &view = train.row_view();
-        if (view.is_identity())
-        {
-            return objective_.init_score(train.labels());
-        }
-        std::vector<float> const visited = view.gather(train.labels());
-        return objective_.init_score(floats_view{visited});
     }
 
     void seed_train_scores(Dataset const &train)
