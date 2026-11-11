@@ -1878,6 +1878,42 @@ bonsai::Config reconcile_init(bonsai::Config                                  cf
                                              stated_keys(items));
 }
 
+bool names_its_columns(std::span<std::string const> names)
+{
+    return !std::ranges::equal(names,
+                               bonsai::detail::numbered_feature_names(names.size()));
+}
+
+void require_model_names(std::span<std::string const> fitted,
+                         std::span<std::string const> given)
+{
+    if (!names_its_columns(fitted) || !names_its_columns(given))
+    {
+        return;
+    }
+    auto const [model_name, dataset_name] = std::ranges::mismatch(fitted, given);
+    if (model_name == fitted.end())
+    {
+        return;
+    }
+    throw std::invalid_argument(
+        std::format("init_model names column {} '{}' and the dataset names it '{}'; a "
+                    "warm start needs the model's columns in the model's order",
+                    model_name - fitted.begin(), *model_name, *dataset_name));
+}
+
+void require_model_columns(bonsai::BinMappers const &model,
+                           bonsai::BinMappers const &dataset)
+{
+    if (!model.same_cuts(dataset))
+    {
+        throw std::invalid_argument(
+            "init_model's cuts disagree with the dataset's; a warm start "
+            "needs the dataset binned with the model's own cuts");
+    }
+    require_model_names(model.feature_names(), dataset.feature_names());
+}
+
 void adopt_label_width(bonsai::Config &cfg, size_t width)
 {
     if (cfg.objective.n_targets == 1)
@@ -2017,12 +2053,9 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
     bonsai::parallel::FitPlace const placed;
     auto                             init = load_init(init_model);
-    if (init && !init->mappers.same_cuts(dataset.loaded().mappers))
+    if (init)
     {
-        throw std::invalid_argument(
-            "init_model's cuts disagree with the dataset's; one set of "
-            "cuts describes one set of columns, so a warm start needs the "
-            "dataset binned with the model's own cuts");
+        require_model_columns(init->mappers, dataset.loaded().mappers);
     }
     cfg            = reconcile_init(std::move(cfg), init, items);
     cfg.bin_mapper = dataset.bin_config();

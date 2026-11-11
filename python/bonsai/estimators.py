@@ -264,9 +264,10 @@ class _BonsaiEstimator:
             prints them, and ``tree.monotone_constraints`` may be keyed by
             them. None with an unnamed X leaves the columns ``f0``..``fN``.
             Rejected with ``init_model``: a warm start keeps the loaded
-            model's names. Predict-time inputs and the eval_set's X are
-            checked against the fitted names, sklearn's rule: names that go
-            missing or appear warn, names that disagree raise.
+            model's names, and holds the names X and the eval_set's X
+            carry against them. Predict-time inputs and the eval_set's X
+            are checked against the fitted names, sklearn's rule: names
+            that go missing or appear warn, names that disagree raise.
 
         Returns
         -------
@@ -279,11 +280,12 @@ class _BonsaiEstimator:
             If ``eval_set`` is a list, or given at all with
             ``dart_drop_rate > 0``; if ``X`` has no rows or no columns,
             ``y`` holds a non-finite value, or ``sample_weight`` a
-            non-finite or negative one or no positive one; for a classifier
-            also if ``y`` contains NaN (in any dtype), holds floats that are
-            not finite integers (a continuous target), or has fewer than 2
-            classes, or an eval-set label was not seen in the training
-            classes.
+            non-finite or negative one or no positive one; if ``X`` or the
+            eval_set's X names its columns differently from ``init_model``;
+            for a classifier also if ``y`` contains NaN (in any dtype), holds
+            floats that are not finite integers (a continuous target), or has
+            fewer than 2 classes, or an eval-set label was not seen in the
+            training classes.
         """
         _reject_eval_set_list(eval_set)
         y_enc, targets = self._encode_targets(y)
@@ -293,6 +295,11 @@ class _BonsaiEstimator:
             else self._build_overrides(targets)
         )
         names = self._fit_names(X, feature_names, init_model)
+        if init_model is not None:
+            held = _inputs_held_to_model_names(X, eval_set)
+            model_names = _model_feature_names(load(init_model)) if held else None
+            for given in held:
+                self._check_names_against(model_names, given)
         ev = None
         if eval_set is not None:
             if init_model is None:
@@ -874,7 +881,8 @@ class _BonsaiEstimator:
         A warm start keeps the loaded model's names, so names merely
         discovered on X are dropped rather than forwarded: they were never an
         override, and passing them on would trip the native guard against
-        naming a warm start's columns.
+        naming a warm start's columns. ``fit`` holds them against the loaded
+        model's names instead.
 
         Parameters
         ----------
@@ -1440,6 +1448,18 @@ def _names_disagreement(fitted: list[str], given: list[str]) -> str:
     return "The feature names should match those that were passed during fit." + (
         detail or " The same names arrived in a different order."
     )
+
+
+def _inputs_held_to_model_names(
+    X: object, eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None
+) -> list[object]:
+    """The fit inputs a warm start checks against the loaded model's names:
+    every one once any of them names its columns, and none otherwise, so a
+    fit on bare arrays reads no model for the check."""
+    inputs = [X] if eval_set is None else [X, _eval_set_features(eval_set)]
+    if all(_input_feature_names(given) is None for given in inputs):
+        return []
+    return inputs
 
 
 def _eval_set_features(eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset) -> object:
