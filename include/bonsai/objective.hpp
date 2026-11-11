@@ -11,9 +11,31 @@ namespace bonsai
 struct DeviceHuber;
 struct DeviceQuantile;
 
+// A label or residual paired with its row's weight. The weighted
+// alpha-quantile drops every element whose weight is not positive, orders the
+// n that remain by value, scales their weights to average one, and returns
+// the first whose running weight less one half exceeds alpha * (n - 1). Under
+// equal weights that is index llround(alpha * (n - 1)), the unweighted rule's
+// element. Pinned by "Objective: equal weights select the unweighted
+// quantile" and "Objective: the weighted quantile is the sorted scan's value".
+struct WeightedValue
+{
+    float value;
+    float weight;
+};
+
+// Returns total_weight, or throws std::invalid_argument when it is not
+// positive: rows that all weigh nothing have no base score. Pinned by
+// "Objective: a fit with no positive weight is refused".
+double require_positive_weight(double total_weight);
+
 // Objectives are instances constructed from Config so parameterized losses
 // (huber_delta, quantile_alpha) can carry state. Parameter-free objectives
 // keep static methods: statics satisfy instance-call syntax.
+//
+// init_score(targets, weights) counts every row by its weight, as a weighted
+// mean or a weighted quantile: a row whose weight is not positive is absent,
+// and weights that are all one return the unweighted score.
 template <typename T>
 concept Objective = std::constructible_from<T, Config const &> &&
                     requires(T const &o, floats_view preds, floats_view targets,
@@ -21,6 +43,7 @@ concept Objective = std::constructible_from<T, Config const &> &&
                         { o.compute(preds, targets, grad, hess) } -> std::same_as<void>;
                         { o.eval(preds, targets) } -> std::same_as<float>;
                         { o.init_score(targets) } -> std::same_as<float>;
+                        { o.init_score(targets, targets) } -> std::same_as<float>;
                     };
 
 struct MSEObjective
@@ -31,6 +54,7 @@ struct MSEObjective
                          floats_out hess);
     static float eval(floats_view preds, floats_view targets);
     static float init_score(floats_view targets);
+    static float init_score(floats_view targets, floats_view weights);
 };
 
 struct LogLossObjective
@@ -41,6 +65,7 @@ struct LogLossObjective
                          floats_out hess);
     static float eval(floats_view scores, floats_view labels);
     static float init_score(floats_view labels);
+    static float init_score(floats_view labels, floats_view weights);
 };
 
 // Poisson raw-score clamp: log-rates clamp to +-this before exp so a runaway
@@ -63,6 +88,7 @@ struct PoissonObjective
                          floats_out hess);
     static float eval(floats_view scores, floats_view targets);
     static float init_score(floats_view targets);
+    static float init_score(floats_view targets, floats_view weights);
 };
 
 // L1 loss: grad = sign(residual), hess = 1, so min_child_hess acts as a
@@ -75,9 +101,11 @@ struct MAEObjective
                          floats_out hess);
     static float eval(floats_view preds, floats_view targets);
     static float init_score(floats_view targets); // median
+    static float init_score(floats_view targets, floats_view weights);
     // Leaf renewal: the L1-optimal leaf value is the residual median, not
     // the Newton step (which is a mean of +-1 gradients). Reorders in place.
     static float renew_leaf(std::span<float> residuals);
+    static float renew_leaf(std::span<WeightedValue> residuals);
 };
 
 // Huber loss: L2 within |residual| <= delta, L1 outside.
@@ -89,9 +117,11 @@ struct HuberObjective
                          floats_out hess) const;
     float        eval(floats_view preds, floats_view targets) const;
     static float init_score(floats_view targets); // median
+    static float init_score(floats_view targets, floats_view weights);
     // LightGBM-style huber renewal: residual median plus the mean of the
     // delta-clamped deviations from it. Reorders in place.
     float              renew_leaf(std::span<float> residuals) const;
+    float              renew_leaf(std::span<WeightedValue> residuals) const;
     friend DeviceHuber device_objective_of(HuberObjective const &objective);
 
   private:
@@ -109,9 +139,11 @@ struct QuantileObjective
                   floats_out hess) const;
     float eval(floats_view preds, floats_view targets) const;
     float init_score(floats_view targets) const; // alpha-quantile
+    float init_score(floats_view targets, floats_view weights) const;
     // Pinball-optimal leaf value: the alpha-quantile of the residuals.
     // Reorders in place.
     float                 renew_leaf(std::span<float> residuals) const;
+    float                 renew_leaf(std::span<WeightedValue> residuals) const;
     friend DeviceQuantile device_objective_of(QuantileObjective const &objective);
 
   private:
@@ -132,7 +164,7 @@ struct SoftmaxObjective
     static void  compute(floats_view preds, floats_view targets, floats_out grad,
                          floats_out hess);
     static float eval(floats_view preds, floats_view targets);
-    static float init_score(floats_view targets);
+    static float init_score(floats_view targets, floats_view weights = {});
 };
 
 } // namespace bonsai

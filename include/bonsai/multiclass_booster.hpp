@@ -5,6 +5,7 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/multi_output_ensemble.hpp"
+#include "bonsai/objective.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/row_view.hpp"
 #include "bonsai/sampler.hpp"
@@ -150,22 +151,34 @@ class MulticlassBooster final : public MultiOutputEnsemble<Gr, Sa>
 
   private:
     // Log class priors over the rows this fit visits (a view counts its own
-    // labels), like lightgbm's boost_from_average. Only for a fresh booster:
-    // a warm start keeps the priors it was loaded with.
+    // labels), like lightgbm's boost_from_average, each row counted by its
+    // weight and a row with no weight left out. A class nobody carries reads
+    // as one row of mean weight. Only for a fresh booster: a warm start keeps
+    // the priors it was loaded with.
     void seed_class_priors(Dataset const &train)
     {
         size_t const        n_k = n_outputs();
-        std::vector<double> counts(n_k, 0.0);
-        floats_view const   labels = train.labels();
+        std::vector<double> class_weights(n_k, 0.0);
+        floats_view const   labels  = train.labels();
+        floats_view const   weights = train.weights();
+        double              total   = 0.0;
+        double              n_fit   = 0.0;
         for (row_id_t const r : train.row_view().materialize())
         {
-            counts[class_of(labels[r], n_k)] += 1.0;
+            double const w = weights.empty() ? 1.0 : static_cast<double>(weights[r]);
+            if (w > 0.0)
+            {
+                class_weights[class_of(labels[r], n_k)] += w;
+                total += w;
+                n_fit += 1.0;
+            }
         }
-        auto const         n_fit = static_cast<double>(train.view_n_rows());
+        double const       mean_weight = require_positive_weight(total) / n_fit;
         std::vector<float> priors(n_k);
         for (size_t k = 0; k < n_k; ++k)
         {
-            priors[k] = static_cast<float>(std::log(std::max(counts[k], 1.0) / n_fit));
+            priors[k] = static_cast<float>(
+                std::log(std::max(class_weights[k], mean_weight) / total));
         }
         this->set_init_scores(std::move(priors));
     }
