@@ -2191,6 +2191,17 @@ __forceinline__ __device__ SelectT select_ahead_of_scan(SelectT const *select,
     return s;
 }
 
+inline __device__ float clamped_deviation(float residual, float q, float delta)
+{
+    return fminf(fmaxf(residual - q, -delta), delta);
+}
+
+inline __device__ float fenced_leaf_value(float v, NodeTableRef nodes, uint32_t node)
+{
+    return static_cast<float>(
+        fmin(fmax(static_cast<double>(v), nodes.lo[node]), nodes.hi[node]));
+}
+
 __global__ void renew_narrow_kernel(uint32_t *hist, uint32_t pass, double alpha,
                                     NodeTableRef nodes, LeafSelect *select)
 {
@@ -2244,8 +2255,8 @@ __global__ void renew_huber_kernel(uint32_t const *leaf_ids, float const *labels
     }
     uint32_t const leaf = leaf_ids[k];
     float const    q    = float_of_sortable(select[leaf].prefix);
-    float const    dev  = fminf(
-        fmaxf(residual_of(labels, scores, mapped_row(rows, k)) - q, -delta), delta);
+    float const    dev =
+        clamped_deviation(residual_of(labels, scores, mapped_row(rows, k)), q, delta);
     long long const fixed = llround(static_cast<double>(dev) * scale);
     atomicAdd(&sums[leaf], static_cast<unsigned long long>(fixed));
 }
@@ -2266,9 +2277,7 @@ __global__ void renew_values_kernel(LeafSelect const         *select,
         double const sum = static_cast<double>(static_cast<long long>(sums[node]));
         v += static_cast<float>(sum / scale / static_cast<double>(select[node].count));
     }
-    double const fenced =
-        fmin(fmax(static_cast<double>(v), nodes.lo[node]), nodes.hi[node]);
-    values[node] = static_cast<float>(fenced);
+    values[node] = fenced_leaf_value(v, nodes, node);
 }
 
 inline __host__ __device__ bool positive_finite_weight(float w)
@@ -2433,7 +2442,7 @@ __global__ void renew_weighted_huber_kernel(WeightedLeafRows          in,
     uint32_t const            leaf = in.leaf_ids[k];
     WeightedLeafSelect const &s    = select[leaf];
     float const               q    = float_of_sortable(s.prefix);
-    float const               dev  = fminf(fmaxf(residual - q, -delta), delta);
+    float const               dev  = clamped_deviation(residual, q, delta);
     double const              weighted =
         static_cast<double>(fixed_weight(w, s.scale)) * static_cast<double>(dev);
     long long const term = llround(weighted * s.huber_scale);
@@ -2457,9 +2466,7 @@ __global__ void renew_weighted_values_kernel(WeightedLeafSelect const *select,
         double const sum = static_cast<double>(static_cast<long long>(sums[node]));
         v += static_cast<float>(sum / s.huber_scale / static_cast<double>(s.total));
     }
-    double const fenced =
-        fmin(fmax(static_cast<double>(v), nodes.lo[node]), nodes.hi[node]);
-    values[node] = static_cast<float>(fenced);
+    values[node] = fenced_leaf_value(v, nodes, node);
 }
 
 // perf: Identity row list built on device: full-data fits
