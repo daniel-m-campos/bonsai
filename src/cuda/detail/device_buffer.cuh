@@ -189,16 +189,12 @@ class PartTiles
     {
         if (n_tiles > words_)
         {
-            status_.reserve(n_tiles);
-            check(cudaMemset(status_.data(), 0, n_tiles * sizeof(unsigned long long)),
-                  "partition status zero");
+            status_.reserve_zeroed(n_tiles, "partition status zero");
             words_ = n_tiles;
         }
         if (!counter_ready_)
         {
-            counter_.reserve(1);
-            check(cudaMemset(counter_.data(), 0, sizeof(uint32_t)),
-                  "partition counter zero");
+            counter_.reserve_zeroed(1, "partition counter zero");
             counter_ready_ = true;
         }
         ++epoch_;
