@@ -212,6 +212,16 @@ struct WeightedLeafSelect
     uint32_t           top_weight_bits;
 };
 
+struct WeightedLeafRows
+{
+    uint32_t const *leaf_ids;
+    float const    *labels;
+    float const    *scores;
+    float const    *weights;
+    uint32_t const *rows;
+    uint32_t        n;
+};
+
 struct NodeTableRef
 {
     uint32_t const *feature;

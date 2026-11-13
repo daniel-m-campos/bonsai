@@ -445,8 +445,8 @@ struct CudaDeviceContext
     void resident_route_leaves(uint32_t n);
     void resident_renew_counted(uint32_t n, uint32_t n_nodes);
     void resident_renew_weighted(uint32_t n, uint32_t n_nodes);
-    void resident_select_weighted(uint32_t n, uint32_t n_nodes);
-    void resident_huber_weighted(uint32_t n, uint32_t n_nodes, float delta);
+    void resident_select_weighted(WeightedLeafRows rows, uint32_t n_nodes);
+    void resident_huber_weighted(WeightedLeafRows rows, uint32_t n_nodes, float delta);
     void resident_end(std::span<float> scores_out);
 
     bool eval_begin(Dataset const &valid, DeviceObjective objective,

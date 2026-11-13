@@ -2298,20 +2298,18 @@ inline __device__ bool weighted_leaf_renews(NodeTableRef nodes, uint32_t n_nodes
     return node < n_nodes && nodes.is_leaf[node] != 0 && select[node].count != 0;
 }
 
-__global__ void renew_weight_totals_kernel(uint32_t const *leaf_ids,
-                                           float const *weights, uint32_t n,
-                                           uint32_t const *rows, double plane_scale,
+__global__ void renew_weight_totals_kernel(WeightedLeafRows in, double plane_scale,
                                            WeightedLeafSelect *select)
 {
     uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (k >= n)
+    if (k >= in.n)
     {
         return;
     }
-    float const w = weights[mapped_row(rows, k)];
+    float const w = in.weights[mapped_row(in.rows, k)];
     if (positive_finite_weight(w))
     {
-        uint32_t const leaf = leaf_ids[k];
+        uint32_t const leaf = in.leaf_ids[k];
         atomicAdd(&select[leaf].count, 1U);
         atomicAdd(&select[leaf].plane_total, fixed_weight(w, plane_scale));
         atomicMax(&select[leaf].top_weight_bits, __float_as_uint(w));
@@ -2333,26 +2331,23 @@ __global__ void renew_weight_scale_kernel(NodeTableRef nodes, uint32_t n_nodes,
     }
 }
 
-__global__ void renew_weighted_count_kernel(uint32_t const *leaf_ids,
-                                            float const *labels, float const *scores,
-                                            float const *weights, uint32_t n,
-                                            uint32_t const           *rows,
+__global__ void renew_weighted_count_kernel(WeightedLeafRows          in,
                                             WeightedLeafSelect const *select,
                                             uint32_t pass, unsigned long long *hist)
 {
     uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (k >= n)
+    if (k >= in.n)
     {
         return;
     }
     uint32_t const key =
-        sortable_bits(residual_of(labels, scores, mapped_row(rows, k)));
-    uint32_t const leaf = leaf_ids[k];
+        sortable_bits(residual_of(in.labels, in.scores, mapped_row(in.rows, k)));
+    uint32_t const leaf = in.leaf_ids[k];
     if (!select_prefix_holds(key, select[leaf].prefix, pass))
     {
         return;
     }
-    float const w = weights[mapped_row(rows, k)];
+    float const w = in.weights[mapped_row(in.rows, k)];
     if (positive_finite_weight(w))
     {
         atomicAdd(&hist[(leaf * k_select_digits) + select_digit(key, pass)],
@@ -2420,25 +2415,22 @@ __global__ void renew_weighted_huber_scale_kernel(NodeTableRef nodes, uint32_t n
     }
 }
 
-__global__ void renew_weighted_huber_kernel(uint32_t const *leaf_ids,
-                                            float const *labels, float const *scores,
-                                            float const *weights, uint32_t n,
-                                            uint32_t const           *rows,
+__global__ void renew_weighted_huber_kernel(WeightedLeafRows          in,
                                             WeightedLeafSelect const *select,
                                             float delta, unsigned long long *sums)
 {
     uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (k >= n)
+    if (k >= in.n)
     {
         return;
     }
-    float const residual = residual_of(labels, scores, mapped_row(rows, k));
-    float const w        = weights[mapped_row(rows, k)];
+    float const residual = residual_of(in.labels, in.scores, mapped_row(in.rows, k));
+    float const w        = in.weights[mapped_row(in.rows, k)];
     if (!positive_finite_weight(w))
     {
         return;
     }
-    uint32_t const            leaf = leaf_ids[k];
+    uint32_t const            leaf = in.leaf_ids[k];
     WeightedLeafSelect const &s    = select[leaf];
     float const               q    = float_of_sortable(s.prefix);
     float const               dev  = fminf(fmaxf(residual - q, -delta), delta);
