@@ -1663,26 +1663,38 @@ void CudaDeviceContext::resident_route_leaves(uint32_t n)
     check(cudaGetLastError(), "resident route launch");
 }
 
-void CudaDeviceContext::resident_renew_counted(uint32_t n, uint32_t n_nodes)
+template <typename Digits, typename CountLaunch>
+void CudaDeviceContext::resident_narrow_digits(Digits &digits, uint32_t n_nodes,
+                                               typename Digits::NarrowKernel narrow,
+                                               CountLaunch const            &count)
 {
-    size_t const cells = static_cast<size_t>(n_nodes) * k_select_digits;
-    resident.hist.reserve_zeroed(cells, "resident digit counts zero");
-    resident.select.reserve_zeroed(n_nodes, "resident select zero");
     double const alpha = leaf_quantile_on_device(resident.objective);
     // perf: Four passes of 8-bit digits over the 32-bit residual key settle
     // every leaf's k-th residual in place, 4 B of scratch per row; the key sort
     // this replaced moved 24 B per row through five passes.
     for (uint32_t pass = 0; pass < k_select_passes; ++pass)
     {
-        renew_count_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
-            resident.leaf_ids.data(), resident.labels_at(), resident.scores_at(), n,
-            resident.rows.data(), resident.select.data(), pass, resident.hist.data());
+        count(pass);
         check(cudaGetLastError(), "resident digit count launch");
-        renew_narrow_kernel<<<dim3(n_nodes), dim3(k_select_digits)>>>(
-            resident.hist.data(), pass, alpha, resident.nodes.ref(),
-            resident.select.data());
+        narrow<<<dim3(n_nodes), dim3(k_select_digits)>>>(digits.hist.data(), pass,
+                                                         alpha, resident.nodes.ref(),
+                                                         digits.select.data());
         check(cudaGetLastError(), "resident digit narrow launch");
     }
+}
+
+void CudaDeviceContext::resident_renew_counted(uint32_t n, uint32_t n_nodes)
+{
+    auto &digits = resident.digits;
+    digits.zero(n_nodes);
+    resident_narrow_digits(
+        digits, n_nodes, renew_narrow_kernel,
+        [&](uint32_t pass)
+        {
+            renew_count_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
+                resident.leaf_ids.data(), resident.labels_at(), resident.scores_at(), n,
+                resident.rows.data(), digits.select.data(), pass, digits.hist.data());
+        });
     auto const *huber = std::get_if<DeviceHuber>(&resident.objective);
     double      scale = 0.0;
     if (huber != nullptr)
@@ -1691,12 +1703,12 @@ void CudaDeviceContext::resident_renew_counted(uint32_t n, uint32_t n_nodes)
         resident.sums.reserve_zeroed(n_nodes, "resident huber sums zero");
         renew_huber_kernel<<<covering_grid(n), dim3(k_linear_threads)>>>(
             resident.leaf_ids.data(), resident.labels_at(), resident.scores_at(), n,
-            resident.rows.data(), resident.select.data(), huber->delta, scale,
+            resident.rows.data(), digits.select.data(), huber->delta, scale,
             resident.sums.data());
         check(cudaGetLastError(), "resident huber sum launch");
     }
     renew_values_kernel<<<covering_grid(n_nodes), dim3(k_linear_threads)>>>(
-        resident.select.data(), resident.sums.data(), huber != nullptr, scale,
+        digits.select.data(), resident.sums.data(), huber != nullptr, scale,
         resident.nodes.ref(), n_nodes, resident.nodes.value.dev.data());
     check(cudaGetLastError(), "resident renew launch");
 }
@@ -1716,7 +1728,7 @@ void CudaDeviceContext::resident_renew_weighted(uint32_t n, uint32_t n_nodes)
         resident_huber_weighted(rows, n_nodes, huber->delta);
     }
     renew_weighted_values_kernel<<<covering_grid(n_nodes), dim3(k_linear_threads)>>>(
-        resident.weighted_select.data(), resident.sums.data(), huber != nullptr,
+        resident.weighted_digits.select.data(), resident.sums.data(), huber != nullptr,
         resident.nodes.ref(), n_nodes, resident.nodes.value.dev.data());
     check(cudaGetLastError(), "resident weighted renew launch");
 }
@@ -1724,28 +1736,24 @@ void CudaDeviceContext::resident_renew_weighted(uint32_t n, uint32_t n_nodes)
 void CudaDeviceContext::resident_select_weighted(WeightedLeafRows rows,
                                                  uint32_t         n_nodes)
 {
-    size_t const cells = static_cast<size_t>(n_nodes) * k_select_digits;
-    resident.weighted_hist.reserve_zeroed(cells, "resident weighted digit sums zero");
-    resident.weighted_select.reserve_zeroed(n_nodes, "resident weighted select zero");
+    auto &digits = resident.weighted_digits;
+    digits.zero(n_nodes);
     int const row_bits  = std::bit_width(rows.n);
     int const plane_exp = k_fixed_sum_bits - row_bits - resident.top_weight_exp;
     renew_weight_totals_kernel<<<covering_grid(rows.n), dim3(k_linear_threads)>>>(
-        rows, std::ldexp(1.0, plane_exp), resident.weighted_select.data());
+        rows, std::ldexp(1.0, plane_exp), digits.select.data());
     check(cudaGetLastError(), "resident weight totals launch");
     renew_weight_scale_kernel<<<covering_grid(n_nodes), dim3(k_linear_threads)>>>(
-        resident.nodes.ref(), n_nodes, plane_exp, resident.weighted_select.data());
+        resident.nodes.ref(), n_nodes, plane_exp, digits.select.data());
     check(cudaGetLastError(), "resident weight scale launch");
-    double const alpha = leaf_quantile_on_device(resident.objective);
-    for (uint32_t pass = 0; pass < k_select_passes; ++pass)
-    {
-        renew_weighted_count_kernel<<<covering_grid(rows.n), dim3(k_linear_threads)>>>(
-            rows, resident.weighted_select.data(), pass, resident.weighted_hist.data());
-        check(cudaGetLastError(), "resident weighted digit count launch");
-        renew_weighted_narrow_kernel<<<dim3(n_nodes), dim3(k_select_digits)>>>(
-            resident.weighted_hist.data(), pass, alpha, resident.nodes.ref(),
-            resident.weighted_select.data());
-        check(cudaGetLastError(), "resident weighted digit narrow launch");
-    }
+    resident_narrow_digits(digits, n_nodes, renew_weighted_narrow_kernel,
+                           [&](uint32_t pass)
+                           {
+                               renew_weighted_count_kernel<<<covering_grid(rows.n),
+                                                             dim3(k_linear_threads)>>>(
+                                   rows, digits.select.data(), pass,
+                                   digits.hist.data());
+                           });
 }
 
 void CudaDeviceContext::resident_huber_weighted(WeightedLeafRows rows, uint32_t n_nodes,
@@ -1753,11 +1761,11 @@ void CudaDeviceContext::resident_huber_weighted(WeightedLeafRows rows, uint32_t 
 {
     renew_weighted_huber_scale_kernel<<<covering_grid(n_nodes),
                                         dim3(k_linear_threads)>>>(
-        resident.nodes.ref(), n_nodes, delta, resident.weighted_select.data());
+        resident.nodes.ref(), n_nodes, delta, resident.weighted_digits.select.data());
     check(cudaGetLastError(), "resident weighted huber scale launch");
     resident.sums.reserve_zeroed(n_nodes, "resident huber sums zero");
     renew_weighted_huber_kernel<<<covering_grid(rows.n), dim3(k_linear_threads)>>>(
-        rows, resident.weighted_select.data(), delta, resident.sums.data());
+        rows, resident.weighted_digits.select.data(), delta, resident.sums.data());
     check(cudaGetLastError(), "resident weighted huber sum launch");
 }
 
