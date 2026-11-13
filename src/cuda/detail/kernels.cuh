@@ -2192,6 +2192,7 @@ __global__ void renew_narrow_kernel(uint32_t *hist, uint32_t pass, double alpha,
     uint32_t const  count = row[d];
     row[d]                = 0;
     scan[d]               = count;
+    LeafSelect s          = select[node];
     __syncthreads();
     for (uint32_t off = 1; off < k_select_digits; off <<= 1U)
     {
@@ -2201,7 +2202,6 @@ __global__ void renew_narrow_kernel(uint32_t *hist, uint32_t pass, double alpha,
         __syncthreads();
     }
     uint32_t const below = scan[d] - count;
-    LeafSelect     s     = select[node];
     if (pass == 0)
     {
         s.count = scan[k_select_digits - 1];
