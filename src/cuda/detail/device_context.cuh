@@ -252,7 +252,7 @@ struct CudaDeviceContext
         DeviceBuffer<float> scores;
         DeviceBuffer<float> weights;
         LabelsId            labels_key{};
-        int                 weight_exp = 0;
+        int                 top_weight_exp = 0;
         NodeTable           nodes;
         DeviceObjective     objective;
         bool                weighted      = false;
