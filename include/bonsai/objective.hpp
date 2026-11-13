@@ -24,6 +24,17 @@ struct WeightedValue
     float weight;
 };
 
+struct WeightedQuantile
+{
+    double mean_weight;
+    double rank;
+
+    constexpr bool bounded_by(double running_weight) const
+    {
+        return (running_weight / mean_weight) - 0.5 > rank;
+    }
+};
+
 // Returns total_weight, or throws std::invalid_argument when it is not
 // positive: rows that all weigh nothing have no base score. Pinned by
 // "Objective: a fit with no positive weight is refused".
