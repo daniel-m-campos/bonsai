@@ -50,11 +50,11 @@ double require_positive_weight(double total_weight);
 template <typename T>
 concept Objective = std::constructible_from<T, Config const &> &&
                     requires(T const &o, floats_view preds, floats_view targets,
-                             floats_out grad, floats_out hess) {
+                             floats_view weights, floats_out grad, floats_out hess) {
                         { o.compute(preds, targets, grad, hess) } -> std::same_as<void>;
                         { o.eval(preds, targets) } -> std::same_as<float>;
                         { o.init_score(targets) } -> std::same_as<float>;
-                        { o.init_score(targets, targets) } -> std::same_as<float>;
+                        { o.init_score(targets, weights) } -> std::same_as<float>;
                     };
 
 struct MSEObjective
