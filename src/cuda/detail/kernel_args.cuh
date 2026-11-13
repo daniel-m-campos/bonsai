@@ -204,6 +204,7 @@ struct WeightedLeafSelect
 {
     unsigned long long settled;
     unsigned long long total;
+    unsigned long long plane_total;
     double             scale;
     double             huber_scale;
     uint32_t           prefix;

@@ -2313,7 +2313,7 @@ __global__ void renew_weight_totals_kernel(uint32_t const *leaf_ids,
     {
         uint32_t const leaf = leaf_ids[k];
         atomicAdd(&select[leaf].count, 1U);
-        atomicAdd(&select[leaf].total, fixed_weight(w, plane_scale));
+        atomicAdd(&select[leaf].plane_total, fixed_weight(w, plane_scale));
         atomicMax(&select[leaf].top_weight_bits, __float_as_uint(w));
     }
 }
@@ -2327,10 +2327,9 @@ __global__ void renew_weight_scale_kernel(NodeTableRef nodes, uint32_t n_nodes,
         WeightedLeafSelect &s       = select[node];
         int                 top_exp = 0;
         frexpf(__uint_as_float(s.top_weight_bits), &top_exp);
-        int const total_exp = plane_exp + k_leaf_weight_bits - bit_width(s.total);
+        int const total_exp = plane_exp + k_leaf_weight_bits - bit_width(s.plane_total);
         int const top_floor = k_leaf_weight_bits - bit_width(s.count) - top_exp;
         s.scale             = ldexp(1.0, max(total_exp, top_floor));
-        s.total             = 0;
     }
 }
 
