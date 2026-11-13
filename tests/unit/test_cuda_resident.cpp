@@ -19,6 +19,7 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/model.hpp"
+#include "bonsai/multi_output_booster.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/sampler.hpp"
@@ -28,8 +29,10 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <concepts>
 #include <cstddef>
@@ -185,6 +188,56 @@ RegData make_counts(size_t n, size_t nf, uint32_t seed, float log_rate_offset = 
                    .n_features = nf};
 }
 
+// Two binary features carry the signal, y = 10a + 10b, and the quadrant
+// a = 0, b = 1 weighs `quadrant_scale` times the others; two uniform features
+// carry none.
+RegData make_quadrant(size_t n, uint32_t seed, float quadrant_scale)
+{
+    constexpr size_t                      nf = 4;
+    std::mt19937                          rng(seed);
+    std::uniform_real_distribution<float> u(0.0F, 1.0F);
+    std::normal_distribution<float>       noise(0.0F, 0.1F);
+    detail::ColumnBatch                   batch;
+    batch.features.assign(nf, std::vector<float>(n));
+    batch.feature_names = {"a", "b", "c", "d"};
+    batch.labels.assign(n, 0.0F);
+    batch.weights.assign(n, 0.0F);
+    std::vector<float> raw(n * nf);
+    for (size_t r = 0; r < n; ++r)
+    {
+        float const                 a = u(rng) < 0.5F ? 0.0F : 1.0F;
+        float const                 b = u(rng) < 0.5F ? 0.0F : 1.0F;
+        std::array<float, nf> const row{a, b, u(rng), u(rng)};
+        for (size_t j = 0; j < nf; ++j)
+        {
+            batch.features[j][r] = row[j];
+            raw[(r * nf) + j]    = row[j];
+        }
+        batch.labels[r]    = (10.0F * a) + (10.0F * b) + noise(rng);
+        float const weight = 0.25F + (3.75F * u(rng));
+        batch.weights[r] = (a == 0.0F && b == 1.0F) ? quadrant_scale * weight : weight;
+    }
+    std::vector<float> y(batch.labels.begin(), batch.labels.end());
+    return RegData{.built      = test::build(std::move(batch)),
+                   .raw        = std::move(raw),
+                   .y          = std::move(y),
+                   .n_rows     = n,
+                   .n_features = nf};
+}
+
+// The same features and labels under other per-row weights. Rebuilding from
+// the batch keeps the bins, so a fit on the copy differs only by its weights.
+RegData with_weights(RegData const &data, std::vector<float> weights)
+{
+    detail::ColumnBatch batch = data.built.batch;
+    batch.weights             = std::move(weights);
+    return RegData{.built      = test::build(std::move(batch)),
+                   .raw        = data.raw,
+                   .y          = data.y,
+                   .n_rows     = data.n_rows,
+                   .n_features = data.n_features};
+}
+
 Config reg_cfg()
 {
     Config cfg{};
@@ -257,18 +310,36 @@ std::vector<float> fit_predict(Config const &cfg, RegData const &data, size_t it
     return pred;
 }
 
-template <typename G>
+template <typename G, typename BoosterT = Booster<MSEObjective, G, AllRowsSampler>>
 std::vector<uint8_t> fit_bytes(Config cfg, RegData const &data, size_t iters,
                                bool host_forced)
 {
-    cfg.dispatch.grower_name                      = std::string{impl_name<G>::value};
-    test::ScopedEnv const                    host = test::host_objective(host_forced);
-    Booster<MSEObjective, G, AllRowsSampler> booster{cfg};
+    cfg.dispatch.grower_name   = std::string{impl_name<G>::value};
+    test::ScopedEnv const host = test::host_objective(host_forced);
+    BoosterT              booster{cfg};
     for (size_t i = 0; i < iters; ++i)
     {
         booster.update_one_iter(data.built.ds);
     }
     return io::save_booster_bytes(booster, data.built.mappers, cfg);
+}
+
+// A booster fit through `view` rather than over the whole plane, predicted on
+// every row so the caller can score whichever subset it cares about.
+template <typename BoosterT>
+std::vector<float> fit_view(Config const &cfg, RegData const &data, RowView rows,
+                            size_t iters, bool host_forced)
+{
+    test::ScopedEnv const host   = test::host_objective(host_forced);
+    Dataset const         viewed = data.built.ds.with_rows(std::move(rows));
+    BoosterT              booster{cfg};
+    for (size_t i = 0; i < iters; ++i)
+    {
+        booster.update_one_iter(viewed);
+    }
+    std::vector<float> pred(data.n_rows);
+    booster.predict(data.view(), floats_out{pred});
+    return pred;
 }
 
 template <typename G> void require_reproducible(Config const &cfg, RegData const &data)
@@ -728,10 +799,11 @@ TEST_CASE("Resident leafwise matches host-objective GPU under Bernoulli sampling
 // INVARIANT: device-leaf-renewal-matches-host
 // MAE, Huber and Quantile replace each leaf with a statistic of its residuals
 // after the tree is built (src/objective.cpp renew_leaf). The resident path
-// renews on the device: residuals sorted by leaf, one selection per leaf,
-// Huber's clamped mean, the monotone fence. This suite is its cross-check
-// against the host renewal on all three planes, to the same tolerance the
-// Newton objectives hold.
+// renews on the device: a radix selection over each leaf's residual keys,
+// counted per row or summed by fixed-point weight, Huber's clamped mean, the
+// monotone fence. This suite is its cross-check against the host renewal on
+// all three planes, weighted and not, to the same tolerance the Newton
+// objectives hold.
 TEMPLATE_TEST_CASE("Resident renewal matches host renewal on every plane",
                    "[cuda][resident][invariant]", CudaDepthwiseGrower,
                    CudaObliviousGrower, CudaLeafwiseGrower)
@@ -740,7 +812,9 @@ TEMPLATE_TEST_CASE("Resident renewal matches host renewal on every plane",
     {
         SKIP("resident renewal needs a usable CUDA device");
     }
-    auto const data = make_regression(8192, 6, 59);
+    bool const weighted = GENERATE(false, true);
+    CAPTURE(weighted);
+    auto const data = make_regression(8192, 6, 59, /*binary=*/false, weighted);
     Config cfg = std::same_as<TestType, CudaLeafwiseGrower> ? leaf_cfg() : reg_cfg();
     cfg.objective.huber_delta    = 0.5F;
     cfg.objective.quantile_alpha = 0.75F;
@@ -767,6 +841,234 @@ TEMPLATE_TEST_CASE("Resident renewal matches host renewal on every plane",
         check("quantile", fit_predict<QuantileBooster<TestType>>(cfg, data, 40, true),
               fit_predict<QuantileBooster<TestType>>(cfg, data, 40, false));
     }
+}
+
+// INVARIANT: device-weighted-renewal-selects-as-host
+// A weighted renewal on the device sums each row's weight as a fixed-point
+// integer at a power-of-two scale per leaf and evaluates the host's rank
+// predicate on those exact sums. The scale cancels in the predicate, so where
+// every weight is exact on the grid the device selects the element the host
+// selects, ties included. One round isolates the rule: from round two on the
+// resident and host gradients drift apart at rounding level for reasons the
+// renewal does not own. Huber's correction is a double sum in partition
+// order on the host, so it holds to a tolerance, not to the bit.
+TEMPLATE_TEST_CASE("ResidentRenewal: a weighted fit renews leaves as the host does",
+                   "[cuda][resident][invariant]", CudaDepthwiseGrower,
+                   CudaObliviousGrower, CudaLeafwiseGrower)
+{
+    if (!cuda_available())
+    {
+        SKIP("resident renewal needs a usable CUDA device");
+    }
+    auto const data = make_regression(8192, 6, 61, /*binary=*/false, /*weighted=*/true);
+    Config cfg = std::same_as<TestType, CudaLeafwiseGrower> ? leaf_cfg() : reg_cfg();
+    cfg.objective.huber_delta    = 0.5F;
+    cfg.objective.quantile_alpha = 0.75F;
+    auto const gap               = [&]<typename BoosterT>(RegData const &d)
+    {
+        return max_abs_diff(fit_predict<BoosterT>(cfg, d, 1, true),
+                            fit_predict<BoosterT>(cfg, d, 1, false));
+    };
+    SECTION("mae")
+    {
+        REQUIRE(gap.template operator()<MaeBooster<TestType>>(data) == 0.0F);
+    }
+    SECTION("quantile")
+    {
+        REQUIRE(gap.template operator()<QuantileBooster<TestType>>(data) == 0.0F);
+    }
+    SECTION("huber")
+    {
+        REQUIRE(gap.template operator()<HuberBooster<TestType>>(data) < 1e-6F);
+    }
+    SECTION("a block of zero weights")
+    {
+        std::vector<float> weights = data.built.batch.weights;
+        std::fill(weights.begin() + 1024, weights.begin() + 3072, 0.0F);
+        auto const zeroed = with_weights(data, std::move(weights));
+        REQUIRE(gap.template operator()<MaeBooster<TestType>>(zeroed) == 0.0F);
+        REQUIRE(gap.template operator()<QuantileBooster<TestType>>(zeroed) == 0.0F);
+    }
+    SECTION("a scattered view")
+    {
+        std::vector<row_id_t> ids;
+        for (row_id_t r = 0; r < 8192; r += 3)
+        {
+            ids.push_back(r);
+        }
+        RowView const rows     = RowView::encode(ids, data.n_rows);
+        auto const    view_gap = [&]<typename BoosterT>()
+        {
+            return max_abs_diff(fit_view<BoosterT>(cfg, data, rows, 1, true),
+                                fit_view<BoosterT>(cfg, data, rows, 1, false));
+        };
+        REQUIRE(view_gap.template operator()<MaeBooster<TestType>>() == 0.0F);
+        REQUIRE(view_gap.template operator()<QuantileBooster<TestType>>() == 0.0F);
+    }
+}
+
+TEMPLATE_TEST_CASE("ResidentRenewal: unit weights renew as no weights",
+                   "[cuda][resident]", CudaDepthwiseGrower, CudaObliviousGrower,
+                   CudaLeafwiseGrower)
+{
+    if (!cuda_available())
+    {
+        SKIP("resident renewal needs a usable CUDA device");
+    }
+    auto const plain = make_regression(8192, 6, 67);
+    auto const ones  = with_weights(plain, std::vector<float>(plain.n_rows, 1.0F));
+    Config cfg = std::same_as<TestType, CudaLeafwiseGrower> ? leaf_cfg() : reg_cfg();
+    cfg.objective.quantile_alpha = 0.75F;
+    auto const gap               = [&]<typename BoosterT>()
+    {
+        return max_abs_diff(fit_predict<BoosterT>(cfg, plain, 1, false),
+                            fit_predict<BoosterT>(cfg, ones, 1, false));
+    };
+    REQUIRE(gap.template operator()<MaeBooster<TestType>>() == 0.0F);
+    REQUIRE(gap.template operator()<QuantileBooster<TestType>>() == 0.0F);
+}
+
+TEST_CASE("ResidentRenewal: a leaf of zero-weight rows keeps the grower's value",
+          "[cuda][resident][edge]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident renewal needs a usable CUDA device");
+    }
+    auto const data                = make_quadrant(8192, 89, 0.0F);
+    Config     cfg                 = reg_cfg();
+    cfg.tree_config.max_depth      = 2;
+    cfg.tree_config.min_child_hess = 0.0F;
+    // An oblivious level splits every node on one cut, so the cut that pays in
+    // one node isolates the weightless quadrant (a = 0, b = 1) in the other.
+    for (bool const host_forced : {true, false})
+    {
+        CAPTURE(host_forced);
+        test::ScopedEnv const           host = test::host_objective(host_forced);
+        MaeBooster<CudaObliviousGrower> booster{cfg};
+        booster.update_one_iter(data.built.ds);
+        std::vector<float> pred(data.n_rows);
+        booster.predict(data.view(), floats_out{pred});
+        size_t weightless = 0;
+        for (size_t r = 0; r < data.n_rows; ++r)
+        {
+            if (data.built.batch.weights[r] == 0.0F)
+            {
+                ++weightless;
+                REQUIRE(pred[r] == booster.device_plan_input(0).init_score);
+            }
+        }
+        REQUIRE(weightless > 0);
+    }
+}
+
+TEST_CASE("ResidentRenewal: a leaf far lighter than the plane renews as the host does",
+          "[cuda][resident][edge]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident renewal needs a usable CUDA device");
+    }
+    auto const data                = make_quadrant(8192, 103, std::ldexp(1.0F, -100));
+    Config     cfg                 = reg_cfg();
+    cfg.tree_config.max_depth      = 2;
+    cfg.tree_config.min_child_hess = 0.0F;
+    cfg.objective.quantile_alpha   = 0.75F;
+    // The quadrant a = 0, b = 1 becomes its own oblivious leaf with weights
+    // about 2^100 below the plane's largest. A fixed-point grid scaled from the
+    // plane would round every one of them to the same unit and select the
+    // unweighted quantile there.
+    auto const gap = [&]<typename BoosterT>()
+    {
+        return max_abs_diff(fit_predict<BoosterT>(cfg, data, 1, true),
+                            fit_predict<BoosterT>(cfg, data, 1, false));
+    };
+    REQUIRE(gap.template operator()<MaeBooster<CudaObliviousGrower>>() == 0.0F);
+    REQUIRE(gap.template operator()<QuantileBooster<CudaObliviousGrower>>() == 0.0F);
+}
+
+TEST_CASE("ResidentRenewal: a weighted renewal fit renews on the device",
+          "[cuda][resident][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident renewal needs a usable CUDA device");
+    }
+    auto const data = make_regression(8192, 6, 83, /*binary=*/false, /*weighted=*/true);
+    auto const cfg  = reg_cfg();
+    // Every other weighted pin compares the device against the host, which a
+    // fit routed back to the host would pass trivially. Resident and host fits
+    // drift apart at rounding level from round two, so after 20 rounds a fit
+    // that armed the device differs from its host-forced twin.
+    auto const on_device = [&]<typename BoosterT>()
+    {
+        return max_abs_diff(fit_predict<BoosterT>(cfg, data, 20, false),
+                            fit_predict<BoosterT>(cfg, data, 20, true)) > 0.0F;
+    };
+    REQUIRE(on_device.template operator()<MaeBooster<CudaDepthwiseGrower>>());
+    REQUIRE(on_device.template operator()<HuberBooster<CudaDepthwiseGrower>>());
+    REQUIRE(on_device.template operator()<QuantileBooster<CudaObliviousGrower>>());
+}
+
+TEMPLATE_TEST_CASE("ResidentRenewal: a weighted fit serializes to identical bytes",
+                   "[cuda][resident]", CudaDepthwiseGrower, CudaObliviousGrower,
+                   CudaLeafwiseGrower)
+{
+    if (!cuda_available())
+    {
+        SKIP("resident renewal needs a usable CUDA device");
+    }
+    auto const data = make_regression(8192, 6, 97, /*binary=*/false, /*weighted=*/true);
+    Config cfg = std::same_as<TestType, CudaLeafwiseGrower> ? leaf_cfg() : reg_cfg();
+    auto const same_twice = [&]<typename BoosterT>(char const *objective)
+    {
+        cfg.dispatch.objective_name = objective;
+        return fit_bytes<TestType, BoosterT>(cfg, data, 20, false) ==
+               fit_bytes<TestType, BoosterT>(cfg, data, 20, false);
+    };
+    REQUIRE(same_twice.template operator()<MaeBooster<TestType>>("mae"));
+    REQUIRE(same_twice.template operator()<HuberBooster<TestType>>("huber"));
+    REQUIRE(same_twice.template operator()<QuantileBooster<TestType>>("quantile"));
+}
+
+TEST_CASE("ResidentRenewal: a weighted K-target fit renews leaves as the host does",
+          "[cuda][resident][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident renewal needs a usable CUDA device");
+    }
+    auto const         data = make_regression(8192, 6, 101, /*binary=*/false,
+                                              /*weighted=*/true);
+    constexpr size_t   k    = 2;
+    std::vector<float> block(data.n_rows * k);
+    for (size_t r = 0; r < data.n_rows; ++r)
+    {
+        block[(r * k) + 0] = data.y[r];
+        block[(r * k) + 1] = (2.0F * data.raw[r * data.n_features]) - data.y[r];
+    }
+    Dataset const wide = Dataset::bin(data.view(), block, data.built.mappers, {},
+                                      nullptr, data.built.batch.weights);
+    REQUIRE(wide.n_targets() == k);
+    Config cfg                   = reg_cfg();
+    cfg.objective.n_targets      = k;
+    cfg.objective.quantile_alpha = 0.75F;
+    auto const fit_wide          = [&]<typename Obj>(bool host_forced)
+    {
+        test::ScopedEnv const host = test::host_objective(host_forced);
+        MultiOutputBooster<Obj, CudaDepthwiseGrower, AllRowsSampler> booster{cfg};
+        booster.update_one_iter(wide);
+        std::vector<float> pred(data.n_rows * k);
+        booster.predict(data.view(), floats_out{pred});
+        return pred;
+    };
+    auto const gap = [&]<typename Obj>()
+    {
+        return max_abs_diff(fit_wide.template operator()<Obj>(true),
+                            fit_wide.template operator()<Obj>(false));
+    };
+    REQUIRE(gap.template operator()<MAEObjective>() == 0.0F);
+    REQUIRE(gap.template operator()<QuantileObjective>() == 0.0F);
 }
 
 TEST_CASE("Resident renewal clamps a renewed leaf into its monotone fence",
@@ -803,27 +1105,6 @@ TEST_CASE("An oblivious monotone fit under a renewal objective stays on the host
     auto const forced =
         fit_predict<MaeBooster<CudaObliviousGrower>>(cfg, data, 20, true);
     REQUIRE(max_abs_diff(def, forced) == 0.0F);
-}
-
-TEST_CASE("A weighted renewal fit stays on the host", "[cuda][resident]")
-{
-    if (!cuda_available())
-    {
-        SKIP("resident renewal needs a usable CUDA device");
-    }
-    auto const data = make_regression(8192, 6, 83, /*binary=*/false, /*weighted=*/true);
-    auto const cfg  = reg_cfg();
-    // The device selection counts every row once, so weights keep the renewal
-    // on the host and the booster never arms: the escape hatch has nothing to
-    // toggle and the two models are identical bytes.
-    auto const stays_on_host = [&]<typename BoosterT>()
-    {
-        return max_abs_diff(fit_predict<BoosterT>(cfg, data, 20, false),
-                            fit_predict<BoosterT>(cfg, data, 20, true)) == 0.0F;
-    };
-    REQUIRE(stays_on_host.template operator()<MaeBooster<CudaDepthwiseGrower>>());
-    REQUIRE(stays_on_host.template operator()<HuberBooster<CudaDepthwiseGrower>>());
-    REQUIRE(stays_on_host.template operator()<QuantileBooster<CudaObliviousGrower>>());
 }
 
 TEST_CASE("Resident labels follow the Dataset, not the shared ingest plane",
@@ -889,24 +1170,6 @@ TEST_CASE("Resident labels follow the Dataset, not the shared ingest plane",
 // the parity that buys: same rows, same target, resident against host.
 namespace
 {
-
-// A booster fit through `view` rather than over the whole plane, predicted on
-// every row so the caller can score whichever subset it cares about.
-template <typename BoosterT>
-std::vector<float> fit_view(Config const &cfg, RegData const &data, RowView rows,
-                            size_t iters, bool host_forced)
-{
-    test::ScopedEnv const host   = test::host_objective(host_forced);
-    Dataset const         viewed = data.built.ds.with_rows(std::move(rows));
-    BoosterT              booster{cfg};
-    for (size_t i = 0; i < iters; ++i)
-    {
-        booster.update_one_iter(viewed);
-    }
-    std::vector<float> pred(data.n_rows);
-    booster.predict(data.view(), floats_out{pred});
-    return pred;
-}
 
 // r2 over just the rows a view covers: a model fit on a subset is only owed
 // accuracy there, and averaging in rows it never saw would hide the signal.

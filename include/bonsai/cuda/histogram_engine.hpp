@@ -269,6 +269,8 @@ class CudaHistogramEngine
     // Fuses the finished tree into the resident scores; a renewal objective
     // first renews the leaves on the device and returns the value per node
     // index, empty otherwise (invariants: device-leaf-renewal-matches-host).
+    // Weighted rows renew by the host's rule wherever each weight is exact on its
+    // leaf's fixed-point grid (invariants: device-weighted-renewal-selects-as-host).
     std::vector<float> resident_finalize(std::span<ResidentNode const> nodes);
     void               resident_end(std::span<float> scores_out);
 

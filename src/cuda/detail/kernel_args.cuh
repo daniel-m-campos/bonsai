@@ -187,12 +187,25 @@ inline constexpr uint32_t k_not_selected = 0xFFFFFFFFU;
 inline constexpr uint32_t k_select_shift_bits = 8;
 inline constexpr uint32_t k_select_digits     = 1U << k_select_shift_bits;
 inline constexpr uint32_t k_select_passes     = 32U / k_select_shift_bits;
+inline constexpr int      k_fixed_sum_bits    = 62;
+inline constexpr int      k_leaf_weight_bits  = 52;
 
 struct LeafSelect
 {
     uint32_t prefix;
     uint32_t rank;
     uint32_t count;
+};
+
+struct WeightedLeafSelect
+{
+    unsigned long long settled;
+    unsigned long long total;
+    double             scale;
+    double             huber_scale;
+    uint32_t           prefix;
+    uint32_t           count;
+    uint32_t           top_weight_bits;
 };
 
 struct NodeTableRef
