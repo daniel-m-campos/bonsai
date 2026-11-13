@@ -246,6 +246,22 @@ struct CudaDeviceContext
         }
     };
 
+    template <typename CellT, typename SelectT> struct DigitSelect
+    {
+        using NarrowKernel = void (*)(CellT *, uint32_t, double, NodeTableRef,
+                                      SelectT *);
+
+        DeviceBuffer<CellT>   hist;
+        DeviceBuffer<SelectT> select;
+
+        void zero(uint32_t n_nodes)
+        {
+            hist.reserve_zeroed(static_cast<size_t>(n_nodes) * k_select_digits,
+                                "resident digit cells zero");
+            select.reserve_zeroed(n_nodes, "resident leaf select zero");
+        }
+    };
+
     struct ResidentPlane
     {
         DeviceBuffer<float> labels;
@@ -270,12 +286,10 @@ struct CudaDeviceContext
         {
             return scores.data() + (active * n_rows);
         }
-        DeviceBuffer<uint32_t>           leaf_ids;
-        DeviceBuffer<uint32_t>           hist;
-        DeviceBuffer<LeafSelect>         select;
-        DeviceBuffer<unsigned long long> sums;
-        DeviceBuffer<unsigned long long> weighted_hist;
-        DeviceBuffer<WeightedLeafSelect> weighted_select;
+        DeviceBuffer<uint32_t>                              leaf_ids;
+        DeviceBuffer<unsigned long long>                    sums;
+        DigitSelect<uint32_t, LeafSelect>                   digits;
+        DigitSelect<unsigned long long, WeightedLeafSelect> weighted_digits;
     };
 
     struct EvalPlane
@@ -447,6 +461,10 @@ struct CudaDeviceContext
     void resident_renew_weighted(uint32_t n, uint32_t n_nodes);
     void resident_select_weighted(WeightedLeafRows rows, uint32_t n_nodes);
     void resident_huber_weighted(WeightedLeafRows rows, uint32_t n_nodes, float delta);
+    template <typename Digits, typename CountLaunch>
+    void resident_narrow_digits(Digits &digits, uint32_t n_nodes,
+                                typename Digits::NarrowKernel narrow,
+                                CountLaunch const            &count);
     void resident_end(std::span<float> scores_out);
 
     bool eval_begin(Dataset const &valid, DeviceObjective objective,
