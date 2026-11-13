@@ -779,10 +779,10 @@ struct ResidentState
 };
 
 // The per-fit half of resident-objective-eligibility: no DART, the escape
-// hatch unset, no renewal the host must reproject (an oblivious tree under a
-// monotone constraint with a renewal objective, whose leaf table the host
-// reprojects). A view is eligible: the epilogue walks its rows and leaves
-// the rest untouched.
+// hatch unset, and no leaf table the host must reproject, which
+// reproject_monotone_on_host decides. A view is eligible: the epilogue walks
+// its rows and leaves the rest untouched. Pinned by "Booster: a monotone
+// oblivious renewal reprojects on the host".
 inline bool resident_round_open(float dart_drop_rate, bool reproject_on_host)
 {
     bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;

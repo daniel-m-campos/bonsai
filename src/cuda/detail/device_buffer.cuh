@@ -165,6 +165,12 @@ template <typename T> class DeviceBuffer
         capacity_ = grown;
     }
 
+    void reserve_zeroed(size_t n, char const *what)
+    {
+        reserve(n);
+        check(cudaMemset(ptr_, 0, n * sizeof(T)), what);
+    }
+
     void upload(T const *host, size_t n)
     {
         reserve(n);

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace bonsai
 {
@@ -189,6 +190,8 @@ inline constexpr uint32_t k_select_digits     = 1U << k_select_shift_bits;
 inline constexpr uint32_t k_select_passes     = 32U / k_select_shift_bits;
 inline constexpr int      k_fixed_sum_bits    = 62;
 inline constexpr int      k_leaf_weight_bits  = 52;
+static_assert(k_fixed_sum_bits < std::numeric_limits<long long>::digits);
+static_assert(k_leaf_weight_bits < std::numeric_limits<double>::digits);
 
 struct LeafSelect
 {
