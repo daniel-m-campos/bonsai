@@ -310,6 +310,14 @@ std::vector<float> fit_predict(Config const &cfg, RegData const &data, size_t it
     return pred;
 }
 
+// The largest prediction gap between a one-round fit and its host-forced
+// twin.
+template <typename BoosterT> float one_round_gap(Config const &cfg, RegData const &data)
+{
+    return max_abs_diff(fit_predict<BoosterT>(cfg, data, 1, true),
+                        fit_predict<BoosterT>(cfg, data, 1, false));
+}
+
 template <typename G, typename BoosterT = Booster<MSEObjective, G, AllRowsSampler>>
 std::vector<uint8_t> fit_bytes(Config cfg, RegData const &data, size_t iters,
                                bool host_forced)
@@ -864,30 +872,31 @@ TEMPLATE_TEST_CASE("ResidentRenewal: a weighted fit renews leaves as the host do
     Config cfg = std::same_as<TestType, CudaLeafwiseGrower> ? leaf_cfg() : reg_cfg();
     cfg.objective.huber_delta    = 0.5F;
     cfg.objective.quantile_alpha = 0.75F;
-    auto const gap               = [&]<typename BoosterT>(RegData const &d)
-    {
-        return max_abs_diff(fit_predict<BoosterT>(cfg, d, 1, true),
-                            fit_predict<BoosterT>(cfg, d, 1, false));
-    };
     SECTION("mae")
     {
-        REQUIRE(gap.template operator()<MaeBooster<TestType>>(data) == 0.0F);
+        REQUIRE(one_round_gap<MaeBooster<TestType>>(cfg, data) == 0.0F);
     }
     SECTION("quantile")
     {
-        REQUIRE(gap.template operator()<QuantileBooster<TestType>>(data) == 0.0F);
+        REQUIRE(one_round_gap<QuantileBooster<TestType>>(cfg, data) == 0.0F);
     }
     SECTION("huber")
     {
-        REQUIRE(gap.template operator()<HuberBooster<TestType>>(data) < 1e-6F);
+        REQUIRE(one_round_gap<HuberBooster<TestType>>(cfg, data) < 1e-6F);
+    }
+    SECTION("equal weights, where the rank lands on a row boundary")
+    {
+        auto const tied = with_weights(data, std::vector<float>(data.n_rows, 2.0F));
+        REQUIRE(one_round_gap<MaeBooster<TestType>>(cfg, tied) == 0.0F);
+        REQUIRE(one_round_gap<QuantileBooster<TestType>>(cfg, tied) == 0.0F);
     }
     SECTION("a block of zero weights")
     {
         std::vector<float> weights = data.built.batch.weights;
         std::fill(weights.begin() + 1024, weights.begin() + 3072, 0.0F);
         auto const zeroed = with_weights(data, std::move(weights));
-        REQUIRE(gap.template operator()<MaeBooster<TestType>>(zeroed) == 0.0F);
-        REQUIRE(gap.template operator()<QuantileBooster<TestType>>(zeroed) == 0.0F);
+        REQUIRE(one_round_gap<MaeBooster<TestType>>(cfg, zeroed) == 0.0F);
+        REQUIRE(one_round_gap<QuantileBooster<TestType>>(cfg, zeroed) == 0.0F);
     }
     SECTION("a scattered view")
     {
@@ -978,13 +987,8 @@ TEST_CASE("ResidentRenewal: a leaf far lighter than the plane renews as the host
     // about 2^100 below the plane's largest. A fixed-point grid scaled from the
     // plane would round every one of them to the same unit and select the
     // unweighted quantile there.
-    auto const gap = [&]<typename BoosterT>()
-    {
-        return max_abs_diff(fit_predict<BoosterT>(cfg, data, 1, true),
-                            fit_predict<BoosterT>(cfg, data, 1, false));
-    };
-    REQUIRE(gap.template operator()<MaeBooster<CudaObliviousGrower>>() == 0.0F);
-    REQUIRE(gap.template operator()<QuantileBooster<CudaObliviousGrower>>() == 0.0F);
+    REQUIRE(one_round_gap<MaeBooster<CudaObliviousGrower>>(cfg, data) == 0.0F);
+    REQUIRE(one_round_gap<QuantileBooster<CudaObliviousGrower>>(cfg, data) == 0.0F);
 }
 
 TEST_CASE("ResidentRenewal: a weighted renewal fit renews on the device",
@@ -996,10 +1000,10 @@ TEST_CASE("ResidentRenewal: a weighted renewal fit renews on the device",
     }
     auto const data = make_regression(8192, 6, 83, /*binary=*/false, /*weighted=*/true);
     auto const cfg  = reg_cfg();
-    // Every other weighted pin compares the device against the host, which a
-    // fit routed back to the host would pass trivially. Resident and host fits
-    // drift apart at rounding level from round two, so after 20 rounds a fit
-    // that armed the device differs from its host-forced twin.
+    // Every other weighted pin would also pass on a fit routed back to the
+    // host. Resident and host fits drift apart at rounding level from round
+    // two, so after 20 rounds a fit that armed the device differs from its
+    // host-forced twin.
     auto const on_device = [&]<typename BoosterT>()
     {
         return max_abs_diff(fit_predict<BoosterT>(cfg, data, 20, false),
