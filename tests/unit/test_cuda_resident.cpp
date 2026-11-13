@@ -812,7 +812,7 @@ TEST_CASE("Resident leafwise matches host-objective GPU under Bernoulli sampling
 // monotone fence. This suite is its cross-check against the host renewal on
 // all three planes, weighted and not, to the same tolerance the Newton
 // objectives hold.
-TEMPLATE_TEST_CASE("Resident renewal matches host renewal on every plane",
+TEMPLATE_TEST_CASE("ResidentRenewal: renewed leaves match the host on every plane",
                    "[cuda][resident][invariant]", CudaDepthwiseGrower,
                    CudaObliviousGrower, CudaLeafwiseGrower)
 {
@@ -1075,7 +1075,7 @@ TEST_CASE("ResidentRenewal: a weighted K-target fit renews leaves as the host do
     REQUIRE(gap.template operator()<QuantileObjective>() == 0.0F);
 }
 
-TEST_CASE("Resident renewal clamps a renewed leaf into its monotone fence",
+TEST_CASE("ResidentRenewal: a renewed leaf clamps into its monotone fence",
           "[cuda][resident]")
 {
     if (!cuda_available())
@@ -1092,7 +1092,7 @@ TEST_CASE("Resident renewal clamps a renewed leaf into its monotone fence",
     REQUIRE(max_abs_diff(host, res) < 2e-2F);
 }
 
-TEST_CASE("An oblivious monotone fit under a renewal objective stays on the host",
+TEST_CASE("ResidentRenewal: an oblivious monotone fit stays on the host",
           "[cuda][resident]")
 {
     if (!cuda_available())

@@ -84,7 +84,7 @@ Device ingest above 8 GiB of raw floats streams chunks through three pinned slot
 
 MAE, Huber and Quantile replace each leaf with a statistic of its residuals after the tree is built (src/objective.cpp renew_leaf). The resident path renews on the device: a radix selection over each leaf's residual keys, counted per row or summed by fixed-point weight, Huber's clamped mean, the monotone fence. This suite is its cross-check against the host renewal on all three planes, weighted and not, to the same tolerance the Newton objectives hold.
 
-- enforced by: [`Resident renewal matches host renewal on every plane`](../tests/unit/test_cuda_resident.cpp)
+- enforced by: [`ResidentRenewal: renewed leaves match the host on every plane`](../tests/unit/test_cuda_resident.cpp)
 
 ### device-objective-formula-matches-host
 
