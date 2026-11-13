@@ -252,17 +252,22 @@ class _BonsaiEstimator:
             rejected rather than silently reduced to its last entry.
         init_model
             Path to a saved ``.msgpack`` model to continue training from
-            (warm start); binning reuses the loaded model's cut points. None
-            trains from scratch.
+            (warm start); binning reuses the loaded model's cut points. The
+            fit keeps its own ``n_iters`` (the rounds to add),
+            ``early_stopping_rounds``, and ``n_threads``. Every other
+            argument describes the model: left at its default it takes the
+            loaded model's value, and set to a value the model disagrees
+            with it raises. None trains from scratch.
         feature_names
             One name per column, overriding any string column names X
             carries. Fitted names land in ``feature_names_in_``, ``dump``
             prints them, and ``tree.monotone_constraints`` may be keyed by
             them. None with an unnamed X leaves the columns ``f0``..``fN``.
             Rejected with ``init_model``: a warm start keeps the loaded
-            model's names. Predict-time inputs and the eval_set's X are
-            checked against the fitted names, sklearn's rule: names that go
-            missing or appear warn, names that disagree raise.
+            model's names, and holds the names X and the eval_set's X
+            carry against them. Predict-time inputs and the eval_set's X
+            are checked against the fitted names, sklearn's rule: names
+            that go missing or appear warn, names that disagree raise.
 
         Returns
         -------
@@ -275,11 +280,12 @@ class _BonsaiEstimator:
             If ``eval_set`` is a list, or given at all with
             ``dart_drop_rate > 0``; if ``X`` has no rows or no columns,
             ``y`` holds a non-finite value, or ``sample_weight`` a
-            non-finite or negative one or no positive one; for a classifier
-            also if ``y`` contains NaN (in any dtype), holds floats that are
-            not finite integers (a continuous target), or has fewer than 2
-            classes, or an eval-set label was not seen in the training
-            classes.
+            non-finite or negative one or no positive one; if ``X`` or the
+            eval_set's X names its columns differently from ``init_model``;
+            for a classifier also if ``y`` contains NaN (in any dtype), holds
+            floats that are not finite integers (a continuous target), or has
+            fewer than 2 classes, or an eval-set label was not seen in the
+            training classes.
         """
         _reject_eval_set_list(eval_set)
         y_enc, targets = self._encode_targets(y)
@@ -289,6 +295,11 @@ class _BonsaiEstimator:
             else self._build_overrides(targets)
         )
         names = self._fit_names(X, feature_names, init_model)
+        if init_model is not None:
+            held = _inputs_held_to_model_names(X, eval_set)
+            model_names = _model_feature_names(load(init_model)) if held else None
+            for given in held:
+                self._check_names_against(model_names, given)
         ev = None
         if eval_set is not None:
             if init_model is None:
@@ -555,12 +566,13 @@ class _BonsaiEstimator:
         else:
             self._model = None
 
-    # Every dispatch or objective key a constructor argument writes, with all
-    # the arguments that write it and every params key that does: `device`
+    # Each key that more than one constructor argument writes, with all the
+    # arguments that write it and every params key that does: `device`
     # rewrites the grower for a device, a subsample fraction turns the
     # sampler on. A warm start may inherit the model's value for a key only
     # when all of the arguments are still at their defaults and params names
-    # none of the keys.
+    # none of the keys. A key one argument writes follows the same rule
+    # through `_warm_start_knobs`.
     _WARM_START_KNOBS = (
         ("dispatch.grower_name", ("grower", "device"), ("dispatch.grower_name",)),
         (
@@ -587,6 +599,15 @@ class _BonsaiEstimator:
         ("max_bin", "bin_mapper.max_bin"),
     )
     _DERIVED_KEYS: ClassVar[tuple[str, ...]] = ("parallel.device_id",)
+
+    # The keys a continuation chooses for itself: how many rounds to add,
+    # when to stop, and how many threads to use. Every other key describes
+    # the model, and a warm start keeps the loaded model's value.
+    _FIT_OWNED_KEYS: ClassVar[tuple[str, ...]] = (
+        "booster.n_iters",
+        "booster.early_stopping_rounds",
+        "parallel.n_threads",
+    )
 
     @classmethod
     def _arguments_from_model(cls, model: Model) -> dict[str, object]:
@@ -738,25 +759,40 @@ class _BonsaiEstimator:
         return self.params or {}
 
     def _warm_start_overrides(self, targets: _FittedTargets) -> dict[str, object]:
-        """Overrides for a warm start, with the untouched knobs dropped.
+        """Overrides for a warm start, with the untouched arguments dropped.
 
         The native reconcile reads any key it is handed as user-chosen, so
-        a key still carrying its constructor default has to be withheld for
-        the loaded model's own value to be inherited rather than refused.
-        A key survives when any constructor argument that writes it was
-        passed, when ``params`` names it, or when the value comes from the
-        data (``BonsaiClassifier`` derives its objective from ``y``, which
-        a warm start should still be checked against).
+        a model key still carrying its constructor default has to be
+        withheld for the loaded model's own value to be inherited rather
+        than refused. A key survives when any constructor argument that
+        writes it differs from its default, when ``params`` names it, when
+        the fit owns it (``_FIT_OWNED_KEYS``), or when the value comes from
+        the data (``BonsaiClassifier`` derives its objective from ``y``,
+        which a warm start should still be checked against).
         """
         overrides = self._build_overrides(targets)
         explicit = self._explicit_params()
         defaults = _init_defaults(type(self))
-        for key, args, params_keys in self._WARM_START_KNOBS:
+        for key, args, params_keys in self._warm_start_knobs():
             if any(k in explicit for k in params_keys):
                 continue
             if all(getattr(self, a) == defaults[a] for a in args):
                 overrides.pop(key, None)
         return overrides
+
+    @classmethod
+    def _warm_start_knobs(cls) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]:
+        """Every model key a constructor argument writes, as
+        ``(key, arguments, params keys)``: the ``_WARM_START_KNOBS`` rows,
+        then one row for each remaining ``_MODEL_ARGUMENTS`` key outside
+        the fit's own."""
+        shared = {key for key, _, _ in cls._WARM_START_KNOBS}
+        single = tuple(
+            (key, (name,), (key,))
+            for name, key in cls._MODEL_ARGUMENTS
+            if key not in shared and key not in cls._FIT_OWNED_KEYS
+        )
+        return (*cls._WARM_START_KNOBS, *single)
 
     def _check_fitted(self):
         """One guard for every fitted-state precondition (the exception type
@@ -845,7 +881,8 @@ class _BonsaiEstimator:
         A warm start keeps the loaded model's names, so names merely
         discovered on X are dropped rather than forwarded: they were never an
         override, and passing them on would trip the native guard against
-        naming a warm start's columns.
+        naming a warm start's columns. ``fit`` holds them against the loaded
+        model's names instead.
 
         Parameters
         ----------
@@ -1411,6 +1448,18 @@ def _names_disagreement(fitted: list[str], given: list[str]) -> str:
     return "The feature names should match those that were passed during fit." + (
         detail or " The same names arrived in a different order."
     )
+
+
+def _inputs_held_to_model_names(
+    X: object, eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None
+) -> list[object]:
+    """The fit inputs a warm start checks against the loaded model's names:
+    every one once any of them names its columns, and none otherwise, so a
+    fit on bare arrays reads no model for the check."""
+    inputs = [X] if eval_set is None else [X, _eval_set_features(eval_set)]
+    if all(_input_feature_names(given) is None for given in inputs):
+        return []
+    return inputs
 
 
 def _eval_set_features(eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset) -> object:

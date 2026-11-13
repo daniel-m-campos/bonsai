@@ -267,6 +267,75 @@ def test_estimator_warm_start_on_a_frame(tmp_path):
         )
 
 
+def _saved_regressor(tmp_path, X, y) -> str:
+    """Five rounds on (X, y), saved; the path a warm start continues from."""
+    path = str(tmp_path / f"base{len(list(tmp_path.iterdir()))}.msgpack")
+    bonsai.BonsaiRegressor(n_iters=5, max_depth=4).fit(X, y).save(path)
+    return path
+
+
+def _continued(X, y, path, eval_set=None) -> bonsai.BonsaiRegressor:
+    """Five more rounds on (X, y) from the model at ``path``."""
+    return bonsai.BonsaiRegressor(n_iters=5, max_depth=4).fit(
+        X, y, init_model=path, eval_set=eval_set
+    )
+
+
+def test_estimator_warm_start_refuses_names_in_another_order(tmp_path):
+    X, y = _reg_data()
+    frame = _Frame(X, NAMES)
+    path = _saved_regressor(tmp_path, frame, y)
+    reordered = _Frame(np.ascontiguousarray(X[:, ::-1]), list(reversed(NAMES)))
+    with pytest.raises(ValueError, match="different order"):
+        _continued(reordered, y, path)
+    with pytest.raises(ValueError, match="different order"):
+        _continued(frame, y, path, eval_set=(reordered, y))
+    with pytest.raises(ValueError, match=r"Unseen at fit time: \['c0'\]"):
+        _continued(_Frame(X, ["c0", *NAMES[1:]]), y, path)
+
+
+def test_estimator_warm_start_warns_when_one_side_has_no_names(tmp_path):
+    X, y = _reg_data()
+    frame = _Frame(X, NAMES)
+    with pytest.warns(UserWarning, match="was fitted without feature names"):
+        _continued(frame, y, _saved_regressor(tmp_path, X, y))
+    named = _saved_regressor(tmp_path, frame, y)
+    with pytest.warns(UserWarning, match="X does not have valid feature names"):
+        _continued(frame, y, named, eval_set=(X, y))
+    with pytest.warns(UserWarning, match="X does not have valid feature names"):
+        _continued(X, y, named, eval_set=(frame, y))
+
+
+def test_estimator_warm_start_on_bare_arrays_keeps_the_models_names(tmp_path, recwarn):
+    X, y = _reg_data()
+    path = _saved_regressor(tmp_path, _Frame(X, NAMES), y)
+    warm = _continued(X, y, path, eval_set=(X, y))
+    assert not [w for w in recwarn.list if "feature names" in str(w.message)]
+    np.testing.assert_array_equal(warm.feature_names_in_, np.asarray(NAMES, dtype=object))
+
+
+def test_train_warm_start_refuses_a_dataset_named_differently(tmp_path):
+    """Columns that bin to the same cuts pass the cuts check in any order,
+    so their names are all that can tell them apart."""
+    X, y = _reg_data()
+    flags = (X > 0.5).astype(np.float32)
+    pairs = {"booster.n_iters": 5, "tree.max_depth": 4}
+    path = str(tmp_path / "base.msgpack")
+    bonsai.train(pairs, bonsai.Dataset(flags, y, feature_names=NAMES)).save(path)
+
+    reordered = bonsai.Dataset(
+        np.ascontiguousarray(flags[:, ::-1]), y, feature_names=list(reversed(NAMES))
+    )
+    message = "init_model names column 0 'age' and the dataset names it 'spend'"
+    with pytest.raises(ValueError, match=message):
+        bonsai.train(pairs, reordered, init_model=path)
+
+    same = bonsai.train(pairs, bonsai.Dataset(flags, y, feature_names=NAMES), init_model=path)
+    assert list(same.feature_names) == NAMES
+    unnamed = bonsai.train(pairs, bonsai.Dataset(flags, y), init_model=path)
+    np.testing.assert_array_equal(unnamed.predict(flags), same.predict(flags))
+
+
 def test_estimator_integer_columns_are_not_names():
     """sklearn's rule: default integer columns are no names at all, not the
     names "0" and "1"."""

@@ -6,6 +6,7 @@
 #include "bonsai/cuda/histogram_engine.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -17,6 +18,8 @@
 #include <print>
 #include <span>
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -26,6 +29,7 @@
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/config/errors.hpp"
+#include "bonsai/config/sections/all.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/detail/perf.hpp"
@@ -186,43 +190,74 @@ std::optional<LabeledData> load_validation_checked(Config const     &cfg,
     return validation;
 }
 
+constexpr std::array<std::string_view, 3> k_fit_owned_sections{"data", "metrics",
+                                                               "parallel"};
+constexpr std::array<std::string_view, 3> k_fit_owned_keys{
+    "booster.n_iters", "booster.early_stopping_rounds", "booster.log_intervals"};
+
+template <typename T> std::string shown(T const &value)
+{
+    return std::format("{}", value);
+}
+
+template <typename T> std::string shown(std::vector<T> const &values)
+{
+    std::string out;
+    for (auto const &value : values)
+    {
+        out += (out.empty() ? "" : ", ") + shown(value);
+    }
+    return "[" + out + "]";
+}
+
+template <typename T>
+void continue_model_field(std::string_view key, bool stated, T &value,
+                          T const &loaded_value, T const &default_value)
+{
+    if (value == loaded_value)
+    {
+        return;
+    }
+    if (stated || value != default_value)
+    {
+        throw std::invalid_argument(
+            std::format("a warm start continues the loaded model, and {}={} disagrees "
+                        "with the model's {}; drop the key or restate the model's own",
+                        key, shown(value), shown(loaded_value)));
+    }
+    value = loaded_value;
+}
+
 } // namespace
 
 Config reconcile_warm_start(Config cfg, Config const &loaded_cfg,
                             std::vector<std::string> const &stated_keys)
 {
-    auto const named = [&](std::string_view key)
-    { return std::ranges::find(stated_keys, key) != stated_keys.end(); };
-    auto const field = [&](std::string_view key, auto &value, auto const &loaded_value,
-                           auto const &default_value)
+    Config const defaults;
+    auto const   model_field = [&](auto const &section, auto const &field)
     {
-        if (value == loaded_value)
+        std::string const key = std::format("{}.{}", section.name, field.leaf);
+        if (std::ranges::find(k_fit_owned_keys, key) != k_fit_owned_keys.end())
         {
             return;
         }
-        if (named(key) || value != default_value)
-        {
-            throw std::invalid_argument(std::format(
-                "a warm start continues the loaded model, and {}={} disagrees "
-                "with the model's {}; drop the key or restate the model's own",
-                key, value, loaded_value));
-        }
-        value = loaded_value;
+        bool const stated = std::ranges::find(stated_keys, key) != stated_keys.end();
+        continue_model_field(key, stated, (cfg.*(section.sub)).*(field.member),
+                             (loaded_cfg.*(section.sub)).*(field.member),
+                             (defaults.*(section.sub)).*(field.member));
     };
-    DispatchConfig const  dd;
-    ObjectiveConfig const od;
-    field("dispatch.objective_name", cfg.dispatch.objective_name,
-          loaded_cfg.dispatch.objective_name, dd.objective_name);
-    field("dispatch.grower_name", cfg.dispatch.grower_name,
-          loaded_cfg.dispatch.grower_name, dd.grower_name);
-    field("dispatch.sampler_name", cfg.dispatch.sampler_name,
-          loaded_cfg.dispatch.sampler_name, dd.sampler_name);
-    field("objective.huber_delta", cfg.objective.huber_delta,
-          loaded_cfg.objective.huber_delta, od.huber_delta);
-    field("objective.quantile_alpha", cfg.objective.quantile_alpha,
-          loaded_cfg.objective.quantile_alpha, od.quantile_alpha);
-    field("objective.n_classes", cfg.objective.n_classes,
-          loaded_cfg.objective.n_classes, od.n_classes);
+    auto const model_section = [&](auto const &section)
+    {
+        if (std::ranges::find(k_fit_owned_sections, section.name) !=
+            k_fit_owned_sections.end())
+        {
+            return;
+        }
+        std::apply([&](auto const &...field) { (model_field(section, field), ...); },
+                   section.fields);
+    };
+    std::apply([&](auto const &...section) { (model_section(section), ...); },
+               config::internal::all_sections);
     return cfg;
 }
 

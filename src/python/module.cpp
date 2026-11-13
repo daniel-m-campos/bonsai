@@ -1700,15 +1700,7 @@ ParamItems items_from_params(nb::object params)
 
 std::vector<std::string> stated_keys(ParamItems const &items)
 {
-    std::vector<std::string> keys;
-    for (auto const &[key, value] : items)
-    {
-        if (key.starts_with("dispatch.") || key.starts_with("objective."))
-        {
-            keys.push_back(key);
-        }
-    }
-    return keys;
+    return items | std::views::keys | std::ranges::to<std::vector<std::string>>();
 }
 
 ConfigPairs render_params(ParamItems const &items)
@@ -1886,14 +1878,52 @@ bonsai::Config reconcile_init(bonsai::Config                                  cf
                                              stated_keys(items));
 }
 
-void reconcile_targets(bonsai::Config &cfg, bonsai::Dataset const &train)
+bool names_its_columns(std::span<std::string const> names)
 {
-    size_t const width = train.n_targets();
-    if (cfg.objective.n_targets == 1 && width > 1)
+    return !std::ranges::equal(names,
+                               bonsai::detail::numbered_feature_names(names.size()));
+}
+
+void require_model_names(std::span<std::string const> fitted,
+                         std::span<std::string const> given)
+{
+    if (!names_its_columns(fitted) || !names_its_columns(given))
     {
-        cfg.objective.n_targets = static_cast<uint32_t>(width);
         return;
     }
+    auto const [model_name, dataset_name] = std::ranges::mismatch(fitted, given);
+    if (model_name == fitted.end())
+    {
+        return;
+    }
+    throw std::invalid_argument(
+        std::format("init_model names column {} '{}' and the dataset names it '{}'; a "
+                    "warm start needs the model's columns in the model's order",
+                    model_name - fitted.begin(), *model_name, *dataset_name));
+}
+
+void require_model_columns(bonsai::BinMappers const &model,
+                           bonsai::BinMappers const &dataset)
+{
+    if (!model.same_cuts(dataset))
+    {
+        throw std::invalid_argument(
+            "init_model's cuts disagree with the dataset's; a warm start "
+            "needs the dataset binned with the model's own cuts");
+    }
+    require_model_names(model.feature_names(), dataset.feature_names());
+}
+
+void adopt_label_width(bonsai::Config &cfg, size_t width)
+{
+    if (cfg.objective.n_targets == 1)
+    {
+        cfg.objective.n_targets = static_cast<uint32_t>(width);
+    }
+}
+
+void require_label_width(bonsai::Config const &cfg, size_t width)
+{
     if (cfg.objective.n_targets != width)
     {
         throw std::invalid_argument(
@@ -1931,7 +1961,12 @@ Model run_fit(bonsai::Config cfg, bonsai::cli::LabeledData const &train,
               std::optional<bonsai::io::LoadedBooster> init)
 {
     require_built_in_metrics(cfg);
-    reconcile_targets(cfg, train.dataset);
+    size_t const width = train.dataset.n_targets();
+    if (!init)
+    {
+        adopt_label_width(cfg, width);
+    }
+    require_label_width(cfg, width);
     std::optional<bonsai::cli::LabeledData> owned;
     bonsai::cli::ValidationRef const        validation =
         resolve_eval_set(eval_set, cfg, mappers, init.has_value(), owned);
@@ -2018,12 +2053,9 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
     bonsai::parallel::FitPlace const placed;
     auto                             init = load_init(init_model);
-    if (init && !init->mappers.same_cuts(dataset.loaded().mappers))
+    if (init)
     {
-        throw std::invalid_argument(
-            "init_model's cuts disagree with the dataset's; one set of "
-            "cuts describes one set of columns, so a warm start needs the "
-            "dataset binned with the model's own cuts");
+        require_model_columns(init->mappers, dataset.loaded().mappers);
     }
     cfg            = reconcile_init(std::move(cfg), init, items);
     cfg.bin_mapper = dataset.bin_config();
@@ -2504,7 +2536,9 @@ NB_MODULE(_bonsai, m)
           "binned by the fit itself once its rounds have paid for the pass; a "
           "Dataset built with ``reference=`` this one is binned once.\n"
           "init_model : str, optional\n"
-          "    Continue training from this saved model (warm start).\n"
+          "    Continue training from this saved model (warm start). The fit "
+          "owns its rounds, early stopping, logging, data, metrics, and "
+          "parallel keys; any other key must equal the loaded model's.\n"
           "\n"
           "Returns\n"
           "-------\n"
@@ -2546,7 +2580,9 @@ NB_MODULE(_bonsai, m)
           "row-major). A ``cuda_`` grower scores it on the device when the "
           "objective has a device form; otherwise the host scores it.\n"
           "init_model : str, optional\n"
-          "    Continue training from this saved model (warm start).\n"
+          "    Continue training from this saved model (warm start). The fit "
+          "owns its rounds, early stopping, logging, data, metrics, and "
+          "parallel keys; any other key must equal the loaded model's.\n"
           "sample_weight : float32 array, shape (n_rows,), optional\n"
           "    Per-row weights, finite and non-negative, at least one positive. "
           "Each scales its row's gradient and hessian and counts the row in the base "
