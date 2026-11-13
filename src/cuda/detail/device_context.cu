@@ -839,9 +839,7 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     auto root_lap = prof_counters.lap();
     lvl.cur_is_a  = true;
     lvl.depth     = 0;
-    lvl.cur().reserve(lvl.slot_cells());
-    check(cudaMemset(lvl.cur().data(), 0, lvl.slot_cells() * sizeof(hist_int_t)),
-          "zero root slot");
+    lvl.cur().reserve_zeroed(lvl.slot_cells(), "zero root slot");
     stage_root_rows(root, identity);
     lvl.row_offsets.assign_one(0);
     lvl.row_counts.assign_one(n);
