@@ -2361,18 +2361,6 @@ __global__ void renew_weighted_count_kernel(uint32_t const *leaf_ids,
     }
 }
 
-struct WeightedRank
-{
-    double mean;
-    double rank;
-
-    __device__ bool passes(unsigned long long weight) const
-    {
-        double const ratio = static_cast<double>(weight) / mean;
-        return ratio - 0.5 > rank;
-    }
-};
-
 __global__ void renew_weighted_narrow_kernel(unsigned long long *hist, uint32_t pass,
                                              double alpha, NodeTableRef nodes,
                                              WeightedLeafSelect *select)
@@ -2407,12 +2395,13 @@ __global__ void renew_weighted_narrow_kernel(unsigned long long *hist, uint32_t 
     {
         return;
     }
-    WeightedRank const       rank{.mean = static_cast<double>(s.total) /
-                                    static_cast<double>(s.count),
-                                  .rank = alpha * static_cast<double>(s.count - 1)};
+    WeightedQuantile const   quantile{.mean_weight = static_cast<double>(s.total) /
+                                                   static_cast<double>(s.count),
+                                      .rank = alpha * static_cast<double>(s.count - 1)};
     unsigned long long const before = s.settled + below;
     bool const               last   = scan[d] == whole;
-    if (cell != 0 && !rank.passes(before) && (rank.passes(before + cell) || last))
+    if (cell != 0 && !quantile.bounded_by(static_cast<double>(before)) &&
+        (quantile.bounded_by(static_cast<double>(before + cell)) || last))
     {
         s.prefix |= d << select_shift(pass);
         s.settled    = before;

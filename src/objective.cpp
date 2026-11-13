@@ -86,23 +86,22 @@ float weighted_quantile_in_place(std::span<WeightedValue> values, float alpha)
 {
     std::span<WeightedValue> unsettled = positive_weights(values);
     auto const               n         = static_cast<double>(unsettled.size());
-    double const mean_weight = require_positive_weight(weight_of(unsettled)) / n;
-    double const rank        = static_cast<double>(alpha) * (n - 1.0);
-    auto const   passes_rank = [mean_weight, rank](double weight)
-    { return weight / mean_weight - 0.5 > rank; };
+    WeightedQuantile const   quantile{
+          .mean_weight = require_positive_weight(weight_of(unsettled)) / n,
+          .rank        = static_cast<double>(alpha) * (n - 1.0)};
     double settled = 0.0;
     while (true)
     {
         float const       pivot = median_of_three(unsettled);
         AroundPivot const parts = split_around(unsettled, pivot);
         double const      below = settled + weight_of(parts.below);
-        if (passes_rank(below))
+        if (quantile.bounded_by(below))
         {
             unsettled = parts.below;
             continue;
         }
         settled = below + weight_of(parts.level);
-        if (passes_rank(settled) || parts.above.empty())
+        if (quantile.bounded_by(settled) || parts.above.empty())
         {
             return pivot;
         }
