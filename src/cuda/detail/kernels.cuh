@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cfloat>
 #include <cstddef>
 #include <cstdint>
 #include <cuda.h>
@@ -2253,6 +2254,214 @@ __global__ void renew_values_kernel(LeafSelect const         *select,
     {
         double const sum = static_cast<double>(static_cast<long long>(sums[node]));
         v += static_cast<float>(sum / scale / static_cast<double>(select[node].count));
+    }
+    double const fenced =
+        fmin(fmax(static_cast<double>(v), nodes.lo[node]), nodes.hi[node]);
+    values[node] = static_cast<float>(fenced);
+}
+
+inline __host__ __device__ bool usable_weight(float w)
+{
+    return w > 0.0F && w <= FLT_MAX;
+}
+
+inline __device__ unsigned long long fixed_weight(float w, double scale)
+{
+    return static_cast<unsigned long long>(ceil(static_cast<double>(w) * scale));
+}
+
+inline __device__ int bit_length(unsigned long long x)
+{
+    return 64 - __clzll(static_cast<long long>(x));
+}
+
+inline __device__ bool weighted_leaf_renews(NodeTableRef nodes, uint32_t n_nodes,
+                                            WeightedLeafSelect const *select,
+                                            uint32_t                  node)
+{
+    return node < n_nodes && nodes.is_leaf[node] != 0 && select[node].count != 0;
+}
+
+__global__ void renew_weight_census_kernel(uint32_t const *leaf_ids,
+                                           float const *weights, uint32_t n,
+                                           uint32_t const *rows, double coarse_scale,
+                                           WeightedLeafSelect *select)
+{
+    uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (k >= n)
+    {
+        return;
+    }
+    float const w = weights[mapped_row(rows, k)];
+    if (usable_weight(w))
+    {
+        uint32_t const leaf = leaf_ids[k];
+        atomicAdd(&select[leaf].count, 1U);
+        atomicAdd(&select[leaf].total, fixed_weight(w, coarse_scale));
+        atomicMax(&select[leaf].top_weight_bits, __float_as_uint(w));
+    }
+}
+
+__global__ void renew_weight_scale_kernel(NodeTableRef nodes, uint32_t n_nodes,
+                                          int coarse_exp, WeightedLeafSelect *select)
+{
+    uint32_t const node = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (weighted_leaf_renews(nodes, n_nodes, select, node))
+    {
+        WeightedLeafSelect &s       = select[node];
+        int                 top_exp = 0;
+        frexpf(__uint_as_float(s.top_weight_bits), &top_exp);
+        int const census_exp = coarse_exp + k_leaf_weight_bits - bit_length(s.total);
+        int const top_floor  = k_leaf_weight_bits - bit_length(s.count) - top_exp;
+        s.scale              = ldexp(1.0, max(census_exp, top_floor));
+        s.total              = 0;
+    }
+}
+
+__global__ void renew_weighted_count_kernel(uint32_t const *leaf_ids,
+                                            float const *labels, float const *scores,
+                                            float const *weights, uint32_t n,
+                                            uint32_t const           *rows,
+                                            WeightedLeafSelect const *select,
+                                            uint32_t pass, unsigned long long *hist)
+{
+    uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (k >= n)
+    {
+        return;
+    }
+    uint32_t const key =
+        sortable_bits(residual_of(labels, scores, mapped_row(rows, k)));
+    uint32_t const leaf = leaf_ids[k];
+    if (!select_prefix_holds(key, select[leaf].prefix, pass))
+    {
+        return;
+    }
+    float const w = weights[mapped_row(rows, k)];
+    if (usable_weight(w))
+    {
+        atomicAdd(&hist[(leaf * k_select_digits) + select_digit(key, pass)],
+                  fixed_weight(w, select[leaf].scale));
+    }
+}
+
+struct WeightedRank
+{
+    double mean;
+    double rank;
+
+    __device__ bool passes(unsigned long long weight) const
+    {
+        double const ratio = static_cast<double>(weight) / mean;
+        return ratio - 0.5 > rank;
+    }
+};
+
+__global__ void renew_weighted_narrow_kernel(unsigned long long *hist, uint32_t pass,
+                                             double alpha, NodeTableRef nodes,
+                                             WeightedLeafSelect *select)
+{
+    __shared__ unsigned long long scan[k_select_digits];
+    uint32_t const                d    = threadIdx.x;
+    uint32_t const                node = blockIdx.x;
+    if (nodes.is_leaf[node] == 0)
+    {
+        return;
+    }
+    unsigned long long *const row =
+        hist + (static_cast<size_t>(node) * k_select_digits);
+    unsigned long long const cell = row[d];
+    row[d]                        = 0;
+    scan[d]                       = cell;
+    WeightedLeafSelect s          = select[node];
+    __syncthreads();
+    for (uint32_t off = 1; off < k_select_digits; off <<= 1U)
+    {
+        unsigned long long const add = d >= off ? scan[d - off] : 0ULL;
+        __syncthreads();
+        scan[d] += add;
+        __syncthreads();
+    }
+    unsigned long long const below = scan[d] - cell;
+    unsigned long long const whole = scan[k_select_digits - 1];
+    if (pass == 0)
+    {
+        s.total = whole;
+    }
+    if (s.count == 0)
+    {
+        return;
+    }
+    WeightedRank const       rank{.mean = static_cast<double>(s.total) /
+                                    static_cast<double>(s.count),
+                                  .rank = alpha * static_cast<double>(s.count - 1)};
+    unsigned long long const before = s.settled + below;
+    bool const               last   = scan[d] == whole;
+    if (cell != 0 && !rank.passes(before) && (rank.passes(before + cell) || last))
+    {
+        s.prefix |= d << select_shift(pass);
+        s.settled    = before;
+        select[node] = s;
+    }
+}
+
+__global__ void renew_weighted_huber_scale_kernel(NodeTableRef nodes, uint32_t n_nodes,
+                                                  float               delta,
+                                                  WeightedLeafSelect *select)
+{
+    uint32_t const node = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (weighted_leaf_renews(nodes, n_nodes, select, node))
+    {
+        double const unit =
+            ldexp(1.0, k_fixed_sum_bits - bit_length(select[node].total));
+        select[node].huber_scale = unit / static_cast<double>(delta);
+    }
+}
+
+__global__ void renew_weighted_huber_kernel(uint32_t const *leaf_ids,
+                                            float const *labels, float const *scores,
+                                            float const *weights, uint32_t n,
+                                            uint32_t const           *rows,
+                                            WeightedLeafSelect const *select,
+                                            float delta, unsigned long long *sums)
+{
+    uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (k >= n)
+    {
+        return;
+    }
+    float const residual = residual_of(labels, scores, mapped_row(rows, k));
+    float const w        = weights[mapped_row(rows, k)];
+    if (!usable_weight(w))
+    {
+        return;
+    }
+    uint32_t const            leaf = leaf_ids[k];
+    WeightedLeafSelect const &s    = select[leaf];
+    float const               q    = float_of_sortable(s.prefix);
+    float const               dev  = fminf(fmaxf(residual - q, -delta), delta);
+    double const              weighted =
+        static_cast<double>(fixed_weight(w, s.scale)) * static_cast<double>(dev);
+    long long const term = llround(weighted * s.huber_scale);
+    atomicAdd(&sums[leaf], static_cast<unsigned long long>(term));
+}
+
+__global__ void renew_weighted_values_kernel(WeightedLeafSelect const *select,
+                                             unsigned long long const *sums, bool huber,
+                                             NodeTableRef nodes, uint32_t n_nodes,
+                                             float *values)
+{
+    uint32_t const node = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (!weighted_leaf_renews(nodes, n_nodes, select, node))
+    {
+        return;
+    }
+    float v = float_of_sortable(select[node].prefix);
+    if (huber)
+    {
+        WeightedLeafSelect const &s = select[node];
+        double const sum = static_cast<double>(static_cast<long long>(sums[node]));
+        v += static_cast<float>(sum / s.huber_scale / static_cast<double>(s.total));
     }
     double const fenced =
         fmin(fmax(static_cast<double>(v), nodes.lo[node]), nodes.hi[node]);

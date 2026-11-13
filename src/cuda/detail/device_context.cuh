@@ -252,6 +252,7 @@ struct CudaDeviceContext
         DeviceBuffer<float> scores;
         DeviceBuffer<float> weights;
         LabelsId            labels_key{};
+        int                 weight_exp = 0;
         NodeTable           nodes;
         DeviceObjective     objective;
         bool                weighted      = false;
@@ -273,6 +274,8 @@ struct CudaDeviceContext
         DeviceBuffer<uint32_t>           hist;
         DeviceBuffer<LeafSelect>         select;
         DeviceBuffer<unsigned long long> sums;
+        DeviceBuffer<unsigned long long> weighted_hist;
+        DeviceBuffer<WeightedLeafSelect> weighted_select;
     };
 
     struct EvalPlane
@@ -439,6 +442,11 @@ struct CudaDeviceContext
     std::vector<float>
          resident_finalize(std::span<CudaHistogramEngine::ResidentNode const> nodes);
     void resident_renew(uint32_t n, uint32_t n_nodes);
+    void resident_route_leaves(uint32_t n);
+    void resident_renew_counted(uint32_t n, uint32_t n_nodes);
+    void resident_renew_weighted(uint32_t n, uint32_t n_nodes);
+    void resident_select_weighted(uint32_t n, uint32_t n_nodes);
+    void resident_huber_weighted(uint32_t n, uint32_t n_nodes, float delta);
     void resident_end(std::span<float> scores_out);
 
     bool eval_begin(Dataset const &valid, DeviceObjective objective,
