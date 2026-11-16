@@ -86,7 +86,7 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 | cpu-wide (16k x 16384) | bonsai levelwise | 2.2s | **45.2s** | **7.7GB (+6.5)** | **0.858** |
 | cpu-wide (16k x 16384) | CatBoost | **0.6s** | 117.3s | 18.6GB (+17.4) | 0.830 |
 
-*Source: [`gpu-tall-2026-11.jsonl`](../../../benchmarks/results/gpu-tall-2026-11.jsonl), [`gpu-wide-2026-11.jsonl`](../../../benchmarks/results/gpu-wide-2026-11.jsonl), [`gpu-extreme-2026-11.jsonl`](../../../benchmarks/results/gpu-extreme-2026-11.jsonl), [`cpu-tall-2026-11.jsonl`](../../../benchmarks/results/cpu-tall-2026-11.jsonl), [`cpu-wide-2026-11.jsonl`](../../../benchmarks/results/cpu-wide-2026-11.jsonl), [`gpu-early-stop-2026-11.jsonl`](../../../benchmarks/results/gpu-early-stop-2026-11.jsonl). As-run under the redesigned scenario matrix (decision 104), best of the session's repeats per arm. Each plane runs on one pod, so the arms compare within a plane and not across the two. The GPU plane is measured at `b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b` (2026-11-10, pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition). The CPU plane is measured at `b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b` (2026-11-10, pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition).*
+*Source: [`gpu-tall-2026-11.jsonl`](../../../benchmarks/results/gpu-tall-2026-11.jsonl), [`gpu-wide-2026-11.jsonl`](../../../benchmarks/results/gpu-wide-2026-11.jsonl), [`gpu-extreme-2026-11.jsonl`](../../../benchmarks/results/gpu-extreme-2026-11.jsonl), [`cpu-tall-2026-11.jsonl`](../../../benchmarks/results/cpu-tall-2026-11.jsonl), [`cpu-wide-2026-11.jsonl`](../../../benchmarks/results/cpu-wide-2026-11.jsonl), [`gpu-early-stop-2026-11.jsonl`](../../../benchmarks/results/gpu-early-stop-2026-11.jsonl). As-run under the redesigned scenario matrix (decision 104), best of the session's repeats per arm. Each plane runs on one pod, so the arms compare within a plane and not across the two. The GPU plane is measured at `14a888e0e8c25353a547b0d8c0c0f7deddf2fefa` and `b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b` (2026-11-10 and 2026-11-16, pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition). The CPU plane is measured at `b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b` (2026-11-10, pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition).*
 
 ## Early stopping
 
@@ -94,12 +94,12 @@ Three arms at the tall cell: `off` fits the round budget blind, `eval` scores a 
 
 | grower | arm | eval overhead | stop-arm fit | stopped at |
 |---|---|--:|--:|--:|
-| depthwise | bonsai depthwise | +42.4% | 27.9s | 1278 |
-| depthwise | XGBoost | +4.9% | 63.7s | 1216 |
-| leafwise | bonsai leafwise | +41.6% | 26.9s | 1278 |
-| leafwise | LightGBM | -0.8% | 86.1s | 847 |
-| levelwise | bonsai levelwise | +44.4% | 37.1s | 2000 |
-| levelwise | CatBoost | +5.7% | 120.6s | 1986 |
+| depthwise | bonsai depthwise | +37.8% | 27.4s | 1278 |
+| depthwise | XGBoost | +1.0% | 59.8s | 1216 |
+| leafwise | bonsai leafwise | +36.0% | 27.3s | 1278 |
+| leafwise | LightGBM | +0.3% | 74.6s | 847 |
+| levelwise | bonsai levelwise | +37.4% | 38.9s | 1980 |
+| levelwise | CatBoost | +4.0% | 112.4s | 2000 |
 
 ## TreeSHAP throughput (gpu-shap)
 

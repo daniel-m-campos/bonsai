@@ -138,13 +138,13 @@
   },
   "gpu-early-stop": {
     "file": "gpu-early-stop-2026-11.jsonl",
-    "sha": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+    "sha": "14a888e0e8c25353a547b0d8c0c0f7deddf2fefa",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-11-10",
+    "date": "2026-11-16",
     "plane": "gpu",
-    "refreshed_for": "2.11.0",
+    "refreshed_for": "2.12.0",
     "as_of_decision": 104,
-    "hash_set": "e0df2fc8686fdf48",
+    "hash_set": "bcaee018c750eb34",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
