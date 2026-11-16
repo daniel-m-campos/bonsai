@@ -9,13 +9,25 @@
     "refreshed_for": "2.11.0",
     "as_of_decision": 170,
     "companion": "parity-2026-11.jsonl",
-    "hash_set": "e0df2fc8686fdf48",
+    "hash_set": "bcaee018c750eb34",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
     },
-    "ab": "ab-gpu-2.11.0.jsonl"
+    "ab": "ab-gpu-2.11.0.jsonl",
+    "carried_forward": {
+      "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+      "stamped_at": "14a888e0",
+      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "evidence": {
+        "kind": "model-hash",
+        "grower": "cuda_depthwise",
+        "before": "e1a5391a7beea349",
+        "after": "e1a5391a7beea349",
+        "host": "Jetson Orin Nano, one CUDA build per sha"
+      }
+    }
   },
   "gpu-wide": {
     "file": "gpu-wide-2026-11.jsonl",
@@ -25,11 +37,23 @@
     "plane": "gpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 104,
-    "hash_set": "e0df2fc8686fdf48",
+    "hash_set": "bcaee018c750eb34",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+      "stamped_at": "14a888e0",
+      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "evidence": {
+        "kind": "model-hash",
+        "grower": "cuda_depthwise",
+        "before": "e1a5391a7beea349",
+        "after": "e1a5391a7beea349",
+        "host": "Jetson Orin Nano, one CUDA build per sha"
+      }
     }
   },
   "gpu-extreme": {
@@ -40,11 +64,23 @@
     "plane": "gpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 104,
-    "hash_set": "e0df2fc8686fdf48",
+    "hash_set": "bcaee018c750eb34",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+      "stamped_at": "14a888e0",
+      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "evidence": {
+        "kind": "model-hash",
+        "grower": "cuda_depthwise",
+        "before": "e1a5391a7beea349",
+        "after": "e1a5391a7beea349",
+        "host": "Jetson Orin Nano, one CUDA build per sha"
+      }
     }
   },
   "cpu-tall": {
@@ -55,13 +91,24 @@
     "plane": "cpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 170,
-    "hash_set": "52a93e3130ec8ee6",
+    "hash_set": "5fa720ec07ed73ef",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
     },
-    "ab": "ab-cpu-2.11.0.jsonl"
+    "ab": "ab-cpu-2.11.0.jsonl",
+    "carried_forward": {
+      "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+      "stamped_at": "14a888e0",
+      "reason": "every commit since 2.11.0 changes weighted fits, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted fit is byte-identical at both shas on all three host growers and across every objective",
+      "evidence": {
+        "kind": "model-hash",
+        "grower": "depthwise",
+        "before": "f798c1010c459ccc",
+        "after": "f798c1010c459ccc"
+      }
+    }
   },
   "cpu-wide": {
     "file": "cpu-wide-2026-11.jsonl",
@@ -71,11 +118,22 @@
     "plane": "cpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 104,
-    "hash_set": "52a93e3130ec8ee6",
+    "hash_set": "5fa720ec07ed73ef",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+      "stamped_at": "14a888e0",
+      "reason": "every commit since 2.11.0 changes weighted fits, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted fit is byte-identical at both shas on all three host growers and across every objective",
+      "evidence": {
+        "kind": "model-hash",
+        "grower": "depthwise",
+        "before": "f798c1010c459ccc",
+        "after": "f798c1010c459ccc"
+      }
     }
   },
   "gpu-early-stop": {
@@ -101,11 +159,22 @@
     "refreshed_for": "2.11.0",
     "as_of_decision": 92,
     "sha_partial": true,
-    "hash_set": "e0df2fc8686fdf48",
+    "hash_set": "bcaee018c750eb34",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+      "stamped_at": "14a888e0",
+      "reason": "every commit since 2.11.0 changes weighted fits, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted fit is byte-identical at both shas on all three host growers and across every objective",
+      "evidence": {
+        "kind": "model-hash",
+        "grower": "depthwise",
+        "before": "f798c1010c459ccc",
+        "after": "f798c1010c459ccc"
+      }
     }
   },
   "quality-grinsztajn-gpu": {
@@ -116,11 +185,23 @@
     "plane": "gpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 129,
-    "hash_set": "e0df2fc8686fdf48",
+    "hash_set": "bcaee018c750eb34",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+      "stamped_at": "14a888e0",
+      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "evidence": {
+        "kind": "model-hash",
+        "grower": "cuda_depthwise",
+        "before": "e1a5391a7beea349",
+        "after": "e1a5391a7beea349",
+        "host": "Jetson Orin Nano, one CUDA build per sha"
+      }
     }
   },
   "quality-grinsztajn-leaf-capped-gpu": {
@@ -131,19 +212,31 @@
     "plane": "gpu",
     "as_of_decision": 130,
     "refreshed_for": "2.11.0",
-    "hash_set": "e0df2fc8686fdf48",
+    "hash_set": "bcaee018c750eb34",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+      "stamped_at": "14a888e0",
+      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "evidence": {
+        "kind": "model-hash",
+        "grower": "cuda_depthwise",
+        "before": "e1a5391a7beea349",
+        "after": "e1a5391a7beea349",
+        "host": "Jetson Orin Nano, one CUDA build per sha"
+      }
     }
   },
   "code": {
     "file": "code-metrics-2026-11.jsonl",
-    "sha": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+    "sha": "14a888e0e8c25353a547b0d8c0c0f7deddf2fefa",
     "host": null,
     "date": null,
-    "refreshed_for": "2.11.0",
+    "refreshed_for": "2.12.0",
     "as_of_decision": 92,
     "sha_partial": true
   },
@@ -155,11 +248,23 @@
     "plane": "gpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 108,
-    "hash_set": "e0df2fc8686fdf48",
+    "hash_set": "bcaee018c750eb34",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
+      "stamped_at": "14a888e0",
+      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "evidence": {
+        "kind": "model-hash",
+        "grower": "cuda_depthwise",
+        "before": "e1a5391a7beea349",
+        "after": "e1a5391a7beea349",
+        "host": "Jetson Orin Nano, one CUDA build per sha"
+      }
     }
   }
 }
