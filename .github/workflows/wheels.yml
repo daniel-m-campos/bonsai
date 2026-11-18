@@ -392,24 +392,28 @@ jobs:
           set -euo pipefail
           IMG="${{ needs.runtime-image-candidate.outputs.image }}:candidate-${{ needs.runtime-image-candidate.outputs.tag }}"
           PUB="$(cat /tmp/podkey.pub)"
+          # No -f on the create: a refusal's body is the only thing that
+          # tells an empty region from a rejected request or a dead API.
           create() {
-            curl -sf https://rest.runpod.io/v1/pods \
+            curl -s https://api.runpod.io/v2/pods \
               -H "Authorization: Bearer $RUNPOD_KEY" -H 'content-type: application/json' \
-              -d "{\"name\": \"$POD_NAME\", \"imageName\": \"$IMG\",
-                   \"gpuTypeIds\": [\"NVIDIA L40S\"], \"gpuCount\": 1,
-                   \"cloudType\": \"SECURE\", \"containerDiskInGb\": 20,
-                   \"ports\": [\"22/tcp\"], \"env\": {\"PUBLIC_KEY\": \"$PUB\"}}" \
-              | jq -r .id
+              -d "{\"name\": \"$POD_NAME\", \"image\": \"$IMG\",
+                   \"gpu\": {\"id\": \"NVIDIA L40S\", \"count\": 1},
+                   \"cloud\": \"SECURE\", \"disk\": 20,
+                   \"ports\": [\"22/tcp\"], \"env\": {\"PUBLIC_KEY\": \"$PUB\"}}"
           }
           # Five attempts, because capacity churns on ~10-minute cycles: two
           # quick tries can both land in the same empty window, so failed
           # creates back off 150s to spread the attempts across a full cycle.
-          # Each successful create polls up to 6 minutes on the GraphQL
-          # runtime, the only truthful liveness signal.
+          # Each successful create polls up to 6 minutes on the pod's
+          # runtime port mapping, the only truthful liveness signal.
           for attempt in 1 2 3 4 5; do
-            POD="$(create || true)"
-            if [ -z "${POD}" ] || [ "${POD}" = "null" ]; then
-              echo "attempt ${attempt}: pod create call failed"
+            RESP="$(create || true)"
+            POD="$(echo "$RESP" | jq -r '.id // empty' 2>/dev/null || true)"
+            if [ -z "${POD}" ]; then
+              WHY="$(echo "$RESP" | jq -c '{status, title, detail, errors}' 2>/dev/null || true)"
+              WHY="${WHY:-${RESP:0:300}}"
+              echo "attempt ${attempt}: pod create refused: ${WHY:-no response from the API}"
               sleep 150
               continue
             fi
@@ -417,19 +421,18 @@ jobs:
             echo "pod_id=${POD}" >> "$GITHUB_OUTPUT"
             for i in $(seq 1 36); do
               sleep 10
-              OUT=$(curl -s https://api.runpod.io/graphql \
-                -H "Authorization: Bearer $RUNPOD_KEY" -H 'content-type: application/json' \
-                -d "{\"query\":\"query{pod(input:{podId:\\\"$POD\\\"}){runtime{uptimeInSeconds ports{ip isIpPublic privatePort publicPort}}}}\"}")
-              IP=$(echo "$OUT" | jq -r '.data.pod.runtime.ports[]? | select(.isIpPublic and .privatePort==22) | .ip' | head -1)
-              PORT=$(echo "$OUT" | jq -r '.data.pod.runtime.ports[]? | select(.isIpPublic and .privatePort==22) | .publicPort' | head -1)
-              if [ -n "${IP}" ] && [ "${IP}" != "null" ]; then
+              OUT=$(curl -s "https://api.runpod.io/v2/pods/$POD" \
+                -H "Authorization: Bearer $RUNPOD_KEY" || true)
+              IP=$(echo "$OUT" | jq -r '.runtime.ports[]? | select(.private==22 and .ip != null and .public != null) | .ip' 2>/dev/null | head -1 || true)
+              PORT=$(echo "$OUT" | jq -r '.runtime.ports[]? | select(.private==22 and .ip != null and .public != null) | .public' 2>/dev/null | head -1 || true)
+              if [ -n "${IP}" ] && [ -n "${PORT}" ]; then
                 echo "ip=${IP}" >> "$GITHUB_OUTPUT"
                 echo "port=${PORT}" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
             done
             echo "attempt ${attempt}: no public SSH endpoint after 6m; re-rolling"
-            curl -s -X DELETE "https://rest.runpod.io/v1/pods/$POD" \
+            curl -s -X DELETE "https://api.runpod.io/v2/pods/$POD" \
               -H "Authorization: Bearer $RUNPOD_KEY" || true
           done
           echo "::error::no usable pod after 5 attempts"
@@ -468,7 +471,7 @@ jobs:
       - name: Tear down the pod
         if: always() && steps.pod.outputs.pod_id != ''
         run: |
-          curl -s -X DELETE "https://rest.runpod.io/v1/pods/${{ steps.pod.outputs.pod_id }}" \
+          curl -s -X DELETE "https://api.runpod.io/v2/pods/${{ steps.pod.outputs.pod_id }}" \
             -H "Authorization: Bearer $RUNPOD_KEY" || true
 
       # Unattended spend needs a loud backstop: no gate pod may survive the
@@ -476,19 +479,27 @@ jobs:
       - name: Sweep for surviving gate pods
         if: always()
         run: |
-          # The REST list wraps pods in "items"; tolerate a bare array too.
+          # The REST list wraps pods in "pods"; tolerate a bare array too.
           # (`.pods // .` was a jq ERROR on arrays, so the first dry run's
           # sweep crashed without verifying: the one failure it must not have.)
+          # A list call that fails fails the sweep: an API that does not
+          # answer returns no pods, which reads as a clean fleet.
           sweep() {
-            curl -s https://rest.runpod.io/v1/pods -H "Authorization: Bearer $RUNPOD_KEY" \
-              | jq -r '(if type == "array" then . else (.items // []) end)[]?
+            local body
+            body="$(curl -sf https://api.runpod.io/v2/pods -H "Authorization: Bearer $RUNPOD_KEY")" || {
+              echo "::error::could not list pods, so the sweep verified nothing; check the fleet and billing by hand" >&2
+              return 1
+            }
+            echo "$body" \
+              | jq -r '(if type == "array" then . else (.pods // []) end)[]?
                        | select(.name != null)
                        | select(.name | startswith("bonsai-wheel-gate")) | .id'
           }
           sleep 5
-          for p in $(sweep); do
+          LEFT="$(sweep)"
+          for p in $LEFT; do
             echo "deleting leftover pod ${p}"
-            curl -s -X DELETE "https://rest.runpod.io/v1/pods/${p}" \
+            curl -s -X DELETE "https://api.runpod.io/v2/pods/${p}" \
               -H "Authorization: Bearer $RUNPOD_KEY"
           done
           sleep 5
