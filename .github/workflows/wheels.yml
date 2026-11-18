@@ -22,8 +22,10 @@ on:
     inputs:
       tag:
         description: >-
-          Existing release tag to (re-)upload built assets to, e.g. after a
-          flaked publish run. Leave empty for a plain build-only dispatch.
+          Existing release tag to build and publish again, e.g. after a
+          flaked publish run or a failed GPU gate: every job checks the tag
+          out, so the assets, the gate and the PyPI upload are the tag's.
+          Leave empty for a plain build-only dispatch.
         type: string
         default: ""
       publish_to:
@@ -64,6 +66,8 @@ jobs:
             cuda: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - uses: actions/setup-python@v5
         with:
@@ -186,6 +190,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -207,6 +213,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -249,6 +257,8 @@ jobs:
       # repo, so this job needs a checkout; it runs before the artifacts
       # land because checkout cleans the workspace.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       # Scoped by pattern: the model-hash artifacts are a CI cross-check,
       # not package files, and must never reach dist/.
@@ -337,6 +347,8 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: Resolve target tag
         id: meta
@@ -376,6 +388,8 @@ jobs:
       POD_NAME: bonsai-wheel-gate-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       # The CI-side hash the pod must reproduce (host plane on real hardware).
       - uses: actions/download-artifact@v4
@@ -587,8 +601,12 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
 
+  # A dispatched tag publishes too, so a release whose gate failed for a
+  # reason outside the tag (pod capacity, a retired API) is finished by
+  # dispatching the fixed workflow at that tag. PyPI refuses a file it
+  # already holds, so a second dispatch of a published version fails here.
   publish-pypi:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
     needs: [publish, promote]
     runs-on: ubuntu-22.04
     timeout-minutes: 10
