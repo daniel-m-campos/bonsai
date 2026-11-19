@@ -634,11 +634,87 @@ struct WeightedResiduals
     }
 };
 
-// The fewest rows a renewal spreads over the team. Entering the team cost
-// about 50 us a tree on an eight-core M2 and the parallel select saved about
-// 8 ns a row there, which crosses near 6,000 rows; a fit of 500 rows read 5%
-// slower with the team than without it, and one of 50,000 rows 9% faster.
-inline constexpr size_t renew_team_min_rows = 16'384;
+// The fewest rows a renewal shares across the team, and the fewest whose
+// gather it shares. Entering the team cost about 50 us a tree on an
+// eight-core M2: shared, a 500-row fit read 5% slower, and the gather, which
+// enters twice more, 1 to 4% slower at 50,000 rows and 2 to 4% faster from
+// 100,000.
+inline constexpr size_t renew_team_min_rows  = 16'384;
+inline constexpr size_t gather_team_min_rows = 131'072;
+
+template <typename Value> struct LeafResiduals
+{
+    // Not zero-filled: a vector's clear read 3 to 4% of the renewal at 2M rows.
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+    using Values = Value[];
+
+    std::unique_ptr<Values> values;
+    std::vector<size_t>     begin;
+
+    std::span<Value> of(size_t leaf) const
+    {
+        return {values.get() + begin[leaf], begin[leaf + 1] - begin[leaf]};
+    }
+};
+
+// The residuals of the rows that carry weight, grouped by leaf. A block of
+// rows writes each leaf's residuals after those of the blocks before it, so
+// a leaf's stay in row order however many threads share the blocks.
+template <typename Sample>
+LeafResiduals<typename Sample::value_type>
+gather_residuals(size_t n_leaves, std::vector<node_id_t> const &leaf_ids,
+                 Sample const &residual_of, RowIndex const &rows, int team)
+{
+    size_t const        n_blocks   = team == 1
+                                         ? 1
+                                         : std::min(static_cast<size_t>(team) * 4,
+                                                    std::max<size_t>(1, rows.size() / n_leaves));
+    size_t const        block_rows = (rows.size() + n_blocks - 1) / n_blocks;
+    std::vector<size_t> block_begin(n_blocks * n_leaves, 0);
+    auto const          each_weighted_row = [&](size_t block, auto &&visit)
+    {
+        size_t const stop = std::min(rows.size(), (block + 1) * block_rows);
+        for (size_t k = block * block_rows; k < stop; ++k)
+        {
+            row_id_t const r = rows[k];
+            if (residual_of.has_weight(r))
+            {
+                visit(r);
+            }
+        }
+    };
+    parallel::for_each_index_on(
+        team, n_blocks,
+        [&](size_t block)
+        {
+            size_t *const count = &block_begin[block * n_leaves];
+            each_weighted_row(block, [&](row_id_t r) { ++count[leaf_ids[r]]; });
+        });
+    LeafResiduals<typename Sample::value_type> residuals;
+    residuals.begin.resize(n_leaves + 1);
+    size_t total = 0;
+    for (size_t leaf = 0; leaf < n_leaves; ++leaf)
+    {
+        residuals.begin[leaf] = total;
+        for (size_t block = 0; block < n_blocks; ++block)
+        {
+            total += std::exchange(block_begin[block * n_leaves + leaf], total);
+        }
+    }
+    residuals.begin[n_leaves] = total;
+    residuals.values          = std::make_unique_for_overwrite<
+                 typename LeafResiduals<typename Sample::value_type>::Values>(total);
+    parallel::for_each_index_on(
+        team, n_blocks,
+        [&](size_t block)
+        {
+            size_t *const at = &block_begin[block * n_leaves];
+            each_weighted_row(
+                block, [&](row_id_t r)
+                { residuals.values[at[leaf_ids[r]]++] = residual_of(r); });
+        });
+    return residuals;
+}
 
 // Each leaf's value becomes the objective's optimum over the residuals of
 // the rows it covers, clamped into leaf_bounds[leaf] when the grower left
@@ -656,44 +732,34 @@ void renew_leaves(Obj const &objective, Tree &tree,
                   train_leaf_values &leaf_values, Sample const &residual_of,
                   RowView const &view)
 {
-    using value_type = typename Sample::value_type;
-    RowIndex const                       rows{view};
-    std::vector<std::vector<value_type>> residuals(tree.leaf_id_end());
-    std::vector<float>                   renewed(residuals.size(), 0.0F);
-    for (size_t k = 0; k < rows.size(); ++k)
+    RowIndex const rows{view};
+    size_t const   n_leaves = tree.leaf_id_end();
+    int const      team = rows.size() < renew_team_min_rows ? 1 : parallel::n_threads();
+    auto const     residuals =
+        gather_residuals(n_leaves, leaf_ids, residual_of, rows,
+                         rows.size() < gather_team_min_rows ? 1 : team);
+    std::vector<float> renewed(n_leaves, 0.0F);
+    parallel::for_each_index_on(team, n_leaves,
+                                [&](size_t leaf)
+                                {
+                                    auto const res = residuals.of(leaf);
+                                    if (res.empty())
+                                    {
+                                        return;
+                                    }
+                                    float v = objective.renew_leaf(res);
+                                    if (!leaf_bounds.empty())
+                                    {
+                                        v = static_cast<float>(
+                                            std::clamp(static_cast<double>(v),
+                                                       leaf_bounds[leaf].lo,
+                                                       leaf_bounds[leaf].hi));
+                                    }
+                                    renewed[leaf] = v;
+                                });
+    for (size_t leaf = 0; leaf < n_leaves; ++leaf)
     {
-        row_id_t const r = rows[k];
-        if (residual_of.has_weight(r))
-        {
-            residuals[leaf_ids[r]].push_back(residual_of(r));
-        }
-        else
-        {
-            renewed[leaf_ids[r]] = leaf_values[r];
-        }
-    }
-    int const team = rows.size() < renew_team_min_rows ? 1 : parallel::n_threads();
-    parallel::for_each_index_on(
-        team, residuals.size(),
-        [&](size_t leaf)
-        {
-            std::vector<value_type> &res = residuals[leaf];
-            if (res.empty())
-            {
-                return;
-            }
-            float v = objective.renew_leaf(std::span<value_type>{res});
-            if (!leaf_bounds.empty())
-            {
-                v = static_cast<float>(std::clamp(static_cast<double>(v),
-                                                  leaf_bounds[leaf].lo,
-                                                  leaf_bounds[leaf].hi));
-            }
-            renewed[leaf] = v;
-        });
-    for (node_id_t leaf = 0; leaf < residuals.size(); ++leaf)
-    {
-        if (!residuals[leaf].empty())
+        if (!residuals.of(leaf).empty())
         {
             tree.set_leaf_value(leaf, renewed[leaf]);
         }
@@ -701,7 +767,10 @@ void renew_leaves(Obj const &objective, Tree &tree,
     for (size_t k = 0; k < rows.size(); ++k)
     {
         row_id_t const r = rows[k];
-        leaf_values[r]   = renewed[leaf_ids[r]];
+        if (!residuals.of(leaf_ids[r]).empty())
+        {
+            leaf_values[r] = renewed[leaf_ids[r]];
+        }
     }
 }
 

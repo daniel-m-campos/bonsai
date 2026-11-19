@@ -866,6 +866,8 @@ std::vector<float> renewed_in_row_order(Obj const &objective, RenewalRows const 
 // count: one thread, two and eight write the same table and the same row
 // values, bit for bit. A leaf whose rows all carry zero weight, and a leaf
 // with no row at all, keep the grower's value.
+// The two row counts sit either side of the count at which the gather
+// joins the select on the team.
 TEMPLATE_TEST_CASE("Booster: leaf renewal is the same at any thread count",
                    "[booster][renewal][invariant]", MAEObjective, HuberObjective,
                    QuantileObjective)
@@ -914,6 +916,42 @@ TEMPLATE_TEST_CASE("Booster: leaf renewal is the same at any thread count",
     }
     CHECK(renew(2) == serial);
     CHECK(renew(8) == serial);
+}
+
+// The quantile often survives a reordering that moves a sum, so the gather
+// is held to row order directly: on eight threads every leaf's residuals
+// arrive in the order the row list names them, for every row in order and
+// for a list that repeats rows and runs backwards.
+TEST_CASE("Booster: a shared gather keeps each leaf's residuals in row order",
+          "[booster][renewal]")
+{
+    constexpr size_t      n_rows = 40'000;
+    RenewalRows const     rows   = renewal_rows(n_rows);
+    std::vector<row_id_t> list   = every_row(n_rows);
+    SECTION("every row in order") {}
+    SECTION("a list that repeats rows and runs backwards")
+    {
+        list.insert(list.end(), list.begin(), list.begin() + 9'000);
+        std::ranges::reverse(list);
+    }
+    RowView const  view = RowView::encode(list, n_rows);
+    RowIndex const index{view};
+    auto const     plain = detail::gather_residuals(
+        renewal_leaves, rows.leaf_ids,
+        detail::Residuals{.labels = rows.labels, .scores = rows.scores}, index, 8);
+    auto const paired = detail::gather_residuals(
+        renewal_leaves, rows.leaf_ids,
+        detail::WeightedResiduals{
+            .labels = rows.labels, .scores = rows.scores, .weights = rows.weights},
+        index, 8);
+    auto const same_pair = [](WeightedValue const &a, WeightedValue const &b)
+    { return a.value == b.value && a.weight == b.weight; };
+    for (node_id_t leaf = 0; leaf < renewal_leaves; ++leaf)
+    {
+        LeafInRowOrder const want = leaf_in_row_order(rows, leaf, list);
+        CHECK(std::ranges::equal(plain.of(leaf), want.plain));
+        CHECK(std::ranges::equal(paired.of(leaf), want.paired, same_pair));
+    }
 }
 
 template <typename Obj, typename G>

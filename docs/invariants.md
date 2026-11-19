@@ -202,7 +202,7 @@ The plane is picked per fit from the node arena's size: below k_level_plane_aren
 
 ### leaf-renewal-holds-at-any-thread-count
 
-A renewed leaf value is the objective's renew_leaf over that leaf's residuals in row order, clamped into the leaf's fence, whatever the thread count: one thread, two and eight write the same table and the same row values, bit for bit. A leaf whose rows all carry zero weight, and a leaf with no row at all, keep the grower's value.
+A renewed leaf value is the objective's renew_leaf over that leaf's residuals in row order, clamped into the leaf's fence, whatever the thread count: one thread, two and eight write the same table and the same row values, bit for bit. A leaf whose rows all carry zero weight, and a leaf with no row at all, keep the grower's value. The two row counts sit either side of the count at which the gather joins the select on the team.
 
 - enforced by: [`Booster: leaf renewal is the same at any thread count`](../tests/unit/test_booster.cpp)
 
