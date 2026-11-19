@@ -6,7 +6,7 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ### Changed
 
-- **A MAE, Huber or Quantile fit on a host grower renews its leaves on every thread.** The renewal that replaces each leaf with a statistic of its residuals ran on one thread and was 24 to 40% of such a fit. It now gathers the residuals and selects each leaf's value across the team, each leaf by one thread over its residuals in row order, so the renewed values are the same bits at any thread count. On an M2 at eight threads a 2M x 32 fit reads 19 to 24% shorter, weighted or not, and a 1M x 16 fit 22 to 25% shorter. Fits under 16,384 rows renew on one thread as before and read within 1% of 2.12.0. No model hash moves. Pinned by `leaf-renewal-holds-at-any-thread-count`. Decision 176.
+- **A MAE, Huber or Quantile fit on a host grower renews its leaves on every thread.** The renewal that replaces each leaf with a statistic of its residuals ran on one thread and was 24 to 40% of such a fit. It now gathers the residuals and selects each leaf's value across the team, each leaf by one thread over its residuals in row order, so the renewed values are the same bits at any thread count. A 2M x 32 fit, weighted or not, reads 36 to 46% shorter on a Xeon 6952P at 16 threads, 19 to 30% on an EPYC 9575F and 19 to 24% on an M2 at eight, each against 2.12.0 on the same host. Fits under 16,384 rows renew on one thread as before, and the gather is shared from 65,536. No model hash moves. Pinned by `leaf-renewal-holds-at-any-thread-count`. Decisions 176 and 177.
 
 ## [2.12.0] - 2026-11-16
 
