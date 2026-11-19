@@ -200,6 +200,12 @@ The plane is picked per fit from the node arena's size: below k_level_plane_aren
 
 - enforced by: `../tests/unit/test_leafwise_grower.cpp`
 
+### leaf-renewal-holds-at-any-thread-count
+
+A renewed leaf value is the objective's renew_leaf over that leaf's residuals in row order, clamped into the leaf's fence, whatever the thread count: one thread, two and eight write the same table and the same row values, bit for bit. A leaf whose rows all carry zero weight, and a leaf with no row at all, keep the grower's value.
+
+- enforced by: [`Booster: leaf renewal is the same at any thread count`](../tests/unit/test_booster.cpp)
+
 ### level-fill-matches-lone-nodes
 
 The level plane fills a level's smaller children in one call and derives each larger child by subtracting its sibling from the parent's histograms. Whatever order the level fill zeroes, scatters and subtracts in, every small child's cells equal the node filled alone (bit for bit at one thread, where no partial arenas exist), a child with no rows carries no histograms and leaves its sibling the parent's cells untouched, and every other large child's cell is the parent's cell minus the small child's cell in float, once per cell.

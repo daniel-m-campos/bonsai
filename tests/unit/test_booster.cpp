@@ -2,10 +2,14 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <numeric>
+#include <random>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -18,6 +22,7 @@
 #include "bonsai/io/model.hpp"
 #include "bonsai/multiclass_booster.hpp"
 #include "bonsai/objective.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/registry/typelists.hpp"
 #include "bonsai/row_view.hpp"
 #include "bonsai/sampler.hpp"
@@ -731,6 +736,184 @@ TEST_CASE("Booster: MAE leaf renewal sets leaves to residual medians",
     {
         CHECK(pred[i] == Catch::Approx(batch.labels[i]).margin(1e-5));
     }
+}
+
+// The renewal reads how many leaf ids a tree has and writes each renewed
+// value, so a table of values stands in for the tree.
+struct LeafTable
+{
+    std::vector<float> values;
+
+    size_t leaf_id_end() const
+    {
+        return values.size();
+    }
+    void set_leaf_value(size_t leaf, float value)
+    {
+        values[leaf] = value;
+    }
+};
+
+constexpr node_id_t renewal_leaves     = 37;
+constexpr node_id_t renewal_unweighted = 5;
+constexpr node_id_t renewal_fenced     = 3;
+
+// Rows spread over the leaves for the renewal pins. A third land in leaf 0
+// and the last leaf id gets none; one leaf's rows and one row in eleven carry
+// zero weight; one leaf is fenced above any value its residuals can give.
+struct RenewalRows
+{
+    std::vector<float>      grown;
+    std::vector<float>      labels;
+    std::vector<float>      scores;
+    std::vector<float>      weights;
+    std::vector<node_id_t>  leaf_ids;
+    train_leaf_values       leaf_values;
+    std::vector<LeafBounds> bounds;
+};
+
+RenewalRows renewal_rows(size_t n_rows)
+{
+    RenewalRows rows{.grown       = std::vector<float>(renewal_leaves),
+                     .labels      = std::vector<float>(n_rows),
+                     .scores      = std::vector<float>(n_rows),
+                     .weights     = std::vector<float>(n_rows),
+                     .leaf_ids    = std::vector<node_id_t>(n_rows),
+                     .leaf_values = train_leaf_values(n_rows),
+                     .bounds      = std::vector<LeafBounds>(renewal_leaves)};
+    for (node_id_t leaf = 0; leaf < renewal_leaves; ++leaf)
+    {
+        rows.grown[leaf] = 0.01F * static_cast<float>(leaf);
+    }
+    rows.bounds[renewal_fenced] = {.lo = 4.0, .hi = 5.0};
+    std::mt19937                          rng{7};
+    std::uniform_real_distribution<float> value{-3.0F, 3.0F};
+    std::uniform_real_distribution<float> weight{0.25F, 4.0F};
+    for (size_t r = 0; r < n_rows; ++r)
+    {
+        node_id_t const leaf =
+            r % 3 == 0 ? 0 : static_cast<node_id_t>(rng() % (renewal_leaves - 1));
+        rows.leaf_ids[r] = leaf;
+        rows.labels[r]   = value(rng);
+        rows.scores[r]   = value(rng);
+        rows.weights[r] =
+            leaf == renewal_unweighted || r % 11 == 0 ? 0.0F : weight(rng);
+        rows.leaf_values[r] = rows.grown[leaf];
+    }
+    return rows;
+}
+
+// One leaf's residuals in the order a row list names its rows, and beside
+// them the ones whose row carries weight.
+struct LeafInRowOrder
+{
+    std::vector<float>         plain;
+    std::vector<WeightedValue> paired;
+};
+
+LeafInRowOrder leaf_in_row_order(RenewalRows const &rows, node_id_t leaf,
+                                 std::span<row_id_t const> list)
+{
+    LeafInRowOrder out;
+    for (row_id_t const r : list)
+    {
+        if (rows.leaf_ids[r] != leaf)
+        {
+            continue;
+        }
+        float const residual = rows.labels[r] - rows.scores[r];
+        out.plain.push_back(residual);
+        if (rows.weights[r] > 0.0F)
+        {
+            out.paired.push_back({.value = residual, .weight = rows.weights[r]});
+        }
+    }
+    return out;
+}
+
+std::vector<row_id_t> every_row(size_t n_rows)
+{
+    std::vector<row_id_t> list(n_rows);
+    std::iota(list.begin(), list.end(), row_id_t{0});
+    return list;
+}
+
+template <typename Obj>
+std::vector<float> renewed_in_row_order(Obj const &objective, RenewalRows const &rows,
+                                        bool weighted)
+{
+    std::vector<row_id_t> const list     = every_row(rows.labels.size());
+    std::vector<float>          expected = rows.grown;
+    for (node_id_t leaf = 0; leaf < renewal_leaves; ++leaf)
+    {
+        LeafInRowOrder res = leaf_in_row_order(rows, leaf, list);
+        if (weighted ? res.paired.empty() : res.plain.empty())
+        {
+            continue;
+        }
+        float const v  = weighted
+                             ? objective.renew_leaf(std::span<WeightedValue>{res.paired})
+                             : objective.renew_leaf(std::span<float>{res.plain});
+        expected[leaf] = static_cast<float>(std::clamp(
+            static_cast<double>(v), rows.bounds[leaf].lo, rows.bounds[leaf].hi));
+    }
+    return expected;
+}
+
+// INVARIANT: leaf-renewal-holds-at-any-thread-count
+// A renewed leaf value is the objective's renew_leaf over that leaf's
+// residuals in row order, clamped into the leaf's fence, whatever the thread
+// count: one thread, two and eight write the same table and the same row
+// values, bit for bit. A leaf whose rows all carry zero weight, and a leaf
+// with no row at all, keep the grower's value.
+TEMPLATE_TEST_CASE("Booster: leaf renewal is the same at any thread count",
+                   "[booster][renewal][invariant]", MAEObjective, HuberObjective,
+                   QuantileObjective)
+{
+    size_t const      n_rows   = GENERATE(size_t{40'000}, size_t{150'000});
+    bool const        weighted = GENERATE(false, true);
+    RenewalRows const rows     = renewal_rows(n_rows);
+    TestType const    objective{};
+    RowView const     view  = RowView::all(n_rows);
+    auto const        renew = [&](uint32_t threads)
+    {
+        parallel::set_n_threads(threads);
+        LeafTable         table{.values = rows.grown};
+        train_leaf_values row_values = rows.leaf_values;
+        if (weighted)
+        {
+            detail::renew_leaves(objective, table, rows.leaf_ids, rows.bounds,
+                                 row_values,
+                                 detail::WeightedResiduals{.labels  = rows.labels,
+                                                           .scores  = rows.scores,
+                                                           .weights = rows.weights},
+                                 view);
+        }
+        else
+        {
+            detail::renew_leaves(
+                objective, table, rows.leaf_ids, rows.bounds, row_values,
+                detail::Residuals{.labels = rows.labels, .scores = rows.scores}, view);
+        }
+        parallel::set_n_threads(0);
+        return std::pair{table.values, row_values};
+    };
+
+    std::vector<float> const expected = renewed_in_row_order(objective, rows, weighted);
+    auto const               serial   = renew(1);
+    CHECK(serial.first == expected);
+    CHECK(serial.first[renewal_fenced] == 4.0F);
+    CHECK(serial.first[renewal_leaves - 1] == rows.grown[renewal_leaves - 1]);
+    if (weighted)
+    {
+        CHECK(serial.first[renewal_unweighted] == rows.grown[renewal_unweighted]);
+    }
+    for (size_t r = 0; r < n_rows; ++r)
+    {
+        REQUIRE(serial.second[r] == expected[rows.leaf_ids[r]]);
+    }
+    CHECK(renew(2) == serial);
+    CHECK(renew(8) == serial);
 }
 
 template <typename Obj, typename G>
