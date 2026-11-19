@@ -635,12 +635,12 @@ struct WeightedResiduals
 };
 
 // The fewest rows a renewal shares across the team, and the fewest whose
-// gather it shares. Entering the team cost about 50 us a tree on an
-// eight-core M2: shared, a 500-row fit read 5% slower, and the gather, which
-// enters twice more, 1 to 4% slower at 50,000 rows and 2 to 4% faster from
-// 100,000.
+// gather it shares. Sharing a 500-row renewal cost 12 to 50 us a tree more
+// on a Xeon 6952P, an EPYC 9575F and an eight-core M2. The shared select
+// repaid it from 10,000 rows on both x86 hosts; the gather, which enters the
+// team twice more, from 50,000 rows there and from 65,536 on the M2.
 inline constexpr size_t renew_team_min_rows  = 16'384;
-inline constexpr size_t gather_team_min_rows = 131'072;
+inline constexpr size_t gather_team_min_rows = 65'536;
 
 template <typename Value> struct LeafResiduals
 {
