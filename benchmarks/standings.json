@@ -9,7 +9,7 @@
     "refreshed_for": "2.11.0",
     "as_of_decision": 170,
     "companion": "parity-2026-11.jsonl",
-    "hash_set": "bcaee018c750eb34",
+    "hash_set": "61101333427fb9e7",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
@@ -18,8 +18,8 @@
     "ab": "ab-gpu-2.11.0.jsonl",
     "carried_forward": {
       "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
-      "stamped_at": "14a888e0",
-      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "stamped_at": "78a02129",
+      "reason": "the two source changes since 2.12.0 share the host leaf renewal across threads and place the row floor of its gather, which a device fit reaches only for an oblivious tree under a monotone constraint and this axis does not run; an unweighted device fit is byte-identical at 14a888e0 and at the tree of 78a02129 on all three device growers, three runs each",
       "evidence": {
         "kind": "model-hash",
         "grower": "cuda_depthwise",
@@ -37,7 +37,7 @@
     "plane": "gpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 104,
-    "hash_set": "bcaee018c750eb34",
+    "hash_set": "61101333427fb9e7",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
@@ -45,8 +45,8 @@
     },
     "carried_forward": {
       "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
-      "stamped_at": "14a888e0",
-      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "stamped_at": "78a02129",
+      "reason": "the two source changes since 2.12.0 share the host leaf renewal across threads and place the row floor of its gather, which a device fit reaches only for an oblivious tree under a monotone constraint and this axis does not run; an unweighted device fit is byte-identical at 14a888e0 and at the tree of 78a02129 on all three device growers, three runs each",
       "evidence": {
         "kind": "model-hash",
         "grower": "cuda_depthwise",
@@ -64,7 +64,7 @@
     "plane": "gpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 104,
-    "hash_set": "bcaee018c750eb34",
+    "hash_set": "61101333427fb9e7",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
@@ -72,8 +72,8 @@
     },
     "carried_forward": {
       "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
-      "stamped_at": "14a888e0",
-      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "stamped_at": "78a02129",
+      "reason": "the two source changes since 2.12.0 share the host leaf renewal across threads and place the row floor of its gather, which a device fit reaches only for an oblivious tree under a monotone constraint and this axis does not run; an unweighted device fit is byte-identical at 14a888e0 and at the tree of 78a02129 on all three device growers, three runs each",
       "evidence": {
         "kind": "model-hash",
         "grower": "cuda_depthwise",
@@ -91,7 +91,7 @@
     "plane": "cpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 170,
-    "hash_set": "5fa720ec07ed73ef",
+    "hash_set": "ca7a16aa725d8650",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
@@ -100,8 +100,8 @@
     "ab": "ab-cpu-2.11.0.jsonl",
     "carried_forward": {
       "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
-      "stamped_at": "14a888e0",
-      "reason": "every commit since 2.11.0 changes weighted fits, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted fit is byte-identical at both shas on all three host growers and across every objective",
+      "stamped_at": "78a02129",
+      "reason": "the two source changes since 2.12.0 share the host leaf renewal across threads and place the row floor of its gather, which only a MAE, Huber or Quantile fit runs, and this axis fits none of them; the host model hashes are equal at 06acc2fd and 78a02129 on all three growers, and 21 models across seven objectives are byte-equal",
       "evidence": {
         "kind": "model-hash",
         "grower": "depthwise",
@@ -118,7 +118,7 @@
     "plane": "cpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 104,
-    "hash_set": "5fa720ec07ed73ef",
+    "hash_set": "ca7a16aa725d8650",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
@@ -126,8 +126,8 @@
     },
     "carried_forward": {
       "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
-      "stamped_at": "14a888e0",
-      "reason": "every commit since 2.11.0 changes weighted fits, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted fit is byte-identical at both shas on all three host growers and across every objective",
+      "stamped_at": "78a02129",
+      "reason": "the two source changes since 2.12.0 share the host leaf renewal across threads and place the row floor of its gather, which only a MAE, Huber or Quantile fit runs, and this axis fits none of them; the host model hashes are equal at 06acc2fd and 78a02129 on all three growers, and 21 models across seven objectives are byte-equal",
       "evidence": {
         "kind": "model-hash",
         "grower": "depthwise",
@@ -144,11 +144,23 @@
     "plane": "gpu",
     "refreshed_for": "2.12.0",
     "as_of_decision": 104,
-    "hash_set": "bcaee018c750eb34",
+    "hash_set": "61101333427fb9e7",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "14a888e0e8c25353a547b0d8c0c0f7deddf2fefa",
+      "stamped_at": "78a02129",
+      "reason": "the two source changes since 2.12.0 share the host leaf renewal across threads and place the row floor of its gather, which a device fit reaches only for an oblivious tree under a monotone constraint and this axis does not run; an unweighted device fit is byte-identical at 14a888e0 and at the tree of 78a02129 on all three device growers, three runs each",
+      "evidence": {
+        "kind": "model-hash",
+        "grower": "cuda_depthwise",
+        "before": "e1a5391a7beea349",
+        "after": "e1a5391a7beea349",
+        "host": "Jetson Orin Nano, one CUDA build per sha"
+      }
     }
   },
   "quality-grinsztajn": {
@@ -159,7 +171,7 @@
     "refreshed_for": "2.11.0",
     "as_of_decision": 92,
     "sha_partial": true,
-    "hash_set": "bcaee018c750eb34",
+    "hash_set": "61101333427fb9e7",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
@@ -167,8 +179,8 @@
     },
     "carried_forward": {
       "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
-      "stamped_at": "14a888e0",
-      "reason": "every commit since 2.11.0 changes weighted fits, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted fit is byte-identical at both shas on all three host growers and across every objective",
+      "stamped_at": "78a02129",
+      "reason": "the two source changes since 2.12.0 share the host leaf renewal across threads and place the row floor of its gather, which only a MAE, Huber or Quantile fit runs, and this axis fits none of them; the host model hashes are equal at 06acc2fd and 78a02129 on all three growers, and 21 models across seven objectives are byte-equal",
       "evidence": {
         "kind": "model-hash",
         "grower": "depthwise",
@@ -185,7 +197,7 @@
     "plane": "gpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 129,
-    "hash_set": "bcaee018c750eb34",
+    "hash_set": "61101333427fb9e7",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
@@ -193,8 +205,8 @@
     },
     "carried_forward": {
       "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
-      "stamped_at": "14a888e0",
-      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "stamped_at": "78a02129",
+      "reason": "the two source changes since 2.12.0 share the host leaf renewal across threads and place the row floor of its gather, which a device fit reaches only for an oblivious tree under a monotone constraint and this axis does not run; an unweighted device fit is byte-identical at 14a888e0 and at the tree of 78a02129 on all three device growers, three runs each",
       "evidence": {
         "kind": "model-hash",
         "grower": "cuda_depthwise",
@@ -212,7 +224,7 @@
     "plane": "gpu",
     "as_of_decision": 130,
     "refreshed_for": "2.11.0",
-    "hash_set": "bcaee018c750eb34",
+    "hash_set": "61101333427fb9e7",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
@@ -220,8 +232,8 @@
     },
     "carried_forward": {
       "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
-      "stamped_at": "14a888e0",
-      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "stamped_at": "78a02129",
+      "reason": "the two source changes since 2.12.0 share the host leaf renewal across threads and place the row floor of its gather, which a device fit reaches only for an oblivious tree under a monotone constraint and this axis does not run; an unweighted device fit is byte-identical at 14a888e0 and at the tree of 78a02129 on all three device growers, three runs each",
       "evidence": {
         "kind": "model-hash",
         "grower": "cuda_depthwise",
@@ -233,10 +245,10 @@
   },
   "code": {
     "file": "code-metrics-2026-11.jsonl",
-    "sha": "14a888e0e8c25353a547b0d8c0c0f7deddf2fefa",
+    "sha": "78a0212966665cfeffdc0beb16999f6e93512a43",
     "host": null,
     "date": null,
-    "refreshed_for": "2.12.0",
+    "refreshed_for": "2.12.1",
     "as_of_decision": 92,
     "sha_partial": true
   },
@@ -248,7 +260,7 @@
     "plane": "gpu",
     "refreshed_for": "2.11.0",
     "as_of_decision": 108,
-    "hash_set": "bcaee018c750eb34",
+    "hash_set": "61101333427fb9e7",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
@@ -256,8 +268,8 @@
     },
     "carried_forward": {
       "measured_at": "b2aaed6c56ca40822d61437a3b0a1f5a45d6c83b",
-      "stamped_at": "14a888e0",
-      "reason": "every commit since 2.11.0 changes weighted renewal, early stopping at the round budget, or warm starts, none of which this axis runs; an unweighted device fit is byte-identical at both shas on all three device growers, three runs each",
+      "stamped_at": "78a02129",
+      "reason": "the two source changes since 2.12.0 share the host leaf renewal across threads and place the row floor of its gather, which a device fit reaches only for an oblivious tree under a monotone constraint and this axis does not run; an unweighted device fit is byte-identical at 14a888e0 and at the tree of 78a02129 on all three device growers, three runs each",
       "evidence": {
         "kind": "model-hash",
         "grower": "cuda_depthwise",

@@ -6,13 +6,13 @@ Self-measurement of the bonsai tree, no comparison: line counts and lizard compl
 
 | plane | files | LOC | NLOC | functions | mean CCN | max CCN |
 |---|--:|--:|--:|--:|--:|--:|
-| core_headers | 67 | 8702 | 6179 | 466 | 1.76 | 10 |
+| core_headers | 67 | 8789 | 6249 | 468 | 1.77 | 10 |
 | engine_impl | 31 | 8786 | 7819 | 449 | 2.69 | 11 |
 | cuda_plane | 22 | 9035 | 7925 | 477 | 2.57 | 17 |
 | bindings_cli | 22 | 7796 | 5591 | 355 | 2.68 | 11 |
 | bench_tooling | 39 | 11969 | 7558 | 495 | 3.93 | 12 |
-| tests | 90 | 31591 | 24520 | 1595 | 1.71 | 13 |
-| all | 271 | 77879 | 59592 | 3837 | - | - |
+| tests | 90 | 31812 | 24710 | 1603 | 1.72 | 13 |
+| all | 271 | 78187 | 59852 | 3847 | - | - |
 
 The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
 
@@ -26,4 +26,4 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 
 Surface counts: 44 config parameters, 126 registered dispatch combinations (7 objectives x 6 growers x 3 samplers), and 11 public Python names. Dependencies: 2 Python runtime dependencies (numpy, typing_extensions) and 1 compiled-in C++ libraries (${name} GIT_REPOSITORY ${repository} GIT_TAG ${tag})), the rule stated in the protocol.
 
-*Source: [`code-metrics-2026-11.jsonl`](../../../benchmarks/results/code-metrics-2026-11.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `14a888e0e8c2`, 2026-11-16; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
+*Source: [`code-metrics-2026-11.jsonl`](../../../benchmarks/results/code-metrics-2026-11.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `78a021296666`, 2026-11-19; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
