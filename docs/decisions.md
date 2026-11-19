@@ -2825,3 +2825,99 @@ The floors come from the same machine. Without the first, a 500-row fit read 5% 
 **Not covered.** Every number here is from one Apple machine. No x86 host has timed this change, so the floors are not known to sit right on a host whose team costs more or less to enter. The levelwise renewal kept 0.60 s of its 1.29 s where the others kept 0.35 to 0.39 s, and that difference is not attributed. The shared gather is tested on identity and on one list with repeats; it is not tested on a view that runs encode as runs of rows.
 
 **Reopener.** A same-pod reading on an x86 host that puts either floor in the wrong place. A leaf that holds most of a tree's rows is still selected by one thread, which is the likely cost in the levelwise row; a select that shares one leaf's partition would take it. A K-target fit renews K trees a round, one after another, where the K renewals are independent.
+
+*Status 2026-11-19: a Xeon 6952P and an EPYC 9575F host timed this change same-host, 2M x 32 renewal fits 19 to 46% shorter, and both read the shared gather ahead from 50,000 rows, so the gather floor fell to 65,536 (decision 177).*
+
+## 177. The shared leaf renewal holds on a Xeon and an EPYC host, and its gather is shared from 65,536 rows (adopted)
+
+**Decision.** The gather floor of decision 176 falls from 131,072 rows to 65,536 (`gather_team_min_rows` in `include/bonsai/booster.hpp`). The select floor stays at 16,384 rows. Nothing else in the renewal changes. The pins are the ones decision 176 names, and their 40,000 and 150,000 rows still sit on either side of the gather floor.
+
+**Why.** Decision 176 measured on one Apple machine, listed an x86 reading as not covered, and named it as the reopener. Decision 175 asks a patch release for a same-pod A/B of its change. Two rented hosts answered both questions: whether the change holds where the engine's users run it, and where each floor sits there. An Intel host was rented as well as an AMD one because the two have disagreed about this engine before (decisions 164 and 165).
+
+**Measured.** Two hosts, each timing main's parent 06acc2fd against main at 5366469b, both built on the host, the two arms alternating and their order flipped each rep, 16 threads, default wait policy. The Xeon is the host of a GPU pod: an Intel Xeon 6952P, two sockets, six NUMA nodes, a 40.8-core CPU quota. The EPYC is a CPU pod: 16 vCPU of an AMD EPYC 9575F as a cpuset, no quota. 2M x 32, depth 8, 50 trees, weights uniform from 0.25 to 4 where weighted, fit seconds with the renewal bucket of the fit profile in parentheses, min over three reps on the Xeon and four on the EPYC:
+
+| objective | grower | weights | Xeon main | Xeon branch | delta | EPYC main | EPYC branch | delta |
+|---|---|---|---|---|---|---|---|---|
+| mae | depthwise | yes | 4.88 (2.43) | 2.82 (0.33) | -42.2% | 5.18 (1.83) | 3.71 (0.36) | -28.5% |
+| mae | depthwise | no | 4.28 (1.72) | 2.74 (0.27) | -35.9% | 4.32 (1.40) | 3.21 (0.27) | -25.7% |
+| huber | depthwise | yes | 5.10 (2.64) | 2.77 (0.35) | -45.7% | 4.97 (1.70) | 3.68 (0.35) | -26.1% |
+| quantile | leafwise | yes | 4.40 (2.04) | 2.73 (0.41) | -37.9% | 4.08 (1.52) | 2.85 (0.39) | -30.2% |
+| mae | levelwise | yes | 4.19 (2.13) | 2.67 (0.58) | -36.2% | 3.77 (1.39) | 2.92 (0.59) | -22.5% |
+| mse | depthwise | yes | 2.44 | 2.51 | +2.6% | 3.24 | 3.24 | +0.1% |
+
+Every pair predicts the same bytes on 200,000 rows. The EPYC also read Huber depthwise unweighted at -19.0% and MAE leafwise weighted at -26.1%. The MSE fit runs no renewal: its three Xeon reps spread 5% within each arm, and their medians read 2.53 and 2.55 s. Smaller MAE fits, 16 columns, depth 6, fit milliseconds, min over three reps of a process that fits ten times under 20,001 rows, six times to 150,000 and three times above:
+
+| rows | trees | weights | Xeon main | Xeon branch | delta | EPYC main | EPYC branch | delta |
+|---|---|---|---|---|---|---|---|---|
+| 500 | 300 | no | 218 | 216 | -1.0% | not resolved | not resolved | |
+| 500 | 300 | yes | 233 | 233 | +0.0% | not resolved | not resolved | |
+| 5,000 | 300 | no | 342 | 318 | -7.2% | not resolved | not resolved | |
+| 5,000 | 300 | yes | 342 | 339 | -0.9% | not resolved | not resolved | |
+| 16,000 | 300 | no | 511 | 473 | -7.4% | not resolved | not resolved | |
+| 16,000 | 300 | yes | 492 | 526 | +6.9% | not resolved | not resolved | |
+| 20,000 | 300 | no | 526 | 492 | -6.4% | not resolved | not resolved | |
+| 20,000 | 300 | yes | 550 | 511 | -7.1% | not resolved | not resolved | |
+| 50,000 | 200 | no | 616 | 581 | -5.6% | 620 | 529 | -14.7% |
+| 50,000 | 200 | yes | 693 | 574 | -17.1% | 640 | 601 | -6.1% |
+| 120,000 | 120 | no | 707 | 560 | -20.8% | 666 | 550 | -17.3% |
+| 120,000 | 120 | yes | 728 | 599 | -17.6% | 702 | 637 | -9.3% |
+| 1,000,000 | 40 | no | 1255 | 737 | -41.3% | 1184 | 800 | -32.4% |
+| 1,000,000 | 40 | yes | 1379 | 800 | -42.0% | 1491 | 898 | -39.8% |
+
+Under 16,384 rows both arms renew on one thread, and the Xeon reads them within 7.4% of each other in both directions: the two 16,000-row cells read -7.4% and +6.9%, and one arm's three reps spread up to 13%. The EPYC session, the earlier of the two, fitted three times per process, and under 50,000 rows a process's first fit read up to 6.7 times its third, so its fit times there are not a reading. Its renewal bucket repeated, and read 3 ms a fit on both arms at 500 rows, 23 and 20 at 5,000 unweighted, and 78 and 76 at 16,000 weighted.
+
+The floors, from a third build that reads both from the environment and is not in the tree. The select floor first: the renewal on one thread against the renewal with a shared select and a one-thread gather, weighted MAE, renewal microseconds per tree:
+
+| rows | Xeon one thread | Xeon shared | delta | EPYC one thread | EPYC shared | delta |
+|---|---|---|---|---|---|---|
+| 500 | 17 | 29 | +73% | 11 | 48 | +333% |
+| 2,000 | 58 | 120 | +108% | 33 | 67 | +100% |
+| 5,000 | 106 | 133 | +26% | 81 | 104 | +27% |
+| 10,000 | 189 | 184 | -2% | 200 | 152 | -24% |
+| 16,000 | 298 | 229 | -23% | 252 | 207 | -18% |
+| 30,000 | 564 | 433 | -23% | 476 | 382 | -20% |
+| 50,000 | 886 | 631 | -29% | 806 | 583 | -28% |
+
+The shared select pays from 10,000 rows on both hosts and costs a quarter of the renewal at 5,000, so 16,384 stands. The gather floor: a shared select with a one-thread gather against a shared select with a shared gather:
+
+| rows | Xeon one thread | Xeon shared | delta | EPYC one thread | EPYC shared | delta |
+|---|---|---|---|---|---|---|
+| 20,000 | 291 | 277 | -5% | 259 | 296 | +14% |
+| 35,000 | 460 | 389 | -15% | | | |
+| 50,000 | 636 | 486 | -24% | 589 | 444 | -25% |
+| 65,536 | 775 | 633 | -18% | | | |
+| 80,000 | 881 | 652 | -26% | | | |
+| 100,000 | 1111 | 804 | -28% | 1148 | 704 | -39% |
+| 130,000 | 1347 | 926 | -31% | 1491 | 852 | -43% |
+| 250,000 | 2211 | 1511 | -32% | 2289 | 1333 | -42% |
+| 500,000 | | | | 4704 | 1981 | -58% |
+| 1,000,000 | 6750 | 3056 | -55% | 9639 | 3361 | -65% |
+
+The shared gather pays from 50,000 rows on both hosts, where the floor of decision 176 kept it on one thread up to 131,072. Between the two floors that was 6 to 8% of a fit: the shared gather read the fit 6.3% shorter at 65,536 rows, 8.0% at 80,000, 6.6% at 100,000 and 7.2% at 130,000 on the Xeon, and 7.7% and 7.5% at 100,000 and 130,000 on the EPYC. The M2 of decision 176 then timed the two floors against each other, main against main with the floor at 65,536, eight threads, the builds alternating, fit milliseconds, min over 18 or 24 fits per arm:
+
+| rows | weights | floor 131,072 | floor 65,536 | delta |
+|---|---|---|---|---|
+| 50,000 | no | 818.2 | 807.8 | -1.3% |
+| 50,000 | yes | 852.1 | 839.0 | -1.5% |
+| 65,536 | no | 779.1 | 740.8 | -4.9% |
+| 65,536 | yes | 815.8 | 786.6 | -3.6% |
+| 65,536 | no | 723.7 | 725.2 | +0.2% |
+| 65,536 | yes | 752.0 | 745.5 | -0.9% |
+| 70,000 | no | 673.2 | 669.6 | -0.5% |
+| 70,000 | yes | 737.0 | 726.1 | -1.5% |
+| 80,000 | no | 649.9 | 646.5 | -0.5% |
+| 80,000 | yes | 692.2 | 687.4 | -0.7% |
+| 100,000 | no | 729.2 | 706.6 | -3.1% |
+| 100,000 | yes | 787.9 | 760.7 | -3.5% |
+| 120,000 | no | 632.2 | 618.5 | -2.2% |
+| 120,000 | yes | 700.9 | 688.8 | -1.7% |
+| 200,000 | no | 663.7 | 652.2 | -1.7% |
+| 200,000 | yes | 744.9 | 743.0 | -0.3% |
+
+The 50,000 and 200,000 rows run the same code on both arms and read up to 1.7% apart, which is what this machine resolves. Against that, the lower floor reads between +0.2% and -4.9% on the M2 from 65,536 rows, which was timed twice. Identity: the three host model hashes hold, 21 models (seven objectives by three growers, 20,000 x 20) are byte-equal to main's, and every pair in the tables above predicts the same bytes.
+
+**Rejected.** A gather floor at 50,000 rows, where both x86 hosts already gain: decision 176 read the shared gather 1 to 4% over the one-thread gather there on the M2, and this round's M2 arms did not time a floor that low. A select floor at 10,000 rows: it is break-even on the Xeon (-2%) and saved 48 us of a 1.5 ms tree on the EPYC, 3% of the fit, against a cost at 5,000 rows on both. A floor per architecture: two constants to keep right for the 15,000 rows between where x86 and the M2 put the gather.
+
+**Not covered.** The Xeon is metered by a CPU quota, not a cpuset: `nr_throttled` rose by 228 periods across the 16-minute run, of about 9,900, and both arms shared them. Whole-fit time under 50,000 rows has one x86 reading, the Xeon's. The Xeon is a 6952P under a container; no bare-metal host and no other Intel core has timed this. The levelwise renewal still keeps 0.58 to 0.59 s where the others keep 0.27 to 0.41 s, as in decision 176.
+
+**Reopener.** A host that reads the shared gather over the one-thread gather between 65,536 and 131,072 rows. An M2 reading of a gather floor at 50,000 rows that is flat, which would let the floor follow x86 down. Decision 176's reopeners stand.
