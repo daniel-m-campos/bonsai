@@ -634,13 +634,21 @@ struct WeightedResiduals
     }
 };
 
+// The fewest rows a renewal spreads over the team. Entering the team cost
+// about 50 us a tree on an eight-core M2 and the parallel select saved about
+// 8 ns a row there, which crosses near 6,000 rows; a fit of 500 rows read 5%
+// slower with the team than without it, and one of 50,000 rows 9% faster.
+inline constexpr size_t renew_team_min_rows = 16'384;
+
 // Each leaf's value becomes the objective's optimum over the residuals of
 // the rows it covers, clamped into leaf_bounds[leaf] when the grower left
 // a fence. The rows are the fit's, which for a view is the view's: a row
 // outside it was never carried through this tree, so its leaf id names a
 // leaf it does not belong to. The identity view is every row. A row with
 // no weight adds no residual, and a leaf holding only such rows keeps the
-// grower's value.
+// grower's value. Each leaf is renewed by one thread over its residuals in
+// row order, so the values are the same at any thread count (invariants:
+// leaf-renewal-holds-at-any-thread-count).
 template <typename Tree, typename Obj, typename Sample>
 void renew_leaves(Obj const &objective, Tree &tree,
                   std::vector<node_id_t> const  &leaf_ids,
@@ -664,21 +672,31 @@ void renew_leaves(Obj const &objective, Tree &tree,
             renewed[leaf_ids[r]] = leaf_values[r];
         }
     }
+    int const team = rows.size() < renew_team_min_rows ? 1 : parallel::n_threads();
+    parallel::for_each_index_on(
+        team, residuals.size(),
+        [&](size_t leaf)
+        {
+            std::vector<value_type> &res = residuals[leaf];
+            if (res.empty())
+            {
+                return;
+            }
+            float v = objective.renew_leaf(std::span<value_type>{res});
+            if (!leaf_bounds.empty())
+            {
+                v = static_cast<float>(std::clamp(static_cast<double>(v),
+                                                  leaf_bounds[leaf].lo,
+                                                  leaf_bounds[leaf].hi));
+            }
+            renewed[leaf] = v;
+        });
     for (node_id_t leaf = 0; leaf < residuals.size(); ++leaf)
     {
-        std::vector<value_type> &res = residuals[leaf];
-        if (res.empty())
+        if (!residuals[leaf].empty())
         {
-            continue;
+            tree.set_leaf_value(leaf, renewed[leaf]);
         }
-        float v = objective.renew_leaf(std::span<value_type>{res});
-        if (!leaf_bounds.empty())
-        {
-            v = static_cast<float>(std::clamp(
-                static_cast<double>(v), leaf_bounds[leaf].lo, leaf_bounds[leaf].hi));
-        }
-        tree.set_leaf_value(leaf, v);
-        renewed[leaf] = v;
     }
     for (size_t k = 0; k < rows.size(); ++k)
     {
