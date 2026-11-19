@@ -4,6 +4,10 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### Changed
+
+- **A MAE, Huber or Quantile fit on a host grower renews its leaves on every thread.** The renewal that replaces each leaf with a statistic of its residuals ran on one thread and was 24 to 40% of such a fit. It now gathers the residuals and selects each leaf's value across the team, each leaf by one thread over its residuals in row order, so the renewed values are the same bits at any thread count. On an M2 at eight threads a 2M x 32 fit reads 19 to 24% shorter, weighted or not, and a 1M x 16 fit 22 to 25% shorter. Fits under 16,384 rows renew on one thread as before and read within 1% of 2.12.0. No model hash moves. Pinned by `leaf-renewal-holds-at-any-thread-count`. Decision 176.
+
 ## [2.12.0] - 2026-11-16
 
 Sample weights now reach the base score and the renewed leaf values, and a warm start holds the invocation to the model it continues. A weight used to scale its row's gradient and hessian and nothing else; it now weighs the base score and the leaf values MAE, Huber and Quantile renew, by a weighted quantile that equal weights leave unchanged (decision 172). On a CUDA grower those leaves renew on the device: same-pod on an L40S, a weighted 4M x 128 fit reads 81 to 83% under the route that renewed on the host (decision 174). On the host a weighted MAE, Huber or Quantile fit costs 10 to 14% more than it did while its renewal ignored the weights. A fit with early stopping returns its best round however the loop ended (decision 171). A warm start keeps the loaded model's config, target count and column names, and refuses an invocation that states otherwise: a restated `learning_rate`, tree shape, seed or sampler rate that 2.11.0 accepted and ignored now raises and names the key (decision 173). A fit with no weights runs the code it ran, and no model hash moves. Nine standings axes carry 2.11.0's measurement on that evidence, and the early-stop axis is measured again: its levelwise row now reports 1,980 rounds, the model the fit returns (decision 175).

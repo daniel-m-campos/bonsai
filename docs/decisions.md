@@ -2777,3 +2777,51 @@ The gpu-early-stop axis at 14a888e0 on an RTX PRO 6000 Blackwell Server Edition 
 **Rejected.** A full refresh for 2.12.0: about three hours of two pods to re-time unchanged code on whichever hosts came. Carrying gpu-early-stop with the rest: its stamp would have rested on an argument, and the levelwise row would have gone on recording 2,000 rounds for a model of 1,980. Shipping a patch release on the hashes alone: a change that holds every hash can still move a timing, so the pull request's own same-pod reading stays part of the bar. A patch release that refreshes the standings: it puts a pod rental on every small fix, and a fix that waits for a minor to avoid the rental is the outcome this rule exists to stop.
 
 **Reopener.** A patch whose change moves a model hash, or reaches a standings cell, measures that plane or that axis before it ships. A carried stamp is spent when its plane's digest next moves, as the protocol already holds. If two minors pass with every axis carried, the standings' hosts and reference library versions are stale whatever the hashes say, and the next minor refreshes in full.
+
+## 176. The host leaf renewal shares its gather and its select across the team, each leaf by one thread over its residuals in row order (adopted)
+
+**Decision.** `renew_leaves` in `include/bonsai/booster.hpp`, which every MAE, Huber and Quantile fit on a host grower runs once per tree, no longer works on one thread. The residuals of the rows that carry weight go into one buffer grouped by leaf (`gather_residuals`): the rows are cut into blocks, a count pass and a write pass share the team, and a block writes each leaf's residuals after those of the blocks before it. Each leaf is then renewed by one thread over its own residuals, and the tree is written afterwards on one thread, so neither tree type needs to be safe to write from two. A leaf's residuals are in row order at any thread count, which is what the weighted quantile's and Huber's sums depend on, so the renewed values are the same bits at one thread and at any other. Two row floors keep small fits where they were: a renewal under 16,384 rows stays on one thread, and its gather stays on one thread under 131,072. Pinned by `leaf-renewal-holds-at-any-thread-count` ("Booster: leaf renewal is the same at any thread count", at 40,000 and 150,000 rows, weighted and unweighted, for the three objectives, at one, two and eight threads) and by "Booster: a shared gather keeps each leaf's residuals in row order", which holds the eight-thread gather to row order for every row in order and for a list that repeats rows and runs backwards. No model hash moves.
+
+**Why.** Decision 172 made the weighted renewal correct and recorded its cost on the host, 10 to 14% of a weighted fit. Decomposed on an M2 (2M x 32, depth 8, 50 trees, eight threads), the renewal as a whole was 24 to 40% of a renewal fit, weighted or not: 0.98 to 1.57 s of 3.3 to 5.0 s. Inside it the per-leaf select read 1.116 s, the gather 0.210 s and the write-back 0.029 s on the weighted MAE fit, which sum to the 1.36 s bucket. The select is independent per leaf, so it was priced at a quarter of its time on eight threads, a fit about 18% shorter; it measured 18% (4.79 to 3.92 s). The gather was then the largest part left and was priced at 0.13 s more.
+
+**Measured.** One M2 (four performance and four efficiency cores), eight threads, main at 06acc2fd against the branch, the two builds alternating. 2M x 32, depth 8, 50 trees, weights uniform from 0.25 to 4 where weighted, fit seconds with the renewal bucket of the fit profile in parentheses:
+
+| objective | grower | weights | main | branch | delta |
+|---|---|---|---|---|---|
+| mae | depthwise | yes | 4.78 (1.36) | 3.83 (0.35) | -19.9% |
+| mae | depthwise | no | 4.09 (0.97) | 3.29 (0.24) | -19.5% |
+| huber | depthwise | yes | 5.02 (1.57) | 3.82 (0.39) | -24.0% |
+| huber | depthwise | no | 4.21 (1.07) | 3.33 (0.27) | -20.9% |
+| quantile | depthwise | yes | 4.36 (1.18) | 3.53 (0.36) | -19.0% |
+| quantile | leafwise | yes | 3.62 (1.15) | 2.85 (0.39) | -21.4% |
+| mae | leafwise | yes | 3.92 (1.30) | 3.00 (0.39) | -23.4% |
+| mae | levelwise | yes | 3.32 (1.29) | 2.60 (0.60) | -21.7% |
+| huber | leafwise | no | 3.46 (1.04) | 2.62 (0.31) | -24.5% |
+| mse | depthwise | yes | 3.41 | 3.39 | -0.8% |
+
+Every pair predicts the same bytes on 200,000 rows. The select alone took the weighted MAE fit to 3.92 (0.48) and the gather the rest. Smaller MAE fits, 16 columns, depth 6, min over nine fits per arm in milliseconds:
+
+| rows | trees | weights | main | branch | delta |
+|---|---|---|---|---|---|
+| 500 | 300 | no | 267.8 | 268.0 | +0.1% |
+| 500 | 300 | yes | 298.4 | 294.8 | -1.2% |
+| 5,000 | 300 | no | 422.9 | 421.7 | -0.3% |
+| 5,000 | 300 | yes | 446.2 | 440.4 | -1.3% |
+| 16,000 | 300 | no | 579.8 | 580.2 | +0.1% |
+| 16,000 | 300 | yes | 624.9 | 610.6 | -2.3% |
+| 20,000 | 300 | no | 635.3 | 629.0 | -1.0% |
+| 20,000 | 300 | yes | 641.5 | 638.7 | -0.4% |
+| 120,000 | 120 | no | 707.1 | 634.7 | -10.2% |
+| 120,000 | 120 | yes | 750.5 | 664.2 | -11.5% |
+| 140,000 | 120 | no | 765.8 | 673.0 | -12.1% |
+| 140,000 | 120 | yes | 830.1 | 704.0 | -15.2% |
+| 1,000,000 | 40 | no | 1439.2 | 1118.0 | -22.3% |
+| 1,000,000 | 40 | yes | 1652.3 | 1239.0 | -25.0% |
+
+The floors come from the same machine. Without the first, a 500-row fit read 5% over main, since entering the team cost about 50 microseconds a tree where the shared select saved about 8 ns a row. Without the second, the shared gather read 1 to 4% over the one-thread gather at 20,000 and 50,000 rows and 2 to 4% under it from 100,000 up, because it enters the team twice more. Identity: the three host model hashes hold, and 21 models (seven objectives by three growers, 20,000 x 20) are byte-equal to main's.
+
+**Rejected.** Sharing the write-back: it is 2% of the renewal, and a view may name a row twice, so two threads would write one row's value. One vector of residuals per thread and leaf, concatenated afterwards: the count pass gives every block its place in one buffer and no residual is copied twice. One team entry for the three passes: it would remove the second floor, but `for_each_index` opens one region per call and the floors already keep small fits flat. Leaving the gather on one thread: at eight threads it was 44% of what the renewal had left, and its share grows with the thread count.
+
+**Not covered.** Every number here is from one Apple machine. No x86 host has timed this change, so the floors are not known to sit right on a host whose team costs more or less to enter. The levelwise renewal kept 0.60 s of its 1.29 s where the others kept 0.35 to 0.39 s, and that difference is not attributed. The shared gather is tested on identity and on one list with repeats; it is not tested on a view that runs encode as runs of rows.
+
+**Reopener.** A same-pod reading on an x86 host that puts either floor in the wrong place. A leaf that holds most of a tree's rows is still selected by one thread, which is the likely cost in the levelwise row; a select that shares one leaf's partition would take it. A K-target fit renews K trees a round, one after another, where the K renewals are independent.
